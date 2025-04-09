@@ -10,6 +10,7 @@ pub struct EE {
     bus: Bus,
     pc: u32,
     registers: [u128; 32],
+    cop0_registers: [u32; 32],
     lo: u128,
     hi: u128,
 }
@@ -17,11 +18,13 @@ pub struct EE {
 impl EE {
     pub fn new(bus: Bus) -> EE {
         let registers = [0; 32];
+        let cop0_registers = [0; 32];
 
         EE {
             bus: bus,
             pc: EE_RESET_VEC,
             registers: registers,
+            cop0_registers: cop0_registers,
             lo: 0,
             hi: 0,
         }
@@ -39,6 +42,14 @@ impl EE {
 
     fn set_register(&mut self, index: usize, value: u128) {
         self.registers[index] = value;
+    }
+
+    fn cop0_register(&self, index: usize) -> u32 {
+        self.cop0_registers[index]
+    }
+
+    fn set_cop0_register(&mut self, index: usize, value: u32) {
+        self.cop0_registers[index] = value;
     }
 
     fn read32(&self, addr: u32) -> u32 {
