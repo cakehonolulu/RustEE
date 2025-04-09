@@ -26,4 +26,17 @@ impl BIOS {
             ))
         }
     }
+
+    pub fn read32(&self, address: u32) -> u32 {
+        let offset = address as usize;
+        if offset + 4 <= self.bytes.len() {
+            let bytes = &self.bytes[offset..offset + 4];
+            match bytes.try_into() {
+                Ok(value) => u32::from_le_bytes(value),
+                Err(_) => panic!("Failed to convert bytes!")
+            }
+        } else {
+            panic!("Attempted to read out of bounds from BIOS")
+        }
+    }
 }
