@@ -42,7 +42,7 @@ impl EE {
     }
 
     fn read32(&self, addr: u32) -> u32 {
-        self.bus.read32(addr)
+        (self.bus.read32)(&self.bus, addr)
     }
 
     #[inline(always)]
