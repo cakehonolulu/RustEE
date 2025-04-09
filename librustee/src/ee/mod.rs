@@ -27,6 +27,12 @@ impl EE {
         }
     }
 
+    pub fn run(&self) {
+        loop {
+            self.step();
+        }
+    }
+
     fn register(&self, index: usize) -> u128 {
         self.registers[index]
     }
@@ -49,10 +55,7 @@ impl EE {
     }
 
     fn step(&self) {
-        loop {
-            let opcode: u32 = self.fetch();
-            self.decode_execute(opcode);
-        }
+        let opcode: u32 = self.fetch();
+        self.decode_execute(opcode);
     }
-
 }
