@@ -1,4 +1,4 @@
-use librustee::ee;
+use librustee::{ee, bus};
 
 fn main() {
     println!("Hello, world!");
