@@ -15,3 +15,9 @@ pub trait CPU {
     fn fetch(&self) -> u32;
     fn decode_execute(&self, opcode: u32);
 }
+
+pub trait EmulationBackend<C> {
+    fn step(&mut self);
+
+    fn run(&mut self);
+}

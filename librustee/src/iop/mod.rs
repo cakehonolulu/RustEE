@@ -1,31 +1,25 @@
 /*
-    MIPS R5900 Emotion Engine CPU
+    MIPS R3000A IOP CPU
 */
 
 use crate::Bus;
 use crate::cpu::CPU;
 
-pub mod jit;
-pub mod interpreter;
+const IOP_RESET_VEC: u32 = 0xBFC00000;
 
-pub use interpreter::EEInterpreter as Interpreter;
-pub use jit::EEJIT as EEJIT;
-
-const EE_RESET_VEC: u32 = 0xBFC00000;
-
-pub struct EE {
+pub struct IOP {
     bus: Bus,
     pc: u32,
-    registers: [u128; 32],
+    registers: [u32; 32],
     cop0_registers: [u32; 32],
-    lo: u128,
-    hi: u128,
+    lo: u32,
+    hi: u32,
 }
 
-impl EE {
+impl IOP {
     pub fn new(bus: Bus) -> Self {
-        EE {
-            pc: 0xBFC00000, // EE_RESET_VEC
+        IOP {
+            pc: 0xBFC00000, // IOP_RESET_VEC
             registers: [0; 32],
             cop0_registers: [0; 32],
             lo: 0,
@@ -33,25 +27,10 @@ impl EE {
             bus,
         }
     }
-
-    pub fn interp_step(&mut self) {
-        let opcode = self.fetch();
-        println!("EE Interpreter executing opcode 0x{:08X}", opcode);
-        self.decode_execute(opcode);
-        self.set_pc(self.pc.wrapping_add(4));
-    }
-
-    pub fn jit_step(&mut self) {
-        println!("EE JIT compiling block...");
-        let opcode = self.fetch();
-        println!("EE JIT executing opcode 0x{:08X}", opcode);
-        self.decode_execute(opcode);
-        self.set_pc(self.pc.wrapping_add(4));
-    }
 }
 
-impl CPU for EE {
-    type RegisterType = u128;
+impl CPU for IOP {
+    type RegisterType = u32;
 
     fn pc(&self) -> u32 {
         self.pc
@@ -87,6 +66,6 @@ impl CPU for EE {
     }
 
     fn decode_execute(&self, opcode: u32) {
-        panic!("Unhandled EE interpreter opcode: 0x{:08X}", opcode)
+        panic!("Unhandled IOP interpreter opcode: 0x{:08X}", opcode)
     }
 }
