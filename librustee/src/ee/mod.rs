@@ -3,6 +3,7 @@
 */
 
 use crate::Bus;
+use crate::cpu::CPU;
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
@@ -16,39 +17,42 @@ pub struct EE {
 }
 
 impl EE {
-    pub fn new(bus: Bus) -> EE {
-        let registers = [0; 32];
-        let cop0_registers = [0; 32];
-
+    pub fn new(bus: Bus) -> Self {
         EE {
-            bus: bus,
-            pc: EE_RESET_VEC,
-            registers: registers,
-            cop0_registers: cop0_registers,
+            pc: 0xBFC00000, // EE_RESET_VEC
+            registers: [0; 32],
+            cop0_registers: [0; 32],
             lo: 0,
             hi: 0,
+            bus,
         }
     }
+}
 
-    pub fn run(&self) {
-        loop {
-            self.step();
-        }
+impl CPU for EE {
+    type RegisterType = u128;
+
+    fn pc(&self) -> u32 {
+        self.pc
     }
 
-    fn register(&self, index: usize) -> u128 {
+    fn set_pc(&mut self, value: u32) {
+        self.pc = value;
+    }
+
+    fn read_register(&self, index: usize) -> Self::RegisterType {
         self.registers[index]
     }
 
-    fn set_register(&mut self, index: usize, value: u128) {
+    fn write_register(&mut self, index: usize, value: Self::RegisterType) {
         self.registers[index] = value;
     }
 
-    fn cop0_register(&self, index: usize) -> u32 {
+    fn read_cop0_register(&self, index: usize) -> u32 {
         self.cop0_registers[index]
     }
 
-    fn set_cop0_register(&mut self, index: usize, value: u32) {
+    fn write_cop0_register(&mut self, index: usize, value: u32) {
         self.cop0_registers[index] = value;
     }
 
@@ -63,10 +67,5 @@ impl EE {
 
     fn decode_execute(&self, opcode: u32) {
         panic!("Unhandled EE interpreter opcode: 0x{:08X}", opcode)
-    }
-
-    fn step(&self) {
-        let opcode: u32 = self.fetch();
-        self.decode_execute(opcode);
     }
 }

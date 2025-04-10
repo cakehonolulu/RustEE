@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use librustee::{ee::{EE}, bus::{Bus, BusMode}, BIOS};
+use librustee::{bus::{Bus, BusMode}, cpu::CPU, ee::EE, BIOS};
 use clap::{arg, Command};
 
 fn main() {
@@ -16,7 +16,6 @@ fn main() {
         let bios: BIOS = BIOS::new(bios_path).expect("Failed to load BIOS");
         let bus = Bus::new(BusMode::Ranged, bios);
         let ee = EE::new(bus);
-        ee.run();
     } else {
         panic!("No BIOS path provided!");
     }
