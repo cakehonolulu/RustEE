@@ -11,6 +11,8 @@ pub mod interpreter;
 pub use interpreter::EEInterpreter as Interpreter;
 pub use jit::EEJIT as EEJIT;
 
+use tracing::{info, debug};
+
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
 pub struct EE {
@@ -25,7 +27,7 @@ pub struct EE {
 impl EE {
     pub fn new(bus: Bus) -> Self {
         EE {
-            pc: 0xBFC00000, // EE_RESET_VEC
+            pc: EE_RESET_VEC, // EE_RESET_VEC
             registers: [0; 32],
             cop0_registers: [0; 32],
             lo: 0,
@@ -36,15 +38,15 @@ impl EE {
 
     pub fn interp_step(&mut self) {
         let opcode = self.fetch();
-        println!("EE Interpreter executing opcode 0x{:08X}", opcode);
+        debug!("Interpreter executing opcode 0x{:08X}", opcode);
         self.decode_execute(opcode);
         self.set_pc(self.pc.wrapping_add(4));
     }
 
     pub fn jit_step(&mut self) {
-        println!("EE JIT compiling block...");
+        info!("JIT compiling block...");
         let opcode = self.fetch();
-        println!("EE JIT executing opcode 0x{:08X}", opcode);
+        debug!("JIT executing opcode 0x{:08X}", opcode);
         self.decode_execute(opcode);
         self.set_pc(self.pc.wrapping_add(4));
     }

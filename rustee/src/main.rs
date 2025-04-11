@@ -3,6 +3,9 @@ use std::path::Path;
 use librustee::{bus::{Bus, BusMode}, cpu::EmulationBackend, ee::{EE,Interpreter}, BIOS};
 use clap::{arg, Command};
 
+use tracing_subscriber::EnvFilter;
+
+
 fn main() {
     println!("RustEE - A Rust, PlayStation 2 Emulator");
     let arguments = Command::new("RustEE")
@@ -11,6 +14,12 @@ fn main() {
         .arg(arg!(--bios <VALUE>).required(true))
         .get_matches();
 
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("debug")) // Allow filtering via RUST_LOG
+        .without_time()
+        .init();
+
+    tracing::info!("RustEE emulator tracer started");   
     if let Some(bios_path) = arguments.get_one::<String>("bios") {
         let bios_path = Path::new(bios_path);
         let bios: BIOS = BIOS::new(bios_path).expect("Failed to load BIOS");

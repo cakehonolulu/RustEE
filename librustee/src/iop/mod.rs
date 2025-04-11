@@ -19,7 +19,7 @@ pub struct IOP {
 impl IOP {
     pub fn new(bus: Bus) -> Self {
         IOP {
-            pc: 0xBFC00000, // IOP_RESET_VEC
+            pc: IOP_RESET_VEC, // IOP_RESET_VEC
             registers: [0; 32],
             cop0_registers: [0; 32],
             lo: 0,
