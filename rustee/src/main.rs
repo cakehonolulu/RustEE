@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use librustee::{bus::{Bus, BusMode}, cpu::EmulationBackend, ee::{EE,Interpreter}, BIOS};
+use librustee::{bus::{Bus, BusMode}, cpu::EmulationBackend, ee::{EE,Interpreter,JIT}, BIOS};
 use clap::{arg, Command};
 
 use tracing_subscriber::EnvFilter;
@@ -25,7 +25,7 @@ fn main() {
         let bios: BIOS = BIOS::new(bios_path).expect("Failed to load BIOS");
         let bus = Bus::new(BusMode::Ranged, bios);
         let ee: EE = EE::new(bus);
-        let mut ee_backend = Interpreter::new(ee);
+        let mut ee_backend = JIT::new(ee);
         ee_backend.step();
     } else {
         panic!("No BIOS path provided!");

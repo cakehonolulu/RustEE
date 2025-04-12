@@ -1,17 +1,17 @@
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 
-pub struct EEJIT {
+pub struct JIT {
     pub cpu: EE,
 }
 
-impl EEJIT {
+impl JIT {
     pub fn new(cpu: EE) -> Self {
-        EEJIT { cpu }
+        JIT { cpu }
     }
 }
 
-impl EmulationBackend<EE> for EEJIT {
+impl EmulationBackend<EE> for JIT {
     fn step(&mut self) {
         self.cpu.jit_step();
     }

@@ -9,7 +9,7 @@ pub mod jit;
 pub mod interpreter;
 
 pub use interpreter::EEInterpreter as Interpreter;
-pub use jit::EEJIT as EEJIT;
+pub use jit::JIT as JIT;
 
 use tracing::{info, debug};
 
