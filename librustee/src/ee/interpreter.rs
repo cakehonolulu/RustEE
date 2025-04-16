@@ -12,7 +12,7 @@ impl Interpreter {
         Interpreter { cpu }
     }
 
-    fn decode_execute(&mut self, opcode: u32) {
+    pub fn decode_execute(&mut self, opcode: u32) {
         let function = opcode >> 26;
         match function {
             0x00 => {

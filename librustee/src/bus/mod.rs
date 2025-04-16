@@ -25,6 +25,7 @@ pub enum BusMode {
     Ranged,
 }
 
+#[derive(Clone)]
 pub struct Bus {
     bios: BIOS,
 

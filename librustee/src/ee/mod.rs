@@ -29,12 +29,10 @@ pub struct EE {
 
 impl EE {
     pub fn new(bus: Bus) -> Self {
-        let mut cop0_regs = [0; 32];
-        cop0_regs[15] = 0x12345678; // Index
         EE {
             pc: EE_RESET_VEC, // EE_RESET_VEC
             registers: [0; 32],
-            cop0_registers: cop0_regs,
+            cop0_registers: [0; 32],
             lo: 0,
             hi: 0,
             bus,
@@ -84,10 +82,6 @@ impl CPU for EE {
         self.read32(address)
     }
 
-    fn decode_execute(&self, opcode: u32) {
-        panic!("Unhandled EE interpreter opcode: 0x{:08X}", opcode)
-    }
-
     fn add_breakpoint(&mut self, addr: u32) {
         self.breakpoints.insert(addr);
     }
@@ -100,3 +94,6 @@ impl CPU for EE {
         self.breakpoints.contains(&addr)
     }
 }
+
+#[cfg(test)]
+mod test;
