@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use librustee::{bus::{Bus, BusMode}, cpu::{EmulationBackend, CPU}, ee::{Interpreter, EE, JIT}, BIOS};
+use librustee::{bus::{Bus, BusMode}, cpu::{EmulationBackend, CPU}, ee::{EE, JIT}, BIOS};
 use clap::{arg, Command};
 
 use tracing_subscriber::EnvFilter;

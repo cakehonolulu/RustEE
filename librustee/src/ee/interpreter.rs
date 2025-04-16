@@ -1,6 +1,6 @@
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
-use tracing::{debug, error};
+use tracing::error;
 use crate::cpu::CPU;
 
 pub struct Interpreter {

@@ -13,7 +13,6 @@ pub mod interpreter;
 pub use interpreter::Interpreter;
 pub use jit::JIT as JIT;
 
-use tracing::{info, debug};
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
