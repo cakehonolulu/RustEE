@@ -60,7 +60,7 @@ impl Interpreter {
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
         let cop0_val = self.cpu.read_cop0_register(rd);
-        self.cpu.write_register(rt, cop0_val as u128);
+        self.cpu.write_register32(rt, cop0_val);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -70,10 +70,11 @@ impl Interpreter {
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
 
-        let value = self.cpu.read_register(rt);
+        let value = self.cpu.read_register32(rt);
         let result = value << sa;
+        let result: u64 = result as i32 as i64 as u64;
 
-        self.cpu.write_register(rd, result);
+        self.cpu.write_register64(rd, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }

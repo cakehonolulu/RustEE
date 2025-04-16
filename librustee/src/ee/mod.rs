@@ -39,6 +39,25 @@ impl EE {
             breakpoints: HashSet::new(),
         }
     }
+
+    pub fn read_register32(&self, index: usize) -> u32 {
+        self.registers[index] as u32
+    }
+
+    pub fn write_register32(&mut self, index: usize, value: u32) {
+        let upper_bits = self.registers[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        self.registers[index] = upper_bits | (value as u128);
+    }
+
+    pub fn read_register64(&self, index: usize) -> u64 {
+        self.registers[index] as u64
+    }
+
+    pub fn write_register64(&mut self, index: usize, value: u64) {
+        let upper_bits = self.registers[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        self.registers[index] = upper_bits | (value as u128);
+    }
+
 }
 
 impl CPU for EE {
