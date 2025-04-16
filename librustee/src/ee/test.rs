@@ -100,3 +100,12 @@ fn test_mfc0() {
         ee.write_cop0_register(1, 42);
     });
 }
+
+#[test]
+fn test_sll() {
+    let assembly = "sll $1, $2, 4";
+
+    test_opcode(assembly, |ee| {
+        ee.write_register32(2, 0x0000000F);
+    });
+}
