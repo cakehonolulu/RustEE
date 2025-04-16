@@ -1,19 +1,19 @@
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 
-pub struct EEInterpreter {
+pub struct Interpreter {
     pub cpu: EE,
 }
 
-impl EEInterpreter {
+impl Interpreter {
     pub fn new(cpu: EE) -> Self {
-        EEInterpreter { cpu }
+        Interpreter { cpu }
     }
 }
 
-impl EmulationBackend<EE> for EEInterpreter {
+impl EmulationBackend<EE> for Interpreter {
     fn step(&mut self) {
-        self.cpu.interp_step();
+        todo!();
     }
 
     fn run(&mut self) {

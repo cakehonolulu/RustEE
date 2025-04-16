@@ -13,7 +13,12 @@ pub trait CPU {
     fn read32(&self, addr: u32) -> u32;
 
     fn fetch(&self) -> u32;
+    fn fetch_at(&self, addr: u32) -> u32;
     fn decode_execute(&self, opcode: u32);
+
+    fn add_breakpoint(&mut self, addr: u32);
+    fn remove_breakpoint(&mut self, addr: u32);
+    fn has_breakpoint(&self, addr: u32) -> bool;
 }
 
 pub trait EmulationBackend<C> {

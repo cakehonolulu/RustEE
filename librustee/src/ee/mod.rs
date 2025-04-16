@@ -2,13 +2,15 @@
     MIPS R5900 Emotion Engine CPU
 */
 
+use std::collections::HashSet;
+
 use crate::Bus;
 use crate::cpu::CPU;
 
 pub mod jit;
 pub mod interpreter;
 
-pub use interpreter::EEInterpreter as Interpreter;
+pub use interpreter::Interpreter;
 pub use jit::JIT as JIT;
 
 use tracing::{info, debug};
@@ -22,33 +24,22 @@ pub struct EE {
     cop0_registers: [u32; 32],
     lo: u128,
     hi: u128,
+    breakpoints: HashSet<u32>,
 }
 
 impl EE {
     pub fn new(bus: Bus) -> Self {
+        let mut cop0_regs = [0; 32];
+        cop0_regs[15] = 0x12345678; // Index
         EE {
             pc: EE_RESET_VEC, // EE_RESET_VEC
             registers: [0; 32],
-            cop0_registers: [0; 32],
+            cop0_registers: cop0_regs,
             lo: 0,
             hi: 0,
             bus,
+            breakpoints: HashSet::new(),
         }
-    }
-
-    pub fn interp_step(&mut self) {
-        let opcode = self.fetch();
-        debug!("Interpreter executing opcode 0x{:08X}", opcode);
-        self.decode_execute(opcode);
-        self.set_pc(self.pc.wrapping_add(4));
-    }
-
-    pub fn jit_step(&mut self) {
-        info!("JIT compiling block...");
-        let opcode = self.fetch();
-        debug!("JIT executing opcode 0x{:08X}", opcode);
-        self.decode_execute(opcode);
-        self.set_pc(self.pc.wrapping_add(4));
     }
 }
 
@@ -88,7 +79,24 @@ impl CPU for EE {
         self.read32(self.pc)
     }
 
+    #[inline(always)]
+    fn fetch_at(&self, address: u32) -> u32 {
+        self.read32(address)
+    }
+
     fn decode_execute(&self, opcode: u32) {
         panic!("Unhandled EE interpreter opcode: 0x{:08X}", opcode)
+    }
+
+    fn add_breakpoint(&mut self, addr: u32) {
+        self.breakpoints.insert(addr);
+    }
+
+    fn remove_breakpoint(&mut self, addr: u32) {
+        self.breakpoints.remove(&addr);
+    }
+
+    fn has_breakpoint(&self, addr: u32) -> bool {
+        self.breakpoints.contains(&addr)
     }
 }
