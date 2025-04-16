@@ -4,3 +4,4 @@ members = [
     "librustee",
     "rustee"
 ]
+exclude = ["external/mipsasm"]
