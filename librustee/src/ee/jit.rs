@@ -161,14 +161,23 @@ impl<'a> JIT<'a> {
     fn decode(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
         let function = opcode >> 26;
         match function {
-            0x10 => {
+            0x00 => {
                 let subfunction = opcode & 0x3F;
+                match subfunction {
+                    _ => {
+                        error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X})", opcode, subfunction);
+                        panic!();
+                    }
+                }
+            }
+            0x10 => {
+                let subfunction = (opcode >> 21) & 0x1F;
                 match subfunction {
                     0x00 => {
                         self.mfc0(builder, opcode, current_pc);
                     }
                     _ => {
-                        error!("Unhandled EE JIT function 0x10 opcode: 0x{:08X} (Subfunction 0x{:02X})", opcode, subfunction);
+                        error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X})", opcode, subfunction);
                         panic!();
                     }
                 }
@@ -228,7 +237,9 @@ impl<'a> JIT<'a> {
 
 impl EmulationBackend<EE> for JIT<'_> {
     fn step(&mut self) {
-        self.execute(true);
+        if self.execute(true) {
+            return
+        }
     }
 
     fn run(&mut self) {
