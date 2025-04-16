@@ -18,6 +18,9 @@ impl Interpreter {
             0x00 => {
                 let subfunction = opcode & 0x3F;
                 match subfunction {
+                    0x00 => {
+                        self.sll(opcode);
+                    }
                     _ => {
                         error!(
                             "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X})",
@@ -58,6 +61,19 @@ impl Interpreter {
 
         let cop0_val = self.cpu.read_cop0_register(rd);
         self.cpu.write_register(rt, cop0_val as u128);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sll(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = (opcode >> 6) & 0x1F;
+
+        let value = self.cpu.read_register(rt);
+        let result = value << sa;
+
+        self.cpu.write_register(rd, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }

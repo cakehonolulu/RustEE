@@ -76,15 +76,12 @@ impl<'a> JIT<'a> {
             return block.breakpoint
         }
 
-        println!("Executing block at PC 0x{:08X}", pc);
-
         (block.func_ptr)();
 
         block.breakpoint
     }
 
     fn compile_block(&mut self, pc: u32, single_step: bool) -> (fn(), bool) {
-        println!("Compiling block at PC 0x{:08X}", pc);
         let mut ctx = self.module.make_context();
         ctx.func.signature = self.module.make_signature();
 
@@ -108,8 +105,6 @@ impl<'a> JIT<'a> {
 
             let opcode = self.cpu.fetch_at(current_pc);
 
-            println!("Compiling opcode 0x{:08X} at PC 0x{:08X}", opcode, current_pc);
-
             self.decode(&mut builder, opcode, &mut current_pc);
 
             if let Some(_) = self.is_branch(opcode) {
@@ -118,7 +113,6 @@ impl<'a> JIT<'a> {
             }
 
             if single_step {
-                println!("Single step detected, finishing block");
                 break;
             }
         }
@@ -164,6 +158,9 @@ impl<'a> JIT<'a> {
             0x00 => {
                 let subfunction = opcode & 0x3F;
                 match subfunction {
+                    0x00 => {
+                        self.sll(builder, opcode, current_pc);
+                    }
                     _ => {
                         error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X})", opcode, subfunction);
                         panic!();
@@ -230,6 +227,23 @@ impl<'a> JIT<'a> {
         let cop0_val = Self::load32(builder, cop0_addr);
         builder.ins().store(MemFlags::new(), cop0_val, gpr_addr, 0);
 
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+    }
+
+    fn sll(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let sa = ((opcode >> 6) & 0x1F) as i64;
+
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let rt_val = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+        let shifted_val = builder.ins().ishl_imm(rt_val, sa as i64);
+        let result = builder.ins().sextend(types::I64, shifted_val);
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+    
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
     }
