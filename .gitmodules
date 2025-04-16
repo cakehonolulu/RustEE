@@ -1,0 +1,3 @@
+[submodule "external/mipsasm"]
+	path = external/mipsasm
+	url = https://github.com/cakehonolulu/mipsasm
