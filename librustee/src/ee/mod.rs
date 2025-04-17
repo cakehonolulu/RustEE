@@ -28,10 +28,12 @@ pub struct EE {
 
 impl EE {
     pub fn new(bus: Bus) -> Self {
+        let mut cop0_regs: [u32; 32] = [0; 32];
+        cop0_regs[15] = 0x59;
         EE {
             pc: EE_RESET_VEC, // EE_RESET_VEC
             registers: [0; 32],
-            cop0_registers: [0; 32],
+            cop0_registers: cop0_regs,
             lo: 0,
             hi: 0,
             bus,

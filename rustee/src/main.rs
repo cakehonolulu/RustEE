@@ -48,9 +48,7 @@ fn main() {
         }
 
         let mut ee_backend = JIT::new(&mut ee);
-        for _ in 0..3 {
-            ee_backend.step();
-        }
+        ee_backend.run();
     } else {
         panic!("No BIOS path provided!");
     }

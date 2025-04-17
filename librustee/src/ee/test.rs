@@ -147,6 +147,7 @@ fn test_mfc0() {
             g.pc          = 0xBFC00004;
             g.cop0[1]     = 42;
             g.gpr[2]      = 42;
+            g.cop0[15]  = 0x59;
             Some(g)
         },
     };
@@ -164,6 +165,25 @@ fn test_sll() {
             g.pc        = 0xBFC00004;
             g.gpr[2]    = 0x0F;
             g.gpr[1]    = 0xF0;
+            g.cop0[15]  = 0x59;
+            Some(g)
+        },
+    };
+    run_test(&test);
+}
+
+#[test]
+fn test_slti() {
+    let test = TestCase {
+        name:  "slti",
+        asm:   "slti $v0, $t0, 4",
+        setup: |ee| ee.write_register32(8, 2),
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc        = 0xBFC00004;
+            g.gpr[8]    = 2;
+            g.gpr[2]    = 1;
+            g.cop0[15]  = 0x59;
             Some(g)
         },
     };

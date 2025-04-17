@@ -30,6 +30,9 @@ impl Interpreter {
                     }
                 }
             }
+            0x0A => {
+                self.slti(opcode);
+            }
             0x10 => {
                 let subfunction = (opcode >> 21) & 0x1F;
                 match subfunction {
@@ -76,6 +79,19 @@ impl Interpreter {
 
         self.cpu.write_register64(rd, result);
 
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn slti(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+
+        let imm = opcode as i16 as i64;
+
+        let rs_val = self.cpu.read_register64(rs) as i64;
+
+        let out = if rs_val < imm { 1u64 } else { 0u64 };
+        self.cpu.write_register64(rt, out);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

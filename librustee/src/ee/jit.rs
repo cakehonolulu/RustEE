@@ -1,5 +1,6 @@
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, InstBuilder, MemFlags, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Module, Linkage};
@@ -162,10 +163,13 @@ impl<'a> JIT<'a> {
                         self.sll(builder, opcode, current_pc);
                     }
                     _ => {
-                        error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X})", opcode, subfunction);
+                        error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
                         panic!();
                     }
                 }
+            }
+            0x0A => {
+                self.slti(builder, opcode, current_pc);
             }
             0x10 => {
                 let subfunction = (opcode >> 21) & 0x1F;
@@ -174,13 +178,13 @@ impl<'a> JIT<'a> {
                         self.mfc0(builder, opcode, current_pc);
                     }
                     _ => {
-                        error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X})", opcode, subfunction);
+                        error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
                         panic!();
                     }
                 }
             }
             _ => {
-                error!("Unhandled EE JIT opcode: 0x{:08X} (Function 0x{:02X})", opcode, function);
+                error!("Unhandled EE JIT opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}", opcode, function, current_pc);
                 panic!();
             }
         }
@@ -244,6 +248,26 @@ impl<'a> JIT<'a> {
         let result = builder.ins().sextend(types::I64, shifted_val);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
     
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+    }
+
+    fn slti(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as i16) as i64;
+
+        let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_a, 0);
+        let imm_val = builder.ins().iconst(types::I64, imm);
+        let cmp = builder.ins().icmp(IntCC::SignedLessThan, rs_val, imm_val);
+        let one = builder.ins().iconst(types::I64, 1);
+        let zero = builder.ins().iconst(types::I64, 0);
+        let result = builder.ins().select(cmp, one, zero);
+        builder.ins().store(MemFlags::new(), result, rt_a, 0);
+
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
     }
