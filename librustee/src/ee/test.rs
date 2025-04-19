@@ -189,3 +189,46 @@ fn test_slti() {
     };
     run_test(&test);
 }
+
+#[test]
+fn test_bne() {
+    let tests = vec![
+        TestCase {
+            name: "bne_taken",
+            asm: "bne $t0, $t1, 0x4",
+            setup: |ee| {
+                ee.write_register32(8, 2);
+                ee.write_register32(9, 3);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 2;
+                g.gpr[9] = 3;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bne_not_taken",
+            asm: "bne $t0, $t1, 0x4",
+            setup: |ee| {
+                ee.write_register32(8, 5);
+                ee.write_register32(9, 5);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 5;
+                g.gpr[9] = 5;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        println!("Running test case: {}", test.name);
+        run_test(&test);
+    }
+}

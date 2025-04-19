@@ -49,6 +49,7 @@ impl<'a> JIT<'a> {
 
     fn execute(&mut self, single_step: bool) -> bool {
         let pc = self.cpu.pc();
+        //debug!("execute: Finding block at: 0x{:08X}", pc);
 
         let block = self.blocks.get(&pc).cloned().unwrap_or_else(|| {
             let (func_ptr, breakpoint) = self.compile_block(pc, single_step);
@@ -59,6 +60,7 @@ impl<'a> JIT<'a> {
                 breakpoint,
             };
             self.blocks.put(pc, block.clone());
+            //debug!("execute: Compiled block at: 0x{:08X}", pc);
             block
         });
 
@@ -97,21 +99,99 @@ impl<'a> JIT<'a> {
 
         let mut current_pc = pc;
 
+        let pc_addr = builder.ins().iconst(types::I64, self.pc_ptr as i64);
+
         loop {
             if self.cpu.has_breakpoint(current_pc) {
-                debug!("EE JIT Breakpoint hit at 0x{:08X}", current_pc);
+                //debug!("EE JIT Breakpoint hit at 0x{:08X}", current_pc);
                 breakpoint = true;
                 break;
             }
 
             let opcode = self.cpu.fetch_at(current_pc);
+            //debug!("EE JIT opcode: 0x{:08X} (PC: 0x{:08X})", opcode, current_pc);
 
-            self.decode(&mut builder, opcode, &mut current_pc);
+            if let Some((cond, target, is_likely)) = self.branch_info(opcode, &mut builder, current_pc) {
+                //debug!("EE JIT branch info: cond: {:?}, target: 0x{:08X}, is_likely: {}", cond, target, is_likely);
 
-            if let Some(_) = self.is_branch(opcode) {
-                println!("Branch detected, finalizing block");
+                let mut delay_pc = current_pc.wrapping_add(4);
+
+                if is_likely {
+                    // only run delay‐slot if branch is taken
+                    let then_block   = builder.create_block();
+                    let else_block   = builder.create_block();
+                    let delay_merge  = builder.create_block();
+
+                    // if cond!=0 jump to then_block, else to else_block
+                    builder.ins().brif(cond, then_block, &[], else_block, &[]);
+
+                    // then: emit delay‐slot
+                    builder.switch_to_block(then_block);
+                    self.decode(&mut builder, opcode, &mut delay_pc);
+                    builder.ins().jump(delay_merge, &[]);
+                    builder.seal_block(then_block);
+
+                    // else: skip it
+                    builder.switch_to_block(else_block);
+                    builder.ins().jump(delay_merge, &[]);
+                    builder.seal_block(else_block);
+
+                    // merge
+                    builder.switch_to_block(delay_merge);
+                    builder.seal_block(delay_merge);
+
+                } else {
+                    // normal branch: always run delay‐slot
+                    let delay_opcode = self.cpu.fetch_at(delay_pc);
+                    self.decode(&mut builder, delay_opcode, &mut delay_pc);
+                    current_pc = current_pc.wrapping_add(8);
+                }
+
+                let branch_blk      = builder.create_block();
+                let fallthrough_blk = builder.create_block();
+                let merge_blk       = builder.create_block();
+
+                // if cond!=0 goto branch_blk else fallthrough
+                builder.ins().brif(cond, branch_blk, &[], fallthrough_blk, &[]);
+
+                // branch target path
+                builder.switch_to_block(branch_blk);
+
+                // Compute the constant in its own statement:
+                let target_val = builder.ins().iconst(types::I32, target as i64);
+
+                builder.ins().store(
+                    MemFlags::new(),
+                    target_val,
+                    pc_addr,
+                    0,
+                );
+
+                builder.ins().jump(merge_blk, &[]);
+                builder.seal_block(branch_blk);
+
+                // fallthrough path
+                builder.switch_to_block(fallthrough_blk);
+                let fall_pc = current_pc;
+
+                let fall_val = builder.ins().iconst(types::I32, current_pc as i64);
+                builder.ins().store(
+                    MemFlags::new(),
+                    fall_val,
+                    pc_addr,
+                    0,
+                );
+                builder.ins().jump(merge_blk, &[]);
+                builder.seal_block(fallthrough_blk);
+
+                // merge and return
+                builder.switch_to_block(merge_blk);
+                builder.seal_block(merge_blk);
                 break;
             }
+
+            self.decode(&mut builder, opcode, &mut current_pc);
+            //debug!("EE JIT decoded opcode: 0x{:08X} (PC: 0x{:08X})", opcode, current_pc);
 
             if single_step {
                 break;
@@ -140,9 +220,30 @@ impl<'a> JIT<'a> {
         unsafe { (std::mem::transmute(func_ptr), breakpoint) }
     }
 
-    fn is_branch(&self, opcode: u32) -> Option<bool> {
-        match opcode {
-            _ => None,
+    fn branch_info(
+        &self,
+        opcode: u32,
+        builder: &mut FunctionBuilder,
+        pc: u32
+    ) -> Option<(cranelift_codegen::ir::Value, u32, bool)> {
+        match opcode >> 26 {
+            0x05 => {
+                //debug!("EE JIT: BNE opcode detected");
+                let rs = ((opcode >> 21) & 0x1F) as i64;
+                let rt = ((opcode >> 16) & 0x1F) as i64;
+                let imm = (opcode as u16) as i16 as i32;
+                let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+                let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+                let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+                let rt_val = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+                let cond = builder.ins().icmp(IntCC::NotEqual, rs_val, rt_val);
+                let offset = (imm << 2) as u32;
+                let target = pc.wrapping_add(4).wrapping_add(offset);
+                Some((cond, target, false))
+            }
+            _ => {
+                None
+            }
         }
     }
 
@@ -155,6 +256,7 @@ impl<'a> JIT<'a> {
 
     fn decode(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
         let function = opcode >> 26;
+        //debug!("decode: function: 0x{:02X}", function);
         match function {
             0x00 => {
                 let subfunction = opcode & 0x3F;

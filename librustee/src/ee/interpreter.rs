@@ -12,6 +12,25 @@ impl Interpreter {
         Interpreter { cpu }
     }
 
+    fn do_branch(&mut self, branch_pc: u32, taken: bool, target: u32, is_likely: bool) {
+        let delay_pc = branch_pc.wrapping_add(4);
+
+        if taken || !is_likely {
+            let slot_opcode = self.cpu.fetch_at(delay_pc);
+            self.cpu.set_pc(delay_pc);
+            self.decode_execute(slot_opcode);
+        }
+
+        let new_pc = if taken {
+            target
+        } else if is_likely {
+            branch_pc.wrapping_add(8)
+        } else {
+            delay_pc.wrapping_add(4)
+        };
+        self.cpu.set_pc(new_pc);
+    }
+
     pub fn decode_execute(&mut self, opcode: u32) {
         let function = opcode >> 26;
         match function {
@@ -23,12 +42,15 @@ impl Interpreter {
                     }
                     _ => {
                         error!(
-                            "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X})",
-                            opcode, subfunction
+                            "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
+                            opcode, subfunction, self.cpu.pc()
                         );
                         panic!();
                     }
                 }
+            }
+            0x05 => {
+                self.bne(opcode);
             }
             0x0A => {
                 self.slti(opcode);
@@ -41,8 +63,8 @@ impl Interpreter {
                     }
                     _ => {
                         error!(
-                            "Unhandled EE Interpreter COP0 opcode: 0x{:08X} (Subfunction 0x{:02X})",
-                            opcode, subfunction
+                            "Unhandled EE Interpreter COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
+                            opcode, subfunction, self.cpu.pc()
                         );
                         panic!();
                     }
@@ -50,8 +72,8 @@ impl Interpreter {
             }
             _ => {
                 error!(
-                    "Unhandled EE Interpreter opcode: 0x{:08X} (Function 0x{:02X})",
-                    opcode, function
+                    "Unhandled EE Interpreter opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}",
+                    opcode, function, self.cpu.pc()
                 );
                 panic!();
             }
@@ -93,6 +115,20 @@ impl Interpreter {
         let out = if rs_val < imm { 1u64 } else { 0u64 };
         self.cpu.write_register64(rt, out);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn bne(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+    
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let rt_val = self.cpu.read_register32(rt) as i32;
+        let taken = rs_val != rt_val;
+        let target = branch_pc.wrapping_add(((imm << 2) + 4).try_into().unwrap()); // Adjusted target calculation
+    
+        self.do_branch(branch_pc, taken, target, false);
     }
 }
 

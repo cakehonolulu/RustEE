@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use librustee::{bus::{Bus, BusMode}, cpu::{EmulationBackend, CPU}, ee::{EE, JIT}, BIOS};
+use librustee::{bus::{Bus, BusMode}, cpu::{EmulationBackend, CPU}, ee::{Interpreter, EE, JIT}, BIOS};
 use clap::{arg, Command};
 
 use tracing_subscriber::EnvFilter;
@@ -23,6 +23,10 @@ fn main() {
                     .collect::<Result<Vec<u32>, String>>()
             })
             .required(false))
+        .arg(arg!(--"ee-backend" <BACKEND>)
+            .value_parser(["interpreter", "jit"])
+            .default_value("jit")
+            .help("Choose the EE backend: 'interpreter' or 'jit'"))
         .get_matches();
 
         tracing_subscriber::fmt()
@@ -47,8 +51,18 @@ fn main() {
             }
         }
 
-        let mut ee_backend = JIT::new(&mut ee);
-        ee_backend.run();
+        match arguments.get_one::<String>("ee-backend").map(String::as_str) {
+            Some("interpreter") => {
+                tracing::info!("Using EE Interpreter backend");
+                let mut ee_backend = Interpreter::new(ee);
+                ee_backend.run();
+            }
+            Some("jit") | _ => {
+                tracing::info!("Using EE JIT backend");
+                let mut ee_backend = JIT::new(&mut ee);
+                ee_backend.run();
+            }
+        }
     } else {
         panic!("No BIOS path provided!");
     }
