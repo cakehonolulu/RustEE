@@ -232,3 +232,20 @@ fn test_bne() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_lui() {
+    let test = TestCase {
+        name:  "lui",
+        asm:   "lui $t0, 0x1234",
+        setup: |ee| ee.write_register32(8, 0),
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc        = 0xBFC00004;
+            g.gpr[8]    = 0x12340000;
+            g.cop0[15]  = 0x59;
+            Some(g)
+        },
+    };
+    run_test(&test);
+}

@@ -110,6 +110,9 @@ impl Interpreter {
             0x0A => {
                 self.slti(opcode);
             }
+            0x0F => {
+                self.lui(opcode);
+            }
             0x10 => {
                 let subfunction = (opcode >> 21) & 0x1F;
                 match subfunction {
@@ -187,6 +190,16 @@ impl Interpreter {
         let target = branch_pc.wrapping_add(((imm << 2) + 4).try_into().unwrap()); // Adjusted target calculation
     
         self.do_branch(branch_pc, taken, target, false);
+    }
+
+    fn lui(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode & 0xFFFF) as u32;
+
+        let result = (imm << 16) as u64;
+
+        self.cpu.write_register64(rt, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 
