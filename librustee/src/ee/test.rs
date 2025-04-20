@@ -249,3 +249,20 @@ fn test_lui() {
     };
     run_test(&test);
 }
+
+#[test]
+fn test_ori() {
+    let test = TestCase {
+        name:  "ori",
+        asm:   "ori $t0, $t0, 0x1234",
+        setup: |ee| ee.write_register32(8, 0),
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc        = 0xBFC00004;
+            g.gpr[8]    = 0x00001234;
+            g.cop0[15]  = 0x59;
+            Some(g)
+        },
+    };
+    run_test(&test);
+}

@@ -110,6 +110,9 @@ impl Interpreter {
             0x0A => {
                 self.slti(opcode);
             }
+            0x0D => {
+                self.ori(opcode);
+            }
             0x0F => {
                 self.lui(opcode);
             }
@@ -199,6 +202,18 @@ impl Interpreter {
         let result = (imm << 16) as u64;
 
         self.cpu.write_register64(rt, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn ori(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode & 0xFFFF) as u32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let result = rs_val | imm;
+
+        self.cpu.write_register32(rt, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
