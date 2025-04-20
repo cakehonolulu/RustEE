@@ -15,6 +15,7 @@ pub struct Block {
     pub func_ptr: fn(),
     pub dirty: bool,
     pub breakpoint: bool,
+    pub cycle_count: u32,
 }
 
 pub struct JIT<'a> {
@@ -25,6 +26,7 @@ pub struct JIT<'a> {
     gpr_ptr: *mut u128,
     cop0_ptr: *mut u32,
     pc_ptr: *mut u32,
+    cycles: usize,
 }
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
@@ -44,20 +46,90 @@ impl<'a> JIT<'a> {
             gpr_ptr,
             cop0_ptr,
             pc_ptr,
+            cycles: 0,
         }
     }
 
-    fn execute(&mut self, single_step: bool) -> bool {
+    #[inline]
+    fn get_instruction_cycles(&self, opcode: u32) -> u32 {
+        const DEFAULT:    u32 = 9;
+        const BRANCH:     u32 = 11;
+        const COP_DEFAULT:u32 = 7;
+
+        const MULT:       u32 = 2 * 8;
+        const DIV:        u32 = 14 * 8;
+
+        const MMI_MULT:   u32 = 3 * 8;
+        const MMI_DIV:    u32 = 22 * 8;
+        const MMI_DEFAULT:u32 = 14;
+
+        const FPU_MULT:   u32 = 4 * 8;
+
+        const LD_ST:      u32 = 14;
+
+        let primary = opcode >> 26;
+        match primary {
+            0x00 => {
+                let funct = opcode & 0x3F;
+                match funct {
+                    0x18 | 0x19 => MULT,
+                    0x1A | 0x1B => DIV,
+                    _             => DEFAULT,
+                }
+            }
+
+            0x02 | 0x03 => DEFAULT,
+
+            0x04 | 0x05
+          | 0x06 | 0x07
+          | 0x01
+                => BRANCH,
+
+            0x20..=0x27
+          | 0x28..=0x2F
+                => LD_ST,
+
+            0x10
+                => COP_DEFAULT,
+
+            0x11 => {
+                let fmt = (opcode >> 21) & 0x1F;
+                if fmt == 0 {
+                    COP_DEFAULT
+                } else {
+                    let funct = opcode & 0x3F;
+                    match funct {
+                        0x02 | 0x03 => FPU_MULT,
+                        _           => DEFAULT,
+                    }
+                }
+            }
+
+            0x1C => {
+                let mmiop = (opcode >> 21) & 0x1F;
+                match mmiop {
+                    0x00..=0x03 => MMI_MULT,
+                    0x04..=0x07 => MMI_DIV,
+                    _           => MMI_DEFAULT,
+                }
+            }
+
+            _ => DEFAULT,
+        }
+    }
+
+    fn execute(&mut self, single_step: bool) -> (bool, u32) {
         let pc = self.cpu.pc();
         //debug!("execute: Finding block at: 0x{:08X}", pc);
 
         let block = self.blocks.get(&pc).cloned().unwrap_or_else(|| {
-            let (func_ptr, breakpoint) = self.compile_block(pc, single_step);
+            let (func_ptr, breakpoint, cycles) = self.compile_block(pc, single_step);
             let block = Block {
                 pc,
                 func_ptr,
                 dirty: false,
                 breakpoint,
+                cycle_count: cycles
             };
             self.blocks.put(pc, block.clone());
             //debug!("execute: Compiled block at: 0x{:08X}", pc);
@@ -65,26 +137,31 @@ impl<'a> JIT<'a> {
         });
 
         if block.dirty {
-            let (func_ptr, breakpoint) = self.compile_block(pc, single_step);
+            let (func_ptr, breakpoint, cycles) = self.compile_block(pc, single_step);
             let block = Block {
                 pc,
                 func_ptr,
                 dirty: false,
                 breakpoint,
+                cycle_count: cycles
             };
             self.blocks.put(pc, block.clone());
 
             (block.func_ptr)();
 
-            return block.breakpoint
+            self.cycles += block.cycle_count as usize;
+
+            return (block.breakpoint, block.cycle_count)
         }
 
         (block.func_ptr)();
 
-        block.breakpoint
+        self.cycles += block.cycle_count as usize;
+
+        (block.breakpoint, block.cycle_count)
     }
 
-    fn compile_block(&mut self, pc: u32, single_step: bool) -> (fn(), bool) {
+    fn compile_block(&mut self, pc: u32, single_step: bool) -> (fn(), bool, u32) {
         let mut ctx = self.module.make_context();
         ctx.func.signature = self.module.make_signature();
 
@@ -96,6 +173,8 @@ impl<'a> JIT<'a> {
         builder.seal_block(entry_block);
 
         let mut breakpoint = false;
+
+        let mut total_cycles = 0;
 
         let mut current_pc = pc;
 
@@ -110,6 +189,9 @@ impl<'a> JIT<'a> {
 
             let opcode = self.cpu.fetch_at(current_pc);
             //debug!("EE JIT opcode: 0x{:08X} (PC: 0x{:08X})", opcode, current_pc);
+
+            let instruction_cycles = self.get_instruction_cycles(opcode);
+            total_cycles += instruction_cycles;
 
             if let Some((cond, target, is_likely)) = self.branch_info(opcode, &mut builder, current_pc) {
                 //debug!("EE JIT branch info: cond: {:?}, target: 0x{:08X}, is_likely: {}", cond, target, is_likely);
@@ -217,7 +299,7 @@ impl<'a> JIT<'a> {
 
         let func_ptr = self.module.get_finalized_function(func_id);
 
-        unsafe { (std::mem::transmute(func_ptr), breakpoint) }
+        unsafe { (std::mem::transmute(func_ptr), breakpoint, total_cycles) }
     }
 
     fn branch_info(
@@ -333,6 +415,13 @@ impl<'a> JIT<'a> {
         let cop0_val = Self::load32(builder, cop0_addr);
         builder.ins().store(MemFlags::new(), cop0_val, gpr_addr, 0);
 
+        // Add self.cycles to COP0.Count (cop0[9])
+        let count_addr = Self::ptr_add(builder, self.cop0_ptr as i64, 9, 4);
+        let count_val = Self::load32(builder, count_addr);
+        let cycles_val = builder.ins().iconst(types::I32, self.cycles as i64);
+        let new_count_val = builder.ins().iadd(count_val, cycles_val);
+        builder.ins().store(MemFlags::new(), new_count_val, count_addr, 0);
+
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
     }
@@ -377,15 +466,32 @@ impl<'a> JIT<'a> {
 
 impl EmulationBackend<EE> for JIT<'_> {
     fn step(&mut self) {
-        if self.execute(true) {
-            return
+        let (breakpoint_hit, _) = self.execute(true);
+
+        if breakpoint_hit {
+            return;
         }
     }
 
     fn run(&mut self) {
         loop {
-            if self.execute(false) {
-                break
+            let (breakpoint_hit, _) = self.execute(false);
+            if breakpoint_hit {
+                break;
+            }
+        }
+    }
+
+    fn run_for_cycles(&mut self, cycles: u32) {
+        let mut executed_cycles = 0;
+
+        while executed_cycles < cycles {
+            let (breakpoint_hit, block_cycles) = self.execute(false);
+
+            executed_cycles += block_cycles;
+
+            if breakpoint_hit {
+                break;
             }
         }
     }

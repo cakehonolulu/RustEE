@@ -5,11 +5,66 @@ use crate::cpu::CPU;
 
 pub struct Interpreter {
     pub cpu: EE,
+    cycles: usize,
 }
 
 impl Interpreter {
     pub fn new(cpu: EE) -> Self {
-        Interpreter { cpu }
+        Interpreter { cpu, cycles: 0 }
+    }
+
+    fn get_instruction_cycles(&self, opcode: u32) -> u32 {
+        const DEFAULT: u32 = 9;
+        const BRANCH: u32 = 11;
+        const COP_DEFAULT: u32 = 7;
+
+        const MULT: u32 = 2 * 8;
+        const DIV: u32 = 14 * 8;
+
+        const MMI_MULT: u32 = 3 * 8;
+        const MMI_DIV: u32 = 22 * 8;
+        const MMI_DEFAULT: u32 = 14;
+
+        const FPU_MULT: u32 = 4 * 8;
+
+        const LD_ST: u32 = 14;
+
+        let primary = opcode >> 26;
+        match primary {
+            0x00 => {
+                let funct = opcode & 0x3F;
+                match funct {
+                    0x18 | 0x19 => MULT,
+                    0x1A | 0x1B => DIV,
+                    _ => DEFAULT,
+                }
+            }
+            0x02 | 0x03 => DEFAULT,
+            0x04 | 0x05 | 0x06 | 0x07 | 0x01 => BRANCH,
+            0x20..=0x27 | 0x28..=0x2F => LD_ST,
+            0x10 => COP_DEFAULT,
+            0x11 => {
+                let fmt = (opcode >> 21) & 0x1F;
+                if fmt == 0 {
+                    COP_DEFAULT
+                } else {
+                    let funct = opcode & 0x3F;
+                    match funct {
+                        0x02 | 0x03 => FPU_MULT,
+                        _ => DEFAULT,
+                    }
+                }
+            }
+            0x1C => {
+                let mmiop = (opcode >> 21) & 0x1F;
+                match mmiop {
+                    0x00..=0x03 => MMI_MULT,
+                    0x04..=0x07 => MMI_DIV,
+                    _ => MMI_DEFAULT,
+                }
+            }
+            _ => DEFAULT,
+        }
     }
 
     fn do_branch(&mut self, branch_pc: u32, taken: bool, target: u32, is_likely: bool) {
@@ -87,6 +142,9 @@ impl Interpreter {
         let cop0_val = self.cpu.read_cop0_register(rd);
         self.cpu.write_register32(rt, cop0_val);
 
+        let count = self.cpu.read_cop0_register(9);
+        self.cpu.write_cop0_register(9, count.wrapping_add(self.cycles as u32));
+
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -139,11 +197,27 @@ impl EmulationBackend<EE> for Interpreter {
         let opcode = self.cpu.fetch();
 
         self.decode_execute(opcode);
+
+        self.cycles += self.get_instruction_cycles(opcode) as usize;
     }
 
     fn run(&mut self) {
         loop {
             self.step();
+        }
+    }
+
+    fn run_for_cycles(&mut self, cycles: u32) {
+        let mut executed_cycles = 0;
+
+        while executed_cycles < cycles {
+            let opcode = self.cpu.fetch();
+
+            self.decode_execute(opcode);
+
+            let instruction_cycles = self.get_instruction_cycles(opcode);
+            executed_cycles += instruction_cycles;
+            self.cycles += instruction_cycles as usize;
         }
     }
 }

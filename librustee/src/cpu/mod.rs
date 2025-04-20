@@ -22,6 +22,6 @@ pub trait CPU {
 
 pub trait EmulationBackend<C> {
     fn step(&mut self);
-
     fn run(&mut self);
+    fn run_for_cycles(&mut self, cycles: u32);
 }
