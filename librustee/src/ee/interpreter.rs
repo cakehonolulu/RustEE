@@ -98,6 +98,9 @@ impl Interpreter {
                     0x08 => {
                         self.jr(opcode);
                     }
+                    0x0F => {
+                        self.sync(opcode);
+                    }
                     _ => {
                         error!(
                             "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
@@ -124,6 +127,9 @@ impl Interpreter {
                 match subfunction {
                     0x00 => {
                         self.mfc0(opcode);
+                    }
+                    0x04 => {
+                        self.mtc0(opcode);
                     }
                     _ => {
                         error!(
@@ -226,6 +232,21 @@ impl Interpreter {
         let target = rs_val & 0xFFFFFFFC;
 
         self.cpu.set_pc(target);
+    }
+
+    fn mtc0(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rt_val = self.cpu.read_register32(rt);
+        self.cpu.write_cop0_register(rd, rt_val);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sync(&mut self, opcode: u32) {
+        // TODO: Implement SYNC instruction properly
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 

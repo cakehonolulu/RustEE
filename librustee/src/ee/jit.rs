@@ -327,6 +327,9 @@ impl<'a> JIT<'a> {
                     0x00 => {
                         self.sll(builder, opcode, current_pc);
                     }
+                    0x0F => {
+                        self.sync(builder, opcode, current_pc);
+                    }
                     _ => {
                         error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
                         panic!();
@@ -347,6 +350,9 @@ impl<'a> JIT<'a> {
                 match subfunction {
                     0x00 => {
                         self.mfc0(builder, opcode, current_pc);
+                    }
+                    0x04 => {
+                        self.mtc0(builder, opcode, current_pc);
                     }
                     _ => {
                         error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
@@ -475,6 +481,26 @@ impl<'a> JIT<'a> {
         let result = builder.ins().iadd(rs_val, imm_val);
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+    }
+
+    fn mtc0(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let gpr_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let cop0_addr = Self::ptr_add(builder, self.cop0_ptr as i64, rd, 4);
+
+        let gpr_val = Self::load32(builder, gpr_addr);
+        builder.ins().store(MemFlags::new(), gpr_val, cop0_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+    }
+
+    fn sync(&mut self, builder: &mut FunctionBuilder, _opcode: u32, current_pc: &mut u32) {
+        // TODO: Implement SYNC instruction properly
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
     }

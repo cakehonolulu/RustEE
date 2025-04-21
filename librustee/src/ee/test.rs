@@ -283,3 +283,21 @@ fn test_jr() {
     };
     run_test(&test);
 }
+
+#[test]
+fn test_mtc0() {
+    let test = TestCase {
+        name:  "mtc0",
+        asm:   "mtc0 $t0, $1",
+        setup: |ee| ee.write_register32(8, 42),
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc        = 0xBFC00004;
+            g.gpr[8]    = 42;
+            g.cop0[1]   = 42;
+            g.cop0[15]  = 0x59;
+            Some(g)
+        },
+    };
+    run_test(&test);
+}
