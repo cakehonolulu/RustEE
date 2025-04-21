@@ -29,6 +29,11 @@ pub struct JIT<'a> {
     cycles: usize,
 }
 
+enum BranchTarget {
+    Const(u32),
+    Reg(Value),
+}
+
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
 impl<'a> JIT<'a> {
@@ -164,7 +169,6 @@ impl<'a> JIT<'a> {
     fn compile_block(&mut self, pc: u32, single_step: bool) -> (fn(), bool, u32) {
         let mut ctx = self.module.make_context();
         ctx.func.signature = self.module.make_signature();
-
         let mut builder_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
 
@@ -173,115 +177,87 @@ impl<'a> JIT<'a> {
         builder.seal_block(entry_block);
 
         let mut breakpoint = false;
-
         let mut total_cycles = 0;
-
         let mut current_pc = pc;
-
         let pc_addr = builder.ins().iconst(types::I64, self.pc_ptr as i64);
 
         loop {
             if self.cpu.has_breakpoint(current_pc) {
-                //debug!("EE JIT Breakpoint hit at 0x{:08X}", current_pc);
                 breakpoint = true;
                 break;
             }
 
             let opcode = self.cpu.fetch_at(current_pc);
-            //debug!("EE JIT opcode: 0x{:08X} (PC: 0x{:08X})", opcode, current_pc);
-
             let instruction_cycles = self.get_instruction_cycles(opcode);
             total_cycles += instruction_cycles;
 
-            if let Some((cond, target, is_likely)) = self.branch_info(opcode, &mut builder, current_pc) {
-                //debug!("EE JIT branch info: cond: {:?}, target: 0x{:08X}, is_likely: {}", cond, target, is_likely);
-
+            if let Some((cond, branch_target, is_likely)) =
+                self.branch_info(opcode, &mut builder, current_pc)
+            {
+                // delay slot
                 let mut delay_pc = current_pc.wrapping_add(4);
 
                 if is_likely {
-                    // only run delay‐slot if branch is taken
-                    let then_block   = builder.create_block();
-                    let else_block   = builder.create_block();
-                    let delay_merge  = builder.create_block();
-
-                    // if cond!=0 jump to then_block, else to else_block
-                    builder.ins().brif(cond, then_block, &[], else_block, &[]);
-
-                    // then: emit delay‐slot
-                    builder.switch_to_block(then_block);
+                    let then_blk = builder.create_block();
+                    let else_blk = builder.create_block();
+                    let merge_ds = builder.create_block();
+                    builder.ins().brif(cond, then_blk, &[], else_blk, &[]);
+                    builder.switch_to_block(then_blk);
                     self.decode(&mut builder, opcode, &mut delay_pc);
-                    builder.ins().jump(delay_merge, &[]);
-                    builder.seal_block(then_block);
-
-                    // else: skip it
-                    builder.switch_to_block(else_block);
-                    builder.ins().jump(delay_merge, &[]);
-                    builder.seal_block(else_block);
-
-                    // merge
-                    builder.switch_to_block(delay_merge);
-                    builder.seal_block(delay_merge);
-
+                    builder.ins().jump(merge_ds, &[]);
+                    builder.seal_block(then_blk);
+                    builder.switch_to_block(else_blk);
+                    builder.ins().jump(merge_ds, &[]);
+                    builder.seal_block(else_blk);
+                    builder.switch_to_block(merge_ds);
+                    builder.seal_block(merge_ds);
                 } else {
-                    // normal branch: always run delay‐slot
                     let delay_opcode = self.cpu.fetch_at(delay_pc);
                     self.decode(&mut builder, delay_opcode, &mut delay_pc);
                     current_pc = current_pc.wrapping_add(8);
                 }
 
-                let branch_blk      = builder.create_block();
+                // branch / jump path
+                let branch_blk = builder.create_block();
                 let fallthrough_blk = builder.create_block();
-                let merge_blk       = builder.create_block();
-
-                // if cond!=0 goto branch_blk else fallthrough
+                let merge_blk = builder.create_block();
                 builder.ins().brif(cond, branch_blk, &[], fallthrough_blk, &[]);
 
-                // branch target path
+                // branch/jump target
                 builder.switch_to_block(branch_blk);
-
-                // Compute the constant in its own statement:
-                let target_val = builder.ins().iconst(types::I32, target as i64);
-
-                builder.ins().store(
-                    MemFlags::new(),
-                    target_val,
-                    pc_addr,
-                    0,
-                );
-
+                match branch_target {
+                    BranchTarget::Const(addr) => {
+                        let t = builder.ins().iconst(types::I32, addr as i64);
+                        builder.ins().store(MemFlags::new(), t, pc_addr, 0);
+                    }
+                    BranchTarget::Reg(val) => {
+                        let t32 = builder.ins().ireduce(types::I32, val);
+                        builder.ins().store(MemFlags::new(), t32, pc_addr, 0);
+                    }
+                }
                 builder.ins().jump(merge_blk, &[]);
                 builder.seal_block(branch_blk);
 
                 // fallthrough path
                 builder.switch_to_block(fallthrough_blk);
-                let fall_pc = current_pc;
-
                 let fall_val = builder.ins().iconst(types::I32, current_pc as i64);
-                builder.ins().store(
-                    MemFlags::new(),
-                    fall_val,
-                    pc_addr,
-                    0,
-                );
+                builder.ins().store(MemFlags::new(), fall_val, pc_addr, 0);
                 builder.ins().jump(merge_blk, &[]);
                 builder.seal_block(fallthrough_blk);
 
-                // merge and return
+                // merge
                 builder.switch_to_block(merge_blk);
                 builder.seal_block(merge_blk);
                 break;
             }
 
             self.decode(&mut builder, opcode, &mut current_pc);
-            //debug!("EE JIT decoded opcode: 0x{:08X} (PC: 0x{:08X})", opcode, current_pc);
-
             if single_step {
                 break;
             }
         }
 
         builder.ins().return_(&[]);
-
         builder.finalize();
 
         let func_name = format!("block_{:08X}", pc);
@@ -293,40 +269,45 @@ impl<'a> JIT<'a> {
         self.module
             .define_function(func_id, &mut ctx)
             .expect("Failed to define function");
-
         self.module.clear_context(&mut ctx);
-        self.module.finalize_definitions().expect("Failed to finalize definitions");
+        self.module.finalize_definitions().unwrap();
 
-        let func_ptr = self.module.get_finalized_function(func_id);
-
-        unsafe { (std::mem::transmute(func_ptr), breakpoint, total_cycles) }
+        let ptr = self.module.get_finalized_function(func_id);
+        unsafe { (std::mem::transmute(ptr), breakpoint, total_cycles) }
     }
 
-    fn branch_info(
-        &self,
-        opcode: u32,
-        builder: &mut FunctionBuilder,
-        pc: u32
-    ) -> Option<(cranelift_codegen::ir::Value, u32, bool)> {
-        match opcode >> 26 {
-            0x05 => {
-                //debug!("EE JIT: BNE opcode detected");
+    fn branch_info(&self, opcode: u32, builder: &mut FunctionBuilder, pc: u32)
+        -> Option<(Value, BranchTarget, bool)> {
+        let primary = opcode >> 26;
+        if primary == 0 {
+            // SPECIAL group: check JR (funct 0x08)
+            let funct = opcode & 0x3F;
+            if funct == 0x08 {
+                // Build an always-true condition by comparing 1 != 0
+                let one = builder.ins().iconst(types::I32, 1);
+                let zero = builder.ins().iconst(types::I32, 0);
+                let cond = builder.ins().icmp(IntCC::NotEqual, one, zero);
+                // Load target from GPR[rs]
                 let rs = ((opcode >> 21) & 0x1F) as i64;
-                let rt = ((opcode >> 16) & 0x1F) as i64;
-                let imm = (opcode as u16) as i16 as i32;
-                let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
-                let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
-                let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
-                let rt_val = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
-                let cond = builder.ins().icmp(IntCC::NotEqual, rs_val, rt_val);
-                let offset = (imm << 2) as u32;
-                let target = pc.wrapping_add(4).wrapping_add(offset);
-                Some((cond, target, false))
+                let addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+                let target_i32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
+                let target64 = builder.ins().uextend(types::I64, target_i32);
+                return Some((cond, BranchTarget::Reg(target64), false));
             }
-            _ => {
-                None
-            }
+        } else if primary == 0x05 {
+            // BNE
+            let rs = ((opcode >> 21) & 0x1F) as i64;
+            let rt = ((opcode >> 16) & 0x1F) as i64;
+            let imm = (opcode as u16) as i16 as i32;
+            let raddr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+            let taddr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+            let rv = builder.ins().load(types::I32, MemFlags::new(), raddr, 0);
+            let tv = builder.ins().load(types::I32, MemFlags::new(), taddr, 0);
+            let cond = builder.ins().icmp(IntCC::NotEqual, rv, tv);
+            let tgt = pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+            return Some((cond, BranchTarget::Const(tgt), false));
         }
+        None
     }
 
     pub fn mark_block_dirty(&mut self, pc: u32) {

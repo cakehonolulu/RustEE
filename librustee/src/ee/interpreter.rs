@@ -95,6 +95,9 @@ impl Interpreter {
                     0x00 => {
                         self.sll(opcode);
                     }
+                    0x08 => {
+                        self.jr(opcode);
+                    }
                     _ => {
                         error!(
                             "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
@@ -215,6 +218,14 @@ impl Interpreter {
 
         self.cpu.write_register32(rt, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn jr(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rs_val = self.cpu.read_register32(rs);
+        let target = rs_val & 0xFFFFFFFC;
+
+        self.cpu.set_pc(target);
     }
 }
 
