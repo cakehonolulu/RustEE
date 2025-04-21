@@ -113,6 +113,9 @@ impl Interpreter {
             0x05 => {
                 self.bne(opcode);
             }
+            0x09 => {
+                self.addiu(opcode);
+            }
             0x0A => {
                 self.slti(opcode);
             }
@@ -246,6 +249,18 @@ impl Interpreter {
 
     fn sync(&mut self, opcode: u32) {
         // TODO: Implement SYNC instruction properly
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn addiu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let result = rs_val.wrapping_add(imm);
+
+        self.cpu.write_register32(rt, result.try_into().unwrap());
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

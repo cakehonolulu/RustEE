@@ -301,3 +301,21 @@ fn test_mtc0() {
     };
     run_test(&test);
 }
+
+#[test]
+fn test_addiu() {
+    let test = TestCase {
+        name:  "addiu",
+        asm:   "addiu $t0, $t0, 4",
+        setup: |ee| ee.write_register32(8, 2),
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc        = 0xBFC00004;
+            g.gpr[8]    = 2;
+            g.gpr[8]    = 6;
+            g.cop0[15]  = 0x59;
+            Some(g)
+        },
+    };
+    run_test(&test);
+}
