@@ -38,16 +38,16 @@ enum BranchTarget {
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
-fn bus_from_ptr<'a>(bus_ptr: *const Bus) -> &'a Bus {
-    unsafe { &*bus_ptr }
+fn bus_from_ptr<'a>(bus_ptr: &'a mut Bus) -> &'a mut Bus {
+    &mut *bus_ptr
 }
 
-pub extern "C" fn __bus_write32(
-    bus_ptr: *mut Bus, // Change to mutable pointer
+pub extern "C" fn __bus_write32<'a>(
+    bus_ptr: &'a mut Bus,
     addr: u32,
     value: u32,
 ) {
-    let bus: &mut Bus = unsafe { &mut *bus_ptr }; // Convert to mutable reference
+    let bus: &mut Bus = bus_from_ptr(bus_ptr);
     (bus.write32)(bus, addr, value);
 }
 
@@ -571,7 +571,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         let store_val = Self::load32(builder, rt_addr);
 
-        let bus_ptr_const = builder.ins().iconst(types::I64, &mut self.cpu.bus as *mut _ as i64); // Pass mutable pointer
+        let bus_ptr_const = builder.ins().iconst(types::I64, &self.cpu.bus as *const _ as i64);
         let addr_arg = addr;
         let val_arg  = store_val;
 
