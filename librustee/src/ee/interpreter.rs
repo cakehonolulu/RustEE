@@ -284,8 +284,6 @@ impl Interpreter {
 
 impl EmulationBackend<EE> for Interpreter {
     fn step(&mut self) {
-        let pc = self.cpu.pc();
-
         let opcode = self.cpu.fetch();
 
         self.decode_execute(opcode);
