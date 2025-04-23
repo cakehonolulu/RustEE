@@ -32,19 +32,13 @@ const PAGE_BITS:    usize = 12;                    // 4 KiB pages
 const PAGE_SIZE:    usize = 1 << PAGE_BITS;        // 4096
 const NUM_PAGES:    usize = 1 << (32 - PAGE_BITS); // 4 GiB / 4 KiB = 1 048 576
 
-#[derive(Copy, Clone)]
-enum PageOwner {
-    Ram(usize),
-    Bios(usize),
-}
-
 #[derive(Clone)]
 pub struct Bus {
     bios: BIOS,
     ram: Vec<u8>,
 
-    page_read:  Vec<Option<PageOwner>>,
-    page_write: Vec<Option<PageOwner>>,
+    page_read:  Vec<usize>,
+    page_write: Vec<usize>,
 
     // Function pointers for read/write operations
     pub read32: fn(&Bus, u32) -> u32,
@@ -56,8 +50,8 @@ impl Bus {
         let mut bus = Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
-            page_read:  vec![None; NUM_PAGES],
-            page_write: vec![None; NUM_PAGES],
+            page_read:  vec![0; NUM_PAGES],
+            page_write: vec![0; NUM_PAGES],
             read32:  Bus::sw_fmem_read32,
             write32: Bus::sw_fmem_write32,
         };
@@ -75,18 +69,19 @@ impl Bus {
 
         if mode == BusMode::SoftwareFastMem {
             // map RAM pages for both read & write
-            let ram_pages = bus.ram.len() / PAGE_SIZE;
-            for page in 0..ram_pages {
-                let owner = PageOwner::Ram(page);
-                bus.page_read[page]  = Some(owner);
-                bus.page_write[page] = Some(owner);
+            for page in 0 .. (32 * 1024 * 1024 / PAGE_SIZE) {
+                let host_ptr = bus.ram.as_ptr()  as usize
+                             + page * PAGE_SIZE;
+                bus.page_read [page] = host_ptr;
+                bus.page_write[page] = host_ptr;
             }
-
             // map BIOS pages read-only
-            let bios_pages = bus.bios.bytes.len() / PAGE_SIZE;
-            let base = (0xBFC0_0000_usize) >> PAGE_BITS;
-            for i in 0..bios_pages {
-                bus.page_read[base + i] = Some(PageOwner::Bios(i));
+            let bios_ptr = bus.bios.bytes.as_ptr() as usize;
+            let base   = (0xBFC0_0000_usize) >> PAGE_BITS;
+            let count  = bus.bios.bytes.len() / PAGE_SIZE;
+            for i in 0..count {
+                bus.page_read[base + i] = bios_ptr + i * PAGE_SIZE;
+                // leave page_write = 0 so writes trap
             }
         }
 
@@ -136,35 +131,32 @@ impl Bus {
     fn sw_fmem_read32(&self, address: u32) -> u32 {
         let page   = (address as usize) >> PAGE_BITS;
         let offset = (address as usize) & (PAGE_SIZE - 1);
-        match self.page_read[page] {
-            Some(PageOwner::Ram(p)) => {
-                let start = p * PAGE_SIZE + offset;
-                let slice = &self.ram[start..start + 4];
-                u32::from_le_bytes(slice.try_into().unwrap())
+        let host   = self.page_read[page];
+        if host != 0 {
+            unsafe {
+                let ptr = (host as *const u8).add(offset) as *const u32;
+                ptr.read_unaligned()
             }
-            Some(PageOwner::Bios(p)) => {
-                let start = p * PAGE_SIZE + offset;
-                let slice = &self.bios.bytes[start..start + 4];
-                u32::from_le_bytes(slice.try_into().unwrap())
-            }
-            None => {
-                panic!("SoftwareFastMem: Unhandled 32-bit read from address 0x{:08X}", address);
-            }
+        }
+        else
+        {
+            panic!("SoftwareFastMem: Unhandled 32-bit read from address 0x{:08X}", address);
         }
     }
 
     fn sw_fmem_write32(&mut self, address: u32, value: u32) {
         let page   = (address as usize) >> PAGE_BITS;
         let offset = (address as usize) & (PAGE_SIZE - 1);
-        match self.page_write[page] {
-            Some(PageOwner::Ram(p)) => {
-                let start = p * PAGE_SIZE + offset;
-                let bytes = value.to_le_bytes();
-                self.ram[start..start + 4].copy_from_slice(&bytes);
+        let host   = self.page_write[page];
+        if host != 0 {
+            unsafe {
+                let ptr = (host as *mut u8).add(offset) as *mut u32;
+                ptr.write_unaligned(value);
             }
-            _ => {
-                panic!("SoftwareFastMem: Unhandled 32-bit write to address 0x{:08X}", address);
-            }
+        }
+        else
+        {
+            panic!("SoftwareFastMem: Unhandled 32-bit write to address 0x{:08X}", address);
         }
     }
 }
