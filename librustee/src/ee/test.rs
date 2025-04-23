@@ -319,3 +319,47 @@ fn test_addiu() {
     };
     run_test(&test);
 }
+
+#[test]
+fn test_sw() {
+    let test = TestCase {
+        name: "sw",
+        asm: "sw $t0, 0($t1)",
+        setup: |ee| {
+            ee.write_register32(8, 42); // $t0 = 42
+            ee.write_register32(9, 0x1000); // $t1 = 0x1000
+        },
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc = 0xBFC00004; // PC after instruction
+            g.gpr[8] = 42; // $t0
+            g.gpr[9] = 0x1000; // $t1
+            g.cop0[15] = 0x59; // Cycle count
+            Some(g)
+        },
+    };
+
+    // Run the test case
+    run_test(&test);
+
+    // Additional verification for SW
+    let bios = create_mock_bios(test.asm);
+    let bus = Bus::new(BusMode::Ranged, bios);
+
+    let mut ee = EE::new(bus);
+    (test.setup)(&mut ee);
+
+    ee.set_pc(0xBFC00000);
+
+    // Execute the SW instruction
+    let mut interp = Interpreter::new(ee);
+    interp.step();
+
+    // Verify the value written to memory
+    let written_value = (interp.cpu.bus.read32)(&interp.cpu.bus, 0x1000);
+    assert_eq!(
+        written_value, 42,
+        "SW failed: expected 42 at address 0x1000, found 0x{:08X}",
+        written_value
+    );
+}

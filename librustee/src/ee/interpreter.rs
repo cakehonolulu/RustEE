@@ -143,6 +143,9 @@ impl Interpreter {
                     }
                 }
             }
+            0x2B => {
+                self.sw(opcode);
+            }
             _ => {
                 error!(
                     "Unhandled EE Interpreter opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}",
@@ -261,6 +264,20 @@ impl Interpreter {
         let result = rs_val.wrapping_add(imm);
 
         self.cpu.write_register32(rt, result.try_into().unwrap());
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sw(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let rt_val = self.cpu.read_register32(rt);
+
+        let address = rs_val.wrapping_add(imm as u32);
+        (self.cpu.bus.write32)(&mut self.cpu.bus, address, rt_val);
+
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

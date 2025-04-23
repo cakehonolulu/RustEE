@@ -1,9 +1,10 @@
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
+use crate::Bus;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{types, InstBuilder, MemFlags, Value};
+use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{Module, Linkage};
+use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
 use std::num::NonZero;
@@ -27,6 +28,7 @@ pub struct JIT<'a> {
     cop0_ptr: *mut u32,
     pc_ptr: *mut u32,
     cycles: usize,
+    bus_write32_func: FuncId,
 }
 
 enum BranchTarget {
@@ -36,13 +38,43 @@ enum BranchTarget {
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
+fn bus_from_ptr<'a>(bus_ptr: *const Bus) -> &'a Bus {
+    unsafe { &*bus_ptr }
+}
+
+pub extern "C" fn __bus_write32(
+    bus_ptr: *mut Bus, // Change to mutable pointer
+    addr: u32,
+    value: u32,
+) {
+    let bus: &mut Bus = unsafe { &mut *bus_ptr }; // Convert to mutable reference
+    (bus.write32)(bus, addr, value);
+}
+
 impl<'a> JIT<'a> {
     pub fn new(cpu: &'a mut EE) -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
-        let module = JITModule::new(builder.expect("Failed to create JITModule"));
+        let mut builder = JITBuilder::new(
+            cranelift_module::default_libcall_names()
+        ).expect("Failed to create JITBuilder");
+
+        builder.symbol(
+            "__bus_write32",
+            __bus_write32 as *const u8,
+        );
+
+        let mut module = JITModule::new(builder);
         let gpr_ptr = cpu.registers.as_mut_ptr();
         let cop0_ptr = cpu.cop0_registers.as_mut_ptr();
         let pc_ptr = &mut cpu.pc as *mut u32;
+
+        let mut store32_sig = module.make_signature();
+        store32_sig.params.push(AbiParam::new(types::I64));
+        store32_sig.params.push(AbiParam::new(types::I32));
+        store32_sig.params.push(AbiParam::new(types::I32));
+        let bus_write32_func: FuncId = module
+            .declare_function("__bus_write32", Linkage::Import, &store32_sig)
+            .expect("Failed to declare __bus_write32 function!");
+
         JIT {
             cpu,
             module,
@@ -52,6 +84,7 @@ impl<'a> JIT<'a> {
             cop0_ptr,
             pc_ptr,
             cycles: 0,
+            bus_write32_func
         }
     }
 
@@ -363,6 +396,9 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x2B => {
+                self.sw(builder, opcode, current_pc);
+            }
             _ => {
                 error!("Unhandled EE JIT opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}", opcode, function, current_pc);
                 panic!();
@@ -524,6 +560,28 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
     }
+
+    fn sw(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+        let base = ((opcode >> 21) & 0x1F) as i64;
+        let rt   = ((opcode >> 16) & 0x1F) as i64;
+        let imm  = ((opcode as i16) as i64) as i64;
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val  = Self::load32(builder, base_addr);
+        let addr = builder.ins().iadd_imm(base_val, imm);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let store_val = Self::load32(builder, rt_addr);
+
+        let bus_ptr_const = builder.ins().iconst(types::I64, &mut self.cpu.bus as *mut _ as i64); // Pass mutable pointer
+        let addr_arg = addr;
+        let val_arg  = store_val;
+
+        let callee = self.module.declare_func_in_func(self.bus_write32_func, builder.func);
+        builder.ins().call(callee, &[bus_ptr_const, addr_arg, val_arg]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+    }
+
 }
 
 impl EmulationBackend<EE> for JIT<'_> {
