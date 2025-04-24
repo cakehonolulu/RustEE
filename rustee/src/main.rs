@@ -28,9 +28,9 @@ fn main() {
             .default_value("jit")
             .help("Choose the EE backend: 'interpreter' or 'jit'"))
         .arg(arg!(--"bus-mode" <MODE>)
-            .value_parser(["ranged", "sw_fastmem"])
+            .value_parser(["ranged", "sw_fastmem", "hw_fastmem"])
             .default_value("ranged")
-            .help("Choose the bus emulation mode: 'ranged' or 'sw_fastmem'"))
+            .help("Choose the bus emulation mode: 'ranged', 'sw_fastmem' or 'hw_fastmem'"))
         .get_matches();
 
         tracing_subscriber::fmt()
@@ -49,6 +49,7 @@ fn main() {
 
         let bus_mode = match arguments.get_one::<String>("bus-mode").map(String::as_str) {
             Some("sw_fastmem") => BusMode::SoftwareFastMem,
+            Some("hw_fastmem") => BusMode::HardwareFastMem,
             _ => BusMode::Ranged,
         };
 

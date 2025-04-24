@@ -12,6 +12,13 @@ cranelift-module = "0.118.0"
 cranelift-object = "0.118.0"
 lru = "0.14.0"
 mipsasm = { path = "../external/mipsasm" }
+region = "3.0.2"
 target-lexicon = "0.13.2"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59.0", features = ["Win32_System_Kernel"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.172"

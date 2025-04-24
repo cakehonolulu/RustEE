@@ -418,11 +418,14 @@ dependencies = [
  "cranelift-jit",
  "cranelift-module",
  "cranelift-object",
+ "libc",
  "lru",
  "mipsasm",
+ "region",
  "target-lexicon",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
