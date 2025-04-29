@@ -27,11 +27,15 @@ pub struct EE {
 }
 
 impl EE {
-    pub fn new(bus: Bus) -> Self {
+    pub fn new(mut bus: Bus) -> Self {
         let mut cop0_regs: [u32; 32] = [0; 32];
         cop0_regs[15] = 0x59;
+
+        bus.read_cop0 = EE::read_cop0_static;
+        bus.write_cop0 = EE::write_cop0_static;
+
         EE {
-            pc: EE_RESET_VEC, // EE_RESET_VEC
+            pc: EE_RESET_VEC,
             registers: [0; 32],
             cop0_registers: cop0_regs,
             lo: 0,
@@ -39,6 +43,14 @@ impl EE {
             bus,
             breakpoints: HashSet::new(),
         }
+    }
+
+    pub fn read_cop0_static(index: usize, cop0: &[u32; 32]) -> u32 {
+        cop0[index]
+    }
+
+    pub fn write_cop0_static(index: usize, value: u32, cop0: &mut [u32; 32]) {
+        cop0[index] = value;
     }
 
     pub fn read_register32(&self, index: usize) -> u32 {

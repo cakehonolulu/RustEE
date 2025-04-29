@@ -43,6 +43,9 @@ pub struct Bus {
     bios: BIOS,
     ram: Vec<u8>,
 
+    pub read_cop0: fn(index: usize, cop0: &[u32; 32]) -> u32,
+    pub write_cop0: fn(index: usize, value: u32, cop0: &mut [u32; 32]),
+
     page_read:  Vec<usize>,
     page_write: Vec<usize>,
 
@@ -102,6 +105,8 @@ use unix::install_handler;
 #[cfg(windows)]
 use windows::install_handler;
 
+use crate::ee::EE;
+
 impl Bus {
     pub fn new(mode: BusMode, bios: BIOS) -> Bus {
         let mut bus = Bus {
@@ -113,7 +118,9 @@ impl Bus {
             write32: Bus::sw_fmem_write32,
             hw_base: null_mut(),
             hw_size: 0,
-            arena: None
+            arena: None,
+            read_cop0: EE::read_cop0_static,
+            write_cop0: EE::write_cop0_static,
         };
 
         unsafe { BUS_PTR = &mut bus; }
@@ -167,6 +174,14 @@ impl Bus {
 
         info!("Bus initialized with mode: {:?}", mode);
         bus
+    }
+
+    pub fn read_cop0_register(&self, index: usize, cop0: &[u32; 32]) -> u32 {
+        (self.read_cop0)(index, cop0)
+    }
+
+    pub fn write_cop0_register(&mut self, index: usize, value: u32, cop0: &mut [u32; 32]) {
+        (self.write_cop0)(index, value, cop0);
     }
 
     fn ranged_read32(&self, address: u32) -> u32 {
