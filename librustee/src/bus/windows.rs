@@ -16,7 +16,7 @@ pub unsafe extern "system" fn veh_handler(info: *mut EXCEPTION_POINTERS) -> i32 
             let guest_addr = (fault_addr - base) as u32;
             panic!(
                 "SEH access violation at host VA=0x{:X}, guest PA=0x{:08X}",
-                fault_addr - base, guest_addr
+                fault_addr, guest_addr
             );
         }
     }

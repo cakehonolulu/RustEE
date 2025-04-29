@@ -1,4 +1,4 @@
-use libc::{c_void, sigaction, sighandler_t, siginfo_t, ucontext_t, SA_SIGINFO};
+use libc::{sigaction, sighandler_t, siginfo_t, SA_SIGINFO};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io;
 
@@ -6,8 +6,7 @@ static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "C" fn segv_handler(
     _signo: i32,
-    info: *mut siginfo_t,
-    ctx: *mut c_void,
+    info: *mut siginfo_t
 ) {
     let guest_addr = unsafe { (*info).si_addr() as usize };
     let bus = unsafe { &mut *super::BUS_PTR };
@@ -16,11 +15,10 @@ unsafe extern "C" fn segv_handler(
 
     if guest_addr >= base && guest_addr < base + size {
         let fault_addr = (guest_addr - base) as u32;
-        let uc = unsafe { &mut *(ctx as *mut ucontext_t) };
 
         panic!(
             "SIGSEGV at host VA=0x{:X}, guest PA=0x{:08X}",
-            guest_addr - base,
+            guest_addr,
             fault_addr
         );
     }
