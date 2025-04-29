@@ -23,7 +23,9 @@ mod unix;
 mod windows;
 
 static mut BUS_PTR: *mut Bus = null_mut();
-static HW_BASE: AtomicUsize = AtomicUsize::new(0);
+
+static HW_BASE:   AtomicUsize = AtomicUsize::new(0);
+static HW_LENGTH: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(PartialEq, Debug)]
 pub enum BusMode {

@@ -1,3 +1,5 @@
+use crate::bus::HW_LENGTH;
+
 use super::{map, Bus};
 use region::{Allocation, Protection};
 use std::io::{self, ErrorKind};
@@ -18,6 +20,8 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     bus.hw_base = base;
     bus.hw_size = size;
     bus.arena = Some(arena);
+
+    HW_LENGTH.store(size, Ordering::SeqCst);
     HW_BASE.store(base as usize, Ordering::SeqCst);
 
     debug!(

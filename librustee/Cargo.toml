@@ -21,7 +21,7 @@ tracing-subscriber = "0.3.19"
 windows-sys = { version = "0.59.0", features = ["Win32_System_Kernel"] }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.172"
+nix = { version = "0.30.0", features = ["signal"] }
 
 [dev-dependencies]
 criterion = "0.5.1"

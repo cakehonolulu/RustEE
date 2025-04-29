@@ -1,18 +1,26 @@
-use libc::{sigaction, sighandler_t, siginfo_t, SA_SIGINFO};
+use nix::sys::signal::{
+    sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal,
+};
+use nix::libc;
+
+use std::convert::TryFrom;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io;
+use std::os::raw::{c_int, c_void};
+
+use crate::bus::{HW_BASE, HW_LENGTH};
 
 static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "C" fn segv_handler(
-    _signo: i32,
-    info: *mut siginfo_t
-) {
-    let guest_addr = unsafe { (*info).si_addr() as usize };
-    let bus = unsafe { &mut *super::BUS_PTR };
-    let base = super::HW_BASE.load(Ordering::SeqCst);
-    let size = bus.hw_size;
+extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, _context: *mut c_void) {
+    if info.is_null() {
+        return;
+    }
 
+    let guest_addr = unsafe { (*info).si_addr() as usize };
+
+    let base = HW_BASE.load(Ordering::SeqCst);
+    let size = HW_LENGTH.load(Ordering::SeqCst);
     if guest_addr >= base && guest_addr < base + size {
         let fault_addr = (guest_addr - base) as u32;
 
@@ -23,21 +31,30 @@ unsafe extern "C" fn segv_handler(
         );
     }
 
+    // Restore default handler and re-raise the signal
     unsafe {
-        let default: extern "C" fn(i32) = std::mem::transmute(libc::SIG_DFL);
-        default(libc::SIGSEGV);
+        if let Ok(signal) = Signal::try_from(signum) {
+            let default_action = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
+            let _ = sigaction(signal, &default_action);
+        }
+        libc::raise(signum);
     }
 }
 
-pub unsafe fn install_handler() -> io::Result<()> {
+pub fn install_handler() -> io::Result<()> {
     if HANDLER_INSTALLED.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
-    let mut sa: sigaction = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
-    sa.sa_sigaction = segv_handler as sighandler_t;
-    sa.sa_flags = SA_SIGINFO;
-    unsafe { libc::sigemptyset(&mut sa.sa_mask) };
-    unsafe { sigaction(libc::SIGSEGV, &sa, std::ptr::null_mut()) };
-    unsafe { sigaction(libc::SIGBUS, &sa, std::ptr::null_mut()) };
+
+    let handler = SigHandler::SigAction(segv_handler);
+    let flags = SaFlags::SA_SIGINFO;
+    let mask = SigSet::empty();
+    let action = SigAction::new(handler, flags, mask);
+
+    unsafe {
+        sigaction(Signal::SIGSEGV, &action).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        sigaction(Signal::SIGBUS, &action).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    }
+
     Ok(())
 }
