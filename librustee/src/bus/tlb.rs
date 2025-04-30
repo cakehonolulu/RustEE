@@ -184,12 +184,12 @@ impl Tlb {
         if bus.mode == BusMode::HardwareFastMem {
             // Clear old mapping if it exists
             if let Some(old_entry) = self.entries[index] {
-            self.clear_hw_fastmem_mapping(bus, &old_entry);
+                self.clear_hw_fastmem_mapping(bus, &old_entry);
             }
         } else if bus.mode == BusMode::SoftwareFastMem {
             // Clear old mapping if it exists
             if let Some(old_entry) = self.entries[index] {
-            self.clear_sw_fastmem_mapping(bus, &old_entry);
+                self.clear_sw_fastmem_mapping(bus, &old_entry);
             }
         }
 

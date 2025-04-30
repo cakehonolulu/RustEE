@@ -49,19 +49,18 @@ impl Bus {
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(host);
                 return (host as *const u8).add(offset).cast::<u32>().read_unaligned();
             }
-        }
-
-        if let Some(boff) = map::BIOS.contains(pa) {
+        } else if let Some(boff) = map::BIOS.contains(pa) {
             let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
             unsafe {
                 (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
                 return (host as *const u8).add(offset).cast::<u32>().read_unaligned();
             }
+        } else if map::IO.contains(pa).is_some() {
+            todo!("SW Fastmem: IO read at 0x{:08X}", pa);
         }
 
         tlb.install_all_sw_fastmem_mappings(self);
-
         let host = self.page_read[vpn];
         if host == 0 {
             panic!("SW-FMEM retry still unmapped VA=0x{:08X}", va);
@@ -87,19 +86,18 @@ impl Bus {
                 (host as *mut u8).add(offset).cast::<u32>().write_unaligned(value);
             }
             return;
-        }
-
-        if let Some(boff) = map::BIOS.contains(pa) {
+        } else if let Some(boff) = map::BIOS.contains(pa) {
             let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
             unsafe {
                 (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
             }
             panic!("SW-FMEM write to read-only BIOS VA=0x{:08X}", va);
+        } else if map::IO.contains(pa).is_some() {
+            todo!("SW Fastmem: IO write at 0x{:08X}", pa);
         }
 
         tlb.install_all_sw_fastmem_mappings(self);
-
         let host = self.page_write[vpn];
         if host == 0 {
             panic!("SW-FMEM retry still unmapped or read-only VA=0x{:08X}", va);

@@ -1,4 +1,4 @@
-use crate::bus::HW_LENGTH;
+use crate::bus::{map, HW_LENGTH};
 
 use super::{tlb::{mask_to_page_size, Tlb, TlbEntry}, Bus, PAGE_SIZE};
 use region::{Allocation, Protection};
@@ -125,12 +125,22 @@ impl Tlb {
 impl Bus {
     #[inline]
     pub fn hw_read32(&self, addr: u32) -> u32 {
+        if addr >= 0xB000_0000 && addr <= 0xB001_FFFF {
+            let pa = addr - 0xA000_0000;
+            if map::IO.contains(pa).is_some() {
+                todo!("HW Fastmem: IO read at 0x{:08X}", pa);
+            }
+        }
         assert!((addr as usize) + 4 <= self.hw_size);
         unsafe { (self.hw_base.add(addr as usize) as *const u32).read_unaligned() }
     }
 
     #[inline]
     pub fn hw_write32(&mut self, addr: u32, val: u32) {
+        let pa = addr - 0xA000_0000;
+        if map::IO.contains(pa).is_some() {
+            todo!("HW Fastmem: IO write at 0x{:08X}", pa);
+        }
         assert!((addr as usize) + 4 <= self.hw_size);
         unsafe { (self.hw_base.add(addr as usize) as *mut u32).write_unaligned(val) }
     }
