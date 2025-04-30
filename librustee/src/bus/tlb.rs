@@ -136,7 +136,7 @@ impl Tlb {
                 let page_size = mask_to_page_size(e.mask);
                 let vpn_mask = !(page_size - 1);
                 let va_vpn = va & vpn_mask;
-                let entry_vpn = e.vpn2 & vpn_mask;
+                let entry_vpn = (e.vpn2 << 13) & vpn_mask;
 
                 if va_vpn == entry_vpn && (e.g || e.asid == current_asid) {
                     matched_entry = Some(e);
@@ -180,11 +180,16 @@ impl Tlb {
         }
     }
 
-    fn write_tlb_entry(&mut self, bus: &Bus, index: usize, entry: TlbEntry) {
+    fn write_tlb_entry(&mut self, bus: &mut Bus, index: usize, entry: TlbEntry) {
         if bus.mode == BusMode::HardwareFastMem {
             // Clear old mapping if it exists
             if let Some(old_entry) = self.entries[index] {
-                self.clear_hw_fastmem_mapping(bus, &old_entry);
+            self.clear_hw_fastmem_mapping(bus, &old_entry);
+            }
+        } else if bus.mode == BusMode::SoftwareFastMem {
+            // Clear old mapping if it exists
+            if let Some(old_entry) = self.entries[index] {
+            self.clear_sw_fastmem_mapping(bus, &old_entry);
             }
         }
 
@@ -193,6 +198,8 @@ impl Tlb {
 
         if bus.mode == BusMode::HardwareFastMem {
             self.install_hw_fastmem_mapping(bus, &entry);
+        } else if bus.mode == BusMode::SoftwareFastMem {
+            self.install_sw_fastmem_mapping(bus, &entry);
         }
     }
 }

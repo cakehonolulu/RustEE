@@ -77,35 +77,46 @@ pub unsafe fn init_hardware_arena(bus: &Bus) -> io::Result<(Allocation, *mut u8,
 impl Tlb {
     pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 12) as usize;
+        let va_start = (entry.vpn2 as usize) << 13;
 
-        let prot = if entry.v0 {
+        // Set protection for even page
+        let prot_even = if entry.v0 {
             if entry.d0 { Protection::READ_WRITE } else { Protection::READ }
         } else {
             Protection::NONE
         };
-
         unsafe {
-            region::protect(bus.hw_base.add(va_start), page_size, prot)
+            region::protect(bus.hw_base.add(va_start), page_size, prot_even)
                 .expect("Failed to update memory protection");
         }
 
-        if page_size >= (PAGE_SIZE * 2) && entry.v1 {
-            let va_start_odd = va_start + page_size / 2;
-            let prot_odd = if entry.d1 { Protection::READ_WRITE } else { Protection::READ };
-            unsafe {
-                region::protect(bus.hw_base.add(va_start_odd), page_size / 2, prot_odd)
-                    .expect("Failed to update memory protection");
-            }
+        // Set protection for odd page
+        let prot_odd = if entry.v1 {
+            if entry.d1 { Protection::READ_WRITE } else { Protection::READ }
+        } else {
+            Protection::NONE
+        };
+        let va_start_odd = va_start + page_size;
+        unsafe {
+            region::protect(bus.hw_base.add(va_start_odd), page_size, prot_odd)
+                .expect("Failed to update memory protection");
         }
     }
 
     pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 12) as usize;
+        let va_start = (entry.vpn2 as usize) << 13;
 
+        // Clear even page
         unsafe {
             region::protect(bus.hw_base.add(va_start), page_size, Protection::NONE)
+                .expect("Failed to clear memory protection");
+        }
+
+        // Clear odd page
+        let va_start_odd = va_start + page_size;
+        unsafe {
+            region::protect(bus.hw_base.add(va_start_odd), page_size, Protection::NONE)
                 .expect("Failed to clear memory protection");
         }
     }
