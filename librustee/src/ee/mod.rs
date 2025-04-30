@@ -22,7 +22,7 @@ pub struct EE {
     bus: Bus,
     pc: u32,
     registers: [u128; 32],
-    cop0_registers: Rc<RefCell<[u32; 32]>>,
+    cop0_registers: [u32; 32],
     lo: u128,
     hi: u128,
     breakpoints: HashSet<u32>,
@@ -30,20 +30,22 @@ pub struct EE {
 
 impl EE {
     pub fn new(mut bus: Bus) -> Self {
-        let cop0_registers = Rc::new(RefCell::new([0; 32]));
-        cop0_registers.borrow_mut()[15] = 0x59;
-
-        bus.set_cop0_registers(Rc::clone(&cop0_registers));
-
-        EE {
+        let mut ee = EE {
             pc: EE_RESET_VEC,
             registers: [0; 32],
-            cop0_registers,
+            cop0_registers: [0; 32],
             lo: 0,
             hi: 0,
             bus,
             breakpoints: HashSet::new(),
-        }
+        };
+
+        ee.cop0_registers[15] = 0x59;
+
+
+        ee.bus.cop0_registers_ptr = ee.cop0_registers.as_mut_ptr();
+
+        ee
     }
 
     pub fn read_register32(&self, index: usize) -> u32 {
@@ -86,11 +88,11 @@ impl CPU for EE {
     }
 
     fn read_cop0_register(&self, index: usize) -> u32 {
-        self.cop0_registers.borrow()[index]
+        self.cop0_registers[index]
     }
 
     fn write_cop0_register(&mut self, index: usize, value: u32) {
-        self.cop0_registers.borrow_mut()[index] = value;
+        self.cop0_registers[index] = value;
     }
 
     fn read32(&self, addr: u32) -> u32 {

@@ -78,7 +78,7 @@ pub struct Bus {
     hw_size: usize,
     arena: Option<region::Allocation>,
 
-    cop0_registers: Option<Rc<RefCell<[u32; 32]>>>,
+    pub cop0_registers_ptr: *mut u32,
 
     // Function pointers for read/write operations
     pub read32: fn(&Bus, u32) -> u32,
@@ -100,7 +100,7 @@ impl Bus {
             arena: None,
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
-            cop0_registers: None
+            cop0_registers_ptr: std::ptr::null_mut(),
         };
 
         unsafe { BUS_PTR = &mut bus; }
@@ -126,22 +126,16 @@ impl Bus {
         bus
     }
 
-    pub fn set_cop0_registers(&mut self, cop0_registers: Rc<RefCell<[u32; 32]>>) {
-        self.cop0_registers = Some(cop0_registers);
-    }
-
     pub fn read_cop0_register(&self, index: usize) -> u32 {
-        self.cop0_registers
-            .as_ref()
-            .expect("COP0 registers not set")
-            .borrow()[index]
+        unsafe {
+            *self.cop0_registers_ptr.add(index)
+        }
     }
 
     pub fn write_cop0_register(&mut self, index: usize, value: u32) {
-        self.cop0_registers
-            .as_ref()
-            .expect("COP0 registers not set")
-            .borrow_mut()[index] = value;
+        unsafe {
+            *self.cop0_registers_ptr.add(index) = value;
+        }
     }
 
     pub fn read_cop0_asid(&self) -> u8 {

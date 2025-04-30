@@ -64,7 +64,7 @@ impl<'a> JIT<'a> {
 
         let mut module = JITModule::new(builder);
         let gpr_ptr = cpu.registers.as_mut_ptr();
-        let cop0_ptr = cpu.cop0_registers.borrow_mut().as_mut_ptr();
+        let cop0_ptr = cpu.cop0_registers.as_mut_ptr();
         let pc_ptr = &mut cpu.pc as *mut u32;
 
         let mut store32_sig = module.make_signature();
