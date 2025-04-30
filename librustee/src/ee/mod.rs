@@ -2,7 +2,9 @@
     MIPS R5900 Emotion Engine CPU
 */
 
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use crate::Bus;
 use crate::cpu::CPU;
@@ -20,7 +22,7 @@ pub struct EE {
     bus: Bus,
     pc: u32,
     registers: [u128; 32],
-    cop0_registers: [u32; 32],
+    cop0_registers: Rc<RefCell<[u32; 32]>>,
     lo: u128,
     hi: u128,
     breakpoints: HashSet<u32>,
@@ -28,29 +30,20 @@ pub struct EE {
 
 impl EE {
     pub fn new(mut bus: Bus) -> Self {
-        let mut cop0_regs: [u32; 32] = [0; 32];
-        cop0_regs[15] = 0x59;
+        let cop0_registers = Rc::new(RefCell::new([0; 32]));
+        cop0_registers.borrow_mut()[15] = 0x59;
 
-        bus.read_cop0 = EE::read_cop0_static;
-        bus.write_cop0 = EE::write_cop0_static;
+        bus.set_cop0_registers(Rc::clone(&cop0_registers));
 
         EE {
             pc: EE_RESET_VEC,
             registers: [0; 32],
-            cop0_registers: cop0_regs,
+            cop0_registers,
             lo: 0,
             hi: 0,
             bus,
             breakpoints: HashSet::new(),
         }
-    }
-
-    pub fn read_cop0_static(index: usize, cop0: &[u32; 32]) -> u32 {
-        cop0[index]
-    }
-
-    pub fn write_cop0_static(index: usize, value: u32, cop0: &mut [u32; 32]) {
-        cop0[index] = value;
     }
 
     pub fn read_register32(&self, index: usize) -> u32 {
@@ -93,11 +86,11 @@ impl CPU for EE {
     }
 
     fn read_cop0_register(&self, index: usize) -> u32 {
-        self.cop0_registers[index]
+        self.cop0_registers.borrow()[index]
     }
 
     fn write_cop0_register(&mut self, index: usize, value: u32) {
-        self.cop0_registers[index] = value;
+        self.cop0_registers.borrow_mut()[index] = value;
     }
 
     fn read32(&self, addr: u32) -> u32 {

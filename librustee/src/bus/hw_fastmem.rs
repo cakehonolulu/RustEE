@@ -1,6 +1,6 @@
 use crate::bus::HW_LENGTH;
 
-use super::{map, Bus};
+use super::{tlb::{mask_to_page_size, Tlb, TlbEntry}, Bus, PAGE_SIZE};
 use region::{Allocation, Protection};
 use std::io::{self, ErrorKind};
 use super::HW_BASE;
@@ -31,29 +31,84 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
 }
 
 pub unsafe fn init_hardware_arena(bus: &Bus) -> io::Result<(Allocation, *mut u8, usize)> {
-    let hw_size = (map::BIOS.0 as usize) + (map::BIOS.1 as usize);
-
-    let mut alloc = region::alloc(hw_size, Protection::NONE)
+    let size = 1 << 32;
+    let mut alloc = region::alloc(size, Protection::NONE)
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
-
     let base = alloc.as_mut_ptr::<u8>();
 
-    let ram_addr = unsafe { base.add(map::RAM.0 as usize) };
-    unsafe { region::protect(ram_addr, map::RAM.1 as usize, Protection::READ_WRITE)
-        .map_err(|e| io::Error::new(ErrorKind::Other, e)) }?;
+    // Map kseg0: 0x80000000–0x9FFFFFFF to RAM (0x00000000–0x01FFFFFF)
+    unsafe {
+        region::protect(base.add(0x80000000 as usize), 0x2000000, Protection::READ_WRITE)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    };
 
-    let bios_addr = unsafe { base.add(map::BIOS.0 as usize) };
-    unsafe { region::protect(bios_addr, map::BIOS.1 as usize, Protection::READ_WRITE)
-        .map_err(|e| io::Error::new(ErrorKind::Other, e)) }?;
+    // Map kseg1 RAM: 0xA0000000–0xA1FFFFFF → 0x00000000–0x01FFFFFF
+    let ram_kseg1_start = 0xA0000000 as usize;
+    let ram_size = 0x2000000; // 32MB
+    unsafe {
+        region::protect(base.add(ram_kseg1_start), ram_size, Protection::READ_WRITE)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    };
 
-    let bios_len = map::BIOS.1 as usize;
-    let dst: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(bios_addr, bios_len) };
-    dst.copy_from_slice(&bus.bios.bytes);
+    // Map kseg1 BIOS: 0xBFC00000–0xBFFFFFFF → 0x1FC00000–0x1FFFFFFF
+    let bios_kseg1_start = 0xBFC00000 as usize;
+    let bios_size = 0x400000; // 4MB (typical BIOS size)
+    unsafe {
+        region::protect(base.add(bios_kseg1_start), bios_size, Protection::READ_WRITE)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    };
 
-    unsafe { region::protect(bios_addr, map::BIOS.1 as usize, Protection::READ_EXECUTE)
-        .map_err(|e| io::Error::new(ErrorKind::Other, e)) }?;
+    // Copy BIOS data into the arena at virtual address 0xBFC00000
+    let bios_len = bus.bios.bytes.len();
+    let dst = base.add(bios_kseg1_start);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), dst, bios_len);
+    };
 
-    Ok((alloc, base, hw_size))
+    // Set BIOS region to READ-only after copying
+    unsafe {
+        region::protect(base.add(bios_kseg1_start), bios_size, Protection::READ)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    };
+
+    Ok((alloc, base, size))
+}
+
+impl Tlb {
+    pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
+        let page_size = mask_to_page_size(entry.mask) as usize;
+        let va_start = (entry.vpn2 << 12) as usize;
+
+        let prot = if entry.v0 {
+            if entry.d0 { Protection::READ_WRITE } else { Protection::READ }
+        } else {
+            Protection::NONE
+        };
+
+        unsafe {
+            region::protect(bus.hw_base.add(va_start), page_size, prot)
+                .expect("Failed to update memory protection");
+        }
+
+        if page_size >= (PAGE_SIZE * 2) && entry.v1 {
+            let va_start_odd = va_start + page_size / 2;
+            let prot_odd = if entry.d1 { Protection::READ_WRITE } else { Protection::READ };
+            unsafe {
+                region::protect(bus.hw_base.add(va_start_odd), page_size / 2, prot_odd)
+                    .expect("Failed to update memory protection");
+            }
+        }
+    }
+
+    pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
+        let page_size = mask_to_page_size(entry.mask) as usize;
+        let va_start = (entry.vpn2 << 12) as usize;
+
+        unsafe {
+            region::protect(bus.hw_base.add(va_start), page_size, Protection::NONE)
+                .expect("Failed to clear memory protection");
+        }
+    }
 }
 
 impl Bus {

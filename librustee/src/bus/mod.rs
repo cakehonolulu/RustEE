@@ -3,12 +3,16 @@ pub mod bios;
 use bios::BIOS;
 use tracing::info;
 
-use std::ptr::null_mut;
+use std::rc::Rc;
+use std::{cell::RefCell, ptr::null_mut};
 use std::sync::atomic::AtomicUsize;
 
+mod tlb;
 mod ranged;
 mod sw_fastmem;
 mod hw_fastmem;
+
+use tlb::{OperatingMode, Tlb};
 
 use crate::ee::EE;
 
@@ -27,7 +31,7 @@ static mut BUS_PTR: *mut Bus = null_mut();
 static HW_BASE:   AtomicUsize = AtomicUsize::new(0);
 static HW_LENGTH: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum BusMode {
     SoftwareFastMem,
     Ranged,
@@ -48,8 +52,10 @@ mod map {
         }
     }
 
-    pub const BIOS: Range = Range(0xBFC0_0000, (1024 * 1024) * 4);
+    // Physical address ranges
     pub const RAM:  Range = Range(0x0000_0000, 32 * 1024 * 1024);
+    pub const IO:   Range = Range(0x1000_0000, 64 * 1024);
+    pub const BIOS: Range = Range(0x1FC0_0000, 4 * 1024 * 1024);
 }
 
 const PAGE_BITS:    usize = 12;                    // 4 KiB pages
@@ -60,8 +66,10 @@ pub struct Bus {
     bios: BIOS,
     ram: Vec<u8>,
 
-    pub read_cop0: fn(index: usize, cop0: &[u32; 32]) -> u32,
-    pub write_cop0: fn(index: usize, value: u32, cop0: &mut [u32; 32]),
+    tlb: RefCell<Tlb>,
+    operating_mode: OperatingMode,
+
+    mode: BusMode,
 
     page_read:  Vec<usize>,
     page_write: Vec<usize>,
@@ -69,6 +77,8 @@ pub struct Bus {
     hw_base: *mut u8,
     hw_size: usize,
     arena: Option<region::Allocation>,
+
+    cop0_registers: Option<Rc<RefCell<[u32; 32]>>>,
 
     // Function pointers for read/write operations
     pub read32: fn(&Bus, u32) -> u32,
@@ -82,13 +92,15 @@ impl Bus {
             ram: vec![0; 32 * 1024 * 1024],
             page_read:  vec![0; NUM_PAGES],
             page_write: vec![0; NUM_PAGES],
+            mode: mode.clone(),
             read32:  Bus::sw_fmem_read32,
             write32: Bus::sw_fmem_write32,
             hw_base: null_mut(),
             hw_size: 0,
             arena: None,
-            read_cop0: EE::read_cop0_static,
-            write_cop0: EE::write_cop0_static,
+            tlb: Tlb::new().into(),
+            operating_mode: OperatingMode::Kernel,
+            cop0_registers: None
         };
 
         unsafe { BUS_PTR = &mut bus; }
@@ -114,11 +126,26 @@ impl Bus {
         bus
     }
 
-    pub fn read_cop0_register(&self, index: usize, cop0: &[u32; 32]) -> u32 {
-        (self.read_cop0)(index, cop0)
+    pub fn set_cop0_registers(&mut self, cop0_registers: Rc<RefCell<[u32; 32]>>) {
+        self.cop0_registers = Some(cop0_registers);
     }
 
-    pub fn write_cop0_register(&mut self, index: usize, value: u32, cop0: &mut [u32; 32]) {
-        (self.write_cop0)(index, value, cop0);
+    pub fn read_cop0_register(&self, index: usize) -> u32 {
+        self.cop0_registers
+            .as_ref()
+            .expect("COP0 registers not set")
+            .borrow()[index]
+    }
+
+    pub fn write_cop0_register(&mut self, index: usize, value: u32) {
+        self.cop0_registers
+            .as_ref()
+            .expect("COP0 registers not set")
+            .borrow_mut()[index] = value;
+    }
+
+    pub fn read_cop0_asid(&self) -> u8 {
+        let entry_hi = self.read_cop0_register(10); // COP0.EntryHi
+        (entry_hi & 0xFF) as u8
     }
 }

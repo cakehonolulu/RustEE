@@ -1,39 +1,46 @@
 use super::map;
+use super::tlb::AccessType;
 use super::Bus;
 
 impl Bus {
-    pub fn ranged_read32(&self, address: u32) -> u32 {
-        if let Some(offset) = map::RAM.contains(address) {
-            let offset = offset as usize;
-            if offset + 4 <= self.ram.len() {
-                let bytes = &self.ram[offset..offset + 4];
-                u32::from_le_bytes(bytes.try_into().expect("Ranged: Failed to convert bytes!"))
-            } else {
-                panic!("Range: Attempted to read out of bounds from RAM");
+    pub fn ranged_read32(&self, va: u32) -> u32 {
+        let mut tlb = self.tlb.borrow_mut();
+        match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            Ok(pa) => {
+                if let Some(offset) = map::RAM.contains(pa) {
+                    let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u32;
+                    unsafe { ptr.read_unaligned() }
+                } else if let Some(offset) = map::IO.contains(pa) {
+                    todo!("Ranged: IO read at 0x{:08X}", pa);
+                } else if let Some(offset) = map::BIOS.contains(pa) {
+                    let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u32;
+                    unsafe { ptr.read_unaligned() }
+                } else {
+                    panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+                }
             }
-        } else if let Some(offset) = map::BIOS.contains(address) {
-            let offset = offset as usize;
-            if offset + 4 <= self.bios.bytes.len() {
-                let bytes = &self.bios.bytes[offset..offset + 4];
-                u32::from_le_bytes(bytes.try_into().expect("Ranged: Failed to convert bytes!"))
-            } else {
-                panic!("Range: Attempted to read out of bounds from BIOS");
+            Err(e) => {
+                panic!("Ranged: TLB exception on read: {:?}", e);
             }
-        } else {
-            panic!("Ranged: Unhandled 32-bit read from address: 0x{:08X}", address);
         }
     }
 
-    pub fn ranged_write32(&mut self, address: u32, value: u32) {
-        if let Some(offset) = map::RAM.contains(address) {
-            let offset = offset as usize;
-            if offset + 4 <= self.ram.len() {
-                self.ram[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-            } else {
-                panic!("Ranged: Attempted to write out of bounds to RAM");
+    pub fn ranged_write32(&mut self, va: u32, val: u32) {
+        let mut tlb = self.tlb.borrow_mut();
+        match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+            Ok(pa) => {
+                if let Some(offset) = map::RAM.contains(pa) {
+                    let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u32;
+                    unsafe { ptr.write_unaligned(val); }
+                } else if let Some(offset) = map::IO.contains(pa) {
+                    todo!("Ranged: IO write at 0x{:08X}", pa);
+                } else {
+                    panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+                }
             }
-        } else {
-            panic!("Ranged: Unhandled 32-bit write to address: 0x{:08X}", address);
+            Err(e) => {
+                panic!("Ranged: TLB exception on write: {:?}", e);
+            }
         }
     }
 }
