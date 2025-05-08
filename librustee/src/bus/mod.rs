@@ -83,6 +83,8 @@ pub struct Bus {
     // Function pointers for read/write operations
     pub read32: fn(&Bus, u32) -> u32,
     pub write32: fn(&mut Bus, u32, u32),
+
+    is_mmio: [u8; 1 << 20],
 }
 
 impl Bus {
@@ -101,6 +103,7 @@ impl Bus {
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers_ptr: std::ptr::null_mut(),
+            is_mmio: [0; 1 << 20],
         };
 
         unsafe { BUS_PTR = &mut bus; }
