@@ -3,7 +3,6 @@ pub mod bios;
 use bios::BIOS;
 use tracing::info;
 
-use std::rc::Rc;
 use std::{cell::RefCell, ptr::null_mut};
 use std::sync::atomic::AtomicUsize;
 
@@ -14,7 +13,6 @@ mod hw_fastmem;
 
 use tlb::{OperatingMode, Tlb};
 
-use crate::ee::EE;
 
 #[cfg(unix)]
 use unix::install_handler;

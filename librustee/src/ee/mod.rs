@@ -2,9 +2,7 @@
     MIPS R5900 Emotion Engine CPU
 */
 
-use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
 
 use crate::Bus;
 use crate::cpu::CPU;
@@ -29,7 +27,7 @@ pub struct EE {
 }
 
 impl EE {
-    pub fn new(mut bus: Bus) -> Self {
+    pub fn new(bus: Bus) -> Self {
         let mut ee = EE {
             pc: EE_RESET_VEC,
             registers: [0; 32],

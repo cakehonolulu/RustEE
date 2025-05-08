@@ -8,7 +8,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
 use std::num::NonZero;
-use tracing::{debug, error};
+use tracing::error;
 
 #[derive(Clone)]
 pub struct Block {

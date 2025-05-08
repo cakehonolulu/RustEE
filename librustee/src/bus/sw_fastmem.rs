@@ -1,6 +1,6 @@
 use tracing::debug;
 use super::{map, tlb::mask_to_page_size, Bus, PAGE_BITS, PAGE_SIZE};
-use crate::bus::tlb::{AccessType, Exception, TlbEntry};
+use crate::bus::tlb::{AccessType, TlbEntry};
 
 pub fn init_software_fastmem(bus: &mut Bus) {
     debug!("Initializing Software Fast Memory...");
