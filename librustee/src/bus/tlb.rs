@@ -40,6 +40,7 @@ pub enum Exception {
     AddressError,
 }
 
+
 pub struct Tlb {
     pub entries: [Option<TlbEntry>; 48],
     pub index: u32,
@@ -180,19 +181,15 @@ impl Tlb {
     }
 
     fn write_tlb_entry(&mut self, bus: &mut Bus, index: usize, entry: TlbEntry) {
-        if bus.mode == BusMode::HardwareFastMem {
-            // Clear old mapping if it exists
-            if let Some(old_entry) = self.entries[index] {
+        if let Some(old_entry) = self.entries[index] {
+            if bus.mode == BusMode::HardwareFastMem {
                 self.clear_hw_fastmem_mapping(bus, &old_entry);
             }
-        } else if bus.mode == BusMode::SoftwareFastMem {
-            // Clear old mapping if it exists
-            if let Some(old_entry) = self.entries[index] {
+            else if bus.mode == BusMode::SoftwareFastMem {
                 self.clear_sw_fastmem_mapping(bus, &old_entry);
             }
         }
 
-        // Install new mapping
         self.entries[index] = Some(entry);
 
         if bus.mode == BusMode::HardwareFastMem {

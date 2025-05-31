@@ -29,7 +29,7 @@ fn main() {
             .help("Choose the EE backend: 'interpreter' or 'jit'"))
         .arg(arg!(--"bus-mode" <MODE>)
             .value_parser(["ranged", "sw_fastmem", "hw_fastmem"])
-            .default_value("ranged")
+            .default_value("hw_fastmem")
             .help("Choose the bus emulation mode: 'ranged', 'sw_fastmem' or 'hw_fastmem'"))
         .get_matches();
 

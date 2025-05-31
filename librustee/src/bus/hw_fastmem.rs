@@ -172,23 +172,28 @@ impl Bus {
     pub fn hw_read32(&self, addr: u32) -> u32 {
         let page = (addr >> 12) as usize;
         if self.is_mmio[page] != 0 {
-            // Mark function as #[cold]
             todo!("HW Fastmem: IO read at 0x{:08X}", addr);
         } else {
             assert!((addr as usize) + 4 <= self.hw_size);
-            unsafe { (self.hw_base.add(addr as usize) as *const u32).read_unaligned() } // RAM path
+            unsafe {
+                let host_ptr = self.hw_base.add(addr as usize) as *const u32;
+                host_ptr.read_unaligned()
+            }
         }
     }
+
 
     #[inline]
     pub fn hw_write32(&mut self, addr: u32, val: u32) {
         let page = (addr >> 12) as usize;
         if self.is_mmio[page] != 0 {
-            // Mark function as #[cold]
             todo!("HW Fastmem: IO write at 0x{:08X}", addr);
         } else {
             assert!((addr as usize) + 4 <= self.hw_size);
-            unsafe { (self.hw_base.add(addr as usize) as *mut u32).write_unaligned(val) } // RAM path
+            unsafe {
+                let host_ptr = self.hw_base.add(addr as usize) as *mut u32;
+                host_ptr.write_unaligned(val)
+            }
         }
     }
 }
