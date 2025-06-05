@@ -427,6 +427,11 @@ fn fix_return_address<H: ArchHandler>(
     for i in 0..MAX_SLOTS {
         let slot_addr = old_sp + i * 8;
         let candidate: u64 = unsafe { *(slot_addr as *const u64) };
+        let diff = if candidate > original_ret {
+            candidate - original_ret
+        } else {
+            original_ret - candidate
+        };
 
         if candidate == original_ret {
             trace!(
