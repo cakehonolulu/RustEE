@@ -1,6 +1,8 @@
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
+use crate::Bus;
 use tracing::error;
+use crate::bus::tlb::TlbEntry;
 use crate::cpu::CPU;
 
 pub struct Interpreter {
@@ -133,6 +135,9 @@ impl Interpreter {
                     }
                     0x04 => {
                         self.mtc0(opcode);
+                    }
+                    0x10 => {
+                        self.tlbwi(opcode);
                     }
                     _ => {
                         error!(
@@ -279,6 +284,57 @@ impl Interpreter {
         (self.cpu.bus.write32)(&mut self.cpu.bus, address, rt_val);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn tlbwi(&mut self, opcode: u32) {
+        let index = (self.cpu.read_cop0_register(0) & 0x3F) as usize;
+
+        let entry_hi  = self.cpu.read_cop0_register(10);
+        let entry_lo0 = self.cpu.read_cop0_register(2);
+        let entry_lo1 = self.cpu.read_cop0_register(3);
+        let page_mask = self.cpu.read_cop0_register(5);
+
+        let vpn2 = entry_hi >> 13;
+        let asid = (entry_hi & 0xFF) as u8;
+
+        let s0   = ((entry_lo0 >> 31) & 0x1) != 0;
+        let pfn0 = (entry_lo0 >> 6) & 0x000F_FFFF;
+        let c0   = ((entry_lo0 >> 3) & 0x7) as u8;
+        let d0   = ((entry_lo0 >> 2) & 0x1) != 0;
+        let v0   = ((entry_lo0 >> 1) & 0x1) != 0;
+        let g0   =  (entry_lo0 & 0x1) != 0;
+
+        let s1   = ((entry_lo1 >> 31) & 0x1) != 0;
+        let pfn1 = (entry_lo1 >> 6) & 0x000F_FFFF;
+        let c1   = ((entry_lo1 >> 3) & 0x7) as u8;
+        let d1   = ((entry_lo1 >> 2) & 0x1) != 0;
+        let v1   = ((entry_lo1 >> 1) & 0x1) != 0;
+        let g1   =  (entry_lo1 & 0x1) != 0;
+
+        let g = g0 | g1;
+
+        let new_entry = TlbEntry {
+            vpn2,
+            asid,
+            g,
+            pfn0,
+            pfn1,
+            c0,
+            c1,
+            d0,
+            d1,
+            v0,
+            v1,
+            s0,
+            s1,
+            mask: page_mask,
+        };
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+
+        let bus_ptr = &mut self.cpu.bus as *mut Bus;
+        let mut tlb_refmut = self.cpu.bus.tlb.borrow_mut();
+        tlb_refmut.write_tlb_entry(bus_ptr, index, new_entry);
     }
 }
 

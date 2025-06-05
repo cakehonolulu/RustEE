@@ -1,3 +1,4 @@
+use crate::bus::tlb::TlbEntry;
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
 use crate::Bus;
@@ -29,6 +30,7 @@ pub struct JIT<'a> {
     pc_ptr: *mut u32,
     cycles: usize,
     bus_write32_func: FuncId,
+    tlbwi_func: FuncId,
 }
 
 enum BranchTarget {
@@ -51,8 +53,59 @@ pub extern "C" fn __bus_write32<'a>(
     (bus.write32)(bus, addr, value);
 }
 
+pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
+    let bus = unsafe { &mut *bus_ptr };
+    let mut tlb_ref = bus.tlb.borrow_mut();
+
+    let index = (unsafe { *bus.cop0_registers_ptr.add(0) } & 0x3F) as usize;
+
+    let entry_hi  = unsafe { *bus.cop0_registers_ptr.add(10) }; // EntryHi
+    let entry_lo0 = unsafe { *bus.cop0_registers_ptr.add(2)  }; // EntryLo0
+    let entry_lo1 = unsafe { *bus.cop0_registers_ptr.add(3)  }; // EntryLo1
+    let page_mask = unsafe { *bus.cop0_registers_ptr.add(5)  }; // PageMask
+
+    let vpn2 = entry_hi >> 13;
+    let asid = (entry_hi & 0xFF) as u8;
+
+    let s0   = ((entry_lo0 >> 31) & 0x1) != 0;     // scratchpad flag
+    let pfn0 = (entry_lo0 >> 6) & 0x000F_FFFF;     // bits [31:6]
+    let c0   = ((entry_lo0 >> 3) & 0x7) as u8;     // bits [5:3]
+    let d0   = ((entry_lo0 >> 2) & 0x1) != 0;      // bit [2]
+    let v0   = ((entry_lo0 >> 1) & 0x1) != 0;      // bit [1]
+    let g0   =  (entry_lo0 & 0x1) != 0;            // bit [0]
+
+    let s1   = ((entry_lo1 >> 31) & 0x1) != 0;     // scratchpad flag
+    let pfn1 = (entry_lo1 >> 6) & 0x000F_FFFF;     // bits [31:6]
+    let c1   = ((entry_lo1 >> 3) & 0x7) as u8;     // bits [5:3]
+    let d1   = ((entry_lo1 >> 2) & 0x1) != 0;      // bit [2]
+    let v1   = ((entry_lo1 >> 1) & 0x1) != 0;      // bit [1]
+    let g1   =  (entry_lo1 & 0x1) != 0;            // bit [0]
+
+    let g = g0 | g1;
+
+    let new_entry = TlbEntry {
+        vpn2,
+        asid,
+        g,
+        pfn0,
+        pfn1,
+        c0,
+        c1,
+        d0,
+        d1,
+        v0,
+        v1,
+        s0,
+        s1,
+        mask: page_mask,
+    };
+
+    tlb_ref.write_tlb_entry(bus_ptr, index, new_entry);
+}
+
 impl<'a> JIT<'a> {
     pub fn new(cpu: &'a mut EE) -> Self {
+
         let mut builder = JITBuilder::new(
             cranelift_module::default_libcall_names()
         ).expect("Failed to create JITBuilder");
@@ -60,6 +113,11 @@ impl<'a> JIT<'a> {
         builder.symbol(
             "__bus_write32",
             __bus_write32 as *const u8,
+        );
+
+        builder.symbol(
+            "__bus_tlbwi",
+            __bus_tlbwi as *const u8,
         );
 
         let mut module = JITModule::new(builder);
@@ -75,6 +133,15 @@ impl<'a> JIT<'a> {
             .declare_function("__bus_write32", Linkage::Import, &store32_sig)
             .expect("Failed to declare __bus_write32 function!");
 
+        let mut tlbwi_sig = module.make_signature();
+        // Parameter: i64 (raw *mut Bus)
+        tlbwi_sig.params.push(AbiParam::new(types::I64));
+        // Return i32 (unused)
+        tlbwi_sig.returns.push(AbiParam::new(types::I32));
+        let tlbwi_func: FuncId = module
+            .declare_function("__bus_tlbwi", Linkage::Import, &tlbwi_sig)
+            .expect("Failed to declare __bus_tlbwi!");
+
         JIT {
             cpu,
             module,
@@ -84,7 +151,8 @@ impl<'a> JIT<'a> {
             cop0_ptr,
             pc_ptr,
             cycles: 0,
-            bus_write32_func
+            bus_write32_func,
+            tlbwi_func
         }
     }
 
@@ -306,6 +374,7 @@ impl<'a> JIT<'a> {
         self.module.finalize_definitions().unwrap();
 
         let ptr = self.module.get_finalized_function(func_id);
+
         unsafe { (std::mem::transmute(ptr), breakpoint, total_cycles) }
     }
 
@@ -389,6 +458,9 @@ impl<'a> JIT<'a> {
                     }
                     0x04 => {
                         self.mtc0(builder, opcode, current_pc);
+                    }
+                    0x10 => {
+                        self.tlbwi(builder, opcode, current_pc);
                     }
                     _ => {
                         error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
@@ -577,6 +649,18 @@ impl<'a> JIT<'a> {
 
         let callee = self.module.declare_func_in_func(self.bus_write32_func, builder.func);
         builder.ins().call(callee, &[bus_ptr_const, addr_arg, val_arg]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+    }
+
+    fn tlbwi(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+        let bus_raw = (&mut self.cpu.bus as *mut Bus) as i64;
+        let bus_ptr = builder.ins().iconst(types::I64, bus_raw);
+
+        let local_callee = self.module.declare_func_in_func(self.tlbwi_func, builder.func);
+
+        builder.ins().call(local_callee, &[bus_ptr]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);

@@ -6,7 +6,7 @@ use tracing::info;
 use std::{cell::RefCell, ptr::null_mut};
 use std::sync::atomic::AtomicUsize;
 
-mod tlb;
+pub mod tlb;
 mod ranged;
 mod sw_fastmem;
 mod hw_fastmem;
@@ -20,7 +20,7 @@ use unix::install_handler;
 use windows::install_handler;
 
 #[cfg(unix)]
-mod unix;
+pub mod unix;
 #[cfg(windows)]
 mod windows;
 
@@ -64,7 +64,7 @@ pub struct Bus {
     bios: BIOS,
     ram: Vec<u8>,
 
-    tlb: RefCell<Tlb>,
+    pub tlb: RefCell<Tlb>,
     operating_mode: OperatingMode,
 
     mode: BusMode,
@@ -81,8 +81,6 @@ pub struct Bus {
     // Function pointers for read/write operations
     pub read32: fn(&Bus, u32) -> u32,
     pub write32: fn(&mut Bus, u32, u32),
-
-    is_mmio: [u8; 1 << 20],
 }
 
 impl Bus {
@@ -101,7 +99,6 @@ impl Bus {
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers_ptr: std::ptr::null_mut(),
-            is_mmio: [0; 1 << 20],
         };
 
         unsafe { BUS_PTR = &mut bus; }
@@ -142,5 +139,9 @@ impl Bus {
     pub fn read_cop0_asid(&self) -> u8 {
         let entry_hi = self.read_cop0_register(10); // COP0.EntryHi
         (entry_hi & 0xFF) as u8
+    }
+
+    pub fn io_write32(&mut self, addr: u32, value: u32) {
+        panic!("Invalid IO write32: addr=0x{:08X}, value=0x{:08X}", addr, value);
     }
 }

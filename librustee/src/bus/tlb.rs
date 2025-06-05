@@ -180,7 +180,9 @@ impl Tlb {
         }
     }
 
-    fn write_tlb_entry(&mut self, bus: &mut Bus, index: usize, entry: TlbEntry) {
+    pub fn write_tlb_entry(&mut self, bus_ptr: *mut Bus, index: usize, entry: TlbEntry) {
+        let bus = unsafe { &mut *bus_ptr };
+
         if let Some(old_entry) = self.entries[index] {
             if bus.mode == BusMode::HardwareFastMem {
                 self.clear_hw_fastmem_mapping(bus, &old_entry);
