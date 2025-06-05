@@ -118,7 +118,7 @@ impl Bus {
         assert!((addr as usize) + 4 <= self.hw_size);
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *const u32;
-            host_ptr.read_unaligned()
+            *host_ptr
         }
     }
 
