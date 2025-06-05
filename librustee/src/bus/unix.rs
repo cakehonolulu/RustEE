@@ -32,7 +32,7 @@ trait ArchHandler {
     fn advance_instruction_pointer(ctx: *mut c_void, cs: &Capstone, fault_addr: i64) -> Result<(), &'static str>;
     fn parse_register_from_operand(operand: &str) -> Option<Self::Register>;
     fn register_name(reg: &Self::Register) -> &'static str;
-    fn get_helper_pattern() -> &'static str;
+    fn get_helper_pattern() -> &'static [&'static str];
     fn get_call_instruction() -> &'static str;
 }
 
@@ -126,9 +126,13 @@ mod x86_64_impl {
             }
         }
         
-        fn get_helper_pattern() -> &'static str {
-            "librustee::ee::jit::__bus_write32"
+        fn get_helper_pattern() -> &'static [&'static str] {
+            &[
+                "librustee::ee::jit::__bus_write32",
+                "librustee::ee::jit::__bus_read32",
+            ]
         }
+
         
         fn get_call_instruction() -> &'static str {
             "call"
@@ -146,6 +150,12 @@ compile_error!("Unsupported architecture");
 extern "C" fn io_write32_stub(bus_ptr: *mut Bus, address: u64, value: u32) {
     let bus = unsafe { &mut *bus_ptr };
     bus.io_write32(address as u32, value);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn io_read32_stub(bus_ptr: *mut Bus, address: u64) -> u32 {
+    let bus = unsafe { &mut *bus_ptr };
+    bus.io_read32(address as u32)
 }
 
 fn restore_default_handler_and_raise(signum: c_int) {
@@ -168,24 +178,12 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
         return;
     }
 
-    let uc = unsafe { &*(ctx as *const libc::ucontext_t) };
-
-    // Save original register state
-    /*let orig_rax = uc.uc_mcontext.gregs[libc::REG_RAX as usize];
-    let orig_rbx = uc.uc_mcontext.gregs[libc::REG_RBX as usize];
-    let orig_rcx = uc.uc_mcontext.gregs[libc::REG_RCX as usize];
-    let orig_rdx = uc.uc_mcontext.gregs[libc::REG_RDX as usize];
-    let orig_rsi = uc.uc_mcontext.gregs[libc::REG_RSI as usize];
-    let orig_rdi = uc.uc_mcontext.gregs[libc::REG_RDI as usize];
-
-    debug!("RAX: 0x{:X}, RBX: 0x{:X}, RCX: 0x{:X}, RDX: 0x{:X}, RDI: 0x{:X}, RSI: 0x{:X}", orig_rax, orig_rbx, orig_rcx, orig_rdx, orig_rdi, orig_rsi);*/
-
     let guest_addr = unsafe { (*info).si_addr() as usize };
     let base = HW_BASE.load(Ordering::SeqCst);
     let size = HW_LENGTH.load(Ordering::SeqCst);
 
     if guest_addr < base || guest_addr >= base + size {
-        debug!(
+        error!(
             "Address 0x{:x} out of bounds (base=0x{:x}, size=0x{:x})",
             guest_addr, base, size
         );
@@ -202,18 +200,37 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
     trace!("Detected MMIO fastmem access! Patching...");
     let bt = Backtrace::new();
     let mut bus_frame_index: Option<usize> = None;
+    let mut matched_pattern: Option<&'static str> = None;
 
-    for (index, frame) in bt.frames().iter().enumerate() {
+    for (frame_idx, frame) in bt.frames().iter().enumerate() {
         for sym in frame.symbols() {
             if let Some(name) = sym.name() {
                 let name_str = name.to_string();
-                if name_str.contains(H::get_helper_pattern()) {
-                    bus_frame_index = Some(index);
-                    trace!("Found __bus_* symbol at frame {}: {}", index, name_str);
+
+                let mut found = false;
+                for &pattern in H::get_helper_pattern().iter() {
+                    if name_str.contains(pattern) {
+                        bus_frame_index = Some(frame_idx);
+                        matched_pattern = Some(pattern);
+                        trace!(
+                            "Found helper symbol `{}` at frame {} (matched `{}`)",
+                            name_str, frame_idx, pattern
+                        );
+                        found = true;
+                        break;
+                    }
+                }
+
+                if found {
                     break;
                 }
-                trace!("Found symbol at frame {}: {}", index, name_str);
+
+                trace!("Found symbol at frame {}: {}", frame_idx, name_str);
             }
+        }
+
+        if bus_frame_index.is_some() {
+            break;
         }
     }
 
@@ -223,8 +240,21 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
         return;
     }
 
-    let stub_addr = io_write32_stub as *const () as u64;
-    trace!("Selected stub for write32: 0x{:x}", stub_addr);
+    let stub_addr: u64 = match matched_pattern.unwrap() {
+        pattern if pattern.contains("__bus_write32") => {
+            io_write32_stub as *const () as u64
+        }
+        pattern if pattern.contains("__bus_read32") => {
+            io_read32_stub as *const () as u64
+        }
+        other => {
+            error!("Unrecognized helper pattern: {}", other);
+            restore_default_handler_and_raise(signum);
+            return;
+        }
+    };
+
+    trace!("Selected patch stub @ 0x{:x}", stub_addr);
 
     let cs = match H::create_disassembler() {
         Ok(c) => c,
@@ -309,7 +339,6 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
                                     return;
                                 }
 
-                                // Advance instruction pointer
                                 let fault_rip = H::get_instruction_pointer(ctx);
                                 trace!("Fault RIP: 0x{:x}, advancing instruction pointer", 
                                     fault_rip);
@@ -318,7 +347,6 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
                                     return;
                                 }
 
-                                // Fix return address
                                 trace!("Fixing return address for patch at 0x{:x}", movabs_addr);
                                 fix_return_address::<H>(ctx, movabs_addr, 12);
                                 return;
@@ -340,34 +368,6 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
     }
 }
 
-
-fn check_helper_address_generic<H: ArchHandler>(
-    src: &str, 
-    instruction: &capstone::Insn, 
-    helper_addr: u64
-) -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if src.contains("qword ptr [rip") {
-            let offset_str = src
-                .split("rip")
-                .nth(1)
-                .and_then(|s| s.split(']').next())
-                .map(|s| s.trim())
-                .unwrap_or("");
-            if let Some(off_str) = offset_str.strip_prefix("- 0x") {
-                if let Ok(off) = u64::from_str_radix(off_str, 16) {
-                    let rip_end = instruction.address() + instruction.bytes().len() as u64;
-                    let eff = rip_end.wrapping_sub(off);
-                    let val = unsafe { *(eff as *const u64) };
-                    return val == helper_addr;
-                }
-            }
-        }
-    }
-
-    src.contains(&format!("0x{:x}", helper_addr))
-}
 
 fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     let page_size = nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
@@ -427,11 +427,6 @@ fn fix_return_address<H: ArchHandler>(
     for i in 0..MAX_SLOTS {
         let slot_addr = old_sp + i * 8;
         let candidate: u64 = unsafe { *(slot_addr as *const u64) };
-        let diff = if candidate > original_ret {
-            candidate - original_ret
-        } else {
-            original_ret - candidate
-        };
 
         if candidate == original_ret {
             trace!(
