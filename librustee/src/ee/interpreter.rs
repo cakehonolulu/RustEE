@@ -148,6 +148,9 @@ impl Interpreter {
                     }
                 }
             }
+            0x23 => {
+                self.lw(opcode);
+            }
             0x2B => {
                 self.sw(opcode);
             }
@@ -336,6 +339,23 @@ impl Interpreter {
         let mut tlb_refmut = self.cpu.bus.tlb.borrow_mut();
         tlb_refmut.write_tlb_entry(bus_ptr, index, new_entry);
     }
+
+    fn lw(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+
+        let address = rs_val.wrapping_add(imm as u32);
+
+        let loaded_word = (self.cpu.bus.read32)(&mut self.cpu.bus, address);
+
+        self.cpu.write_register32(rt, loaded_word);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
 }
 
 impl EmulationBackend<EE> for Interpreter {

@@ -2,14 +2,17 @@ use crate::bus::tlb::TlbEntry;
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
 use crate::Bus;
+use capstone::arch::BuildsCapstone;
+use capstone::{Arch, Capstone, Mode};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
+use core::slice;
 use std::num::NonZero;
-use tracing::error;
+use tracing::{debug, error};
 
 #[derive(Clone)]
 pub struct Block {
@@ -30,6 +33,7 @@ pub struct JIT<'a> {
     pc_ptr: *mut u32,
     cycles: usize,
     bus_write32_func: FuncId,
+    bus_read32_func: FuncId,
     tlbwi_func: FuncId,
 }
 
@@ -51,6 +55,15 @@ pub extern "C" fn __bus_write32<'a>(
 ) {
     let bus: &mut Bus = bus_from_ptr(bus_ptr);
     (bus.write32)(bus, addr, value);
+}
+
+pub extern "C" fn __bus_read32<'a>(
+    bus_ptr: &'a mut Bus,
+    addr: u32,
+) -> u32 {
+    debug!("bus_read32 called: 0x{:X}", addr);
+    let bus: &mut Bus = bus_from_ptr(bus_ptr);
+    return (bus.read32)(bus, addr)
 }
 
 pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
@@ -116,6 +129,11 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
+            "__bus_read32",
+            __bus_read32 as *const u8,
+        );
+
+        builder.symbol(
             "__bus_tlbwi",
             __bus_tlbwi as *const u8,
         );
@@ -132,6 +150,14 @@ impl<'a> JIT<'a> {
         let bus_write32_func: FuncId = module
             .declare_function("__bus_write32", Linkage::Import, &store32_sig)
             .expect("Failed to declare __bus_write32 function!");
+
+        let mut load32_sig = module.make_signature();
+        load32_sig.params.push(AbiParam::new(types::I64));
+        load32_sig.params.push(AbiParam::new(types::I32));
+        load32_sig.returns.push(AbiParam::new(types::I32));
+        let bus_read32_func = module
+            .declare_function("__bus_read32", Linkage::Import, &load32_sig)
+            .expect("Failed to declare __bus_read32");
 
         let mut tlbwi_sig = module.make_signature();
         // Parameter: i64 (raw *mut Bus)
@@ -152,6 +178,7 @@ impl<'a> JIT<'a> {
             pc_ptr,
             cycles: 0,
             bus_write32_func,
+            bus_read32_func,
             tlbwi_func
         }
     }
@@ -468,6 +495,9 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x23 => {
+                self.lw(builder, opcode, current_pc);
+            }
             0x2B => {
                 self.sw(builder, opcode, current_pc);
             }
@@ -665,6 +695,36 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
     }
+
+    fn lw(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx   = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64  = (opcode as i16) as i64;
+
+        let base = base_idx as i64;
+        let rt   = rt_idx as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val  = Self::load32(builder, base_addr);
+
+        let addr = builder.ins().iadd_imm(base_val, imm_i64);
+
+        let bus_ptr_const = builder
+            .ins()
+            .iconst(types::I64, &self.cpu.bus as *const _ as i64);
+        let bus_read_callee =
+            self.module.declare_func_in_func(self.bus_read32_func, builder.func);
+        let call_inst = builder.ins().call(bus_read_callee, &[bus_ptr_const, addr]);
+        let load_val = builder.inst_results(call_inst)[0];
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        builder.ins().store(MemFlags::new(), load_val, rt_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+    }
+
 
 }
 
