@@ -144,4 +144,8 @@ impl Bus {
     pub fn io_write32(&mut self, addr: u32, value: u32) {
         panic!("Invalid IO write32: addr=0x{:08X}, value=0x{:08X}", addr, value);
     }
+
+    pub fn io_read32(&mut self, addr: u32) -> u32 {
+        panic!("Invalid IO read32: addr=0x{:08X}", addr);
+    }
 }
