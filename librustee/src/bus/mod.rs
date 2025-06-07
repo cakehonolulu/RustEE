@@ -1,7 +1,7 @@
 pub mod bios;
 
 use bios::BIOS;
-use tracing::info;
+use tracing::{trace, info};
 
 use std::{cell::RefCell, ptr::null_mut};
 use std::sync::atomic::AtomicUsize;
@@ -142,7 +142,14 @@ impl Bus {
     }
 
     pub fn io_write32(&mut self, addr: u32, value: u32) {
-        panic!("Invalid IO write32: addr=0x{:08X}, value=0x{:08X}", addr, value);
+        match addr {
+            0xB000F500 => {
+                trace!("Memory controller (?) 32-bit write");
+            }
+            _ => {
+                panic!("Invalid IO write32: addr=0x{:08X}, value=0x{:08X}", addr, value);
+            }
+        }
     }
 
     pub fn io_read32(&mut self, addr: u32) -> u32 {
