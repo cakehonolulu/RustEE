@@ -197,64 +197,25 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
         guest_addr, fault_addr
     );
 
-    trace!("Detected MMIO fastmem access! Patching...");
     let bt = Backtrace::new();
-    let mut bus_frame_index: Option<usize> = None;
-    let mut matched_pattern: Option<&'static str> = None;
+    let mut is_jit = false;
+    let mut access_type = None;
 
     for (frame_idx, frame) in bt.frames().iter().enumerate() {
         for sym in frame.symbols() {
             if let Some(name) = sym.name() {
                 let name_str = name.to_string();
-
-                let mut found = false;
-                for &pattern in H::get_helper_pattern().iter() {
-                    if name_str.contains(pattern) {
-                        bus_frame_index = Some(frame_idx);
-                        matched_pattern = Some(pattern);
-                        trace!(
-                            "Found helper symbol `{}` at frame {} (matched `{}`)",
-                            name_str, frame_idx, pattern
-                        );
-                        found = true;
-                        break;
-                    }
-                }
-
-                if found {
+                if name_str.contains("__bus_write32") || name_str.contains("__bus_read32") {
+                    is_jit = true;
                     break;
+                } else if name_str.contains("hw_write32") {
+                    access_type = Some("write");
+                } else if name_str.contains("hw_read32") {
+                    access_type = Some("read");
                 }
-
-                trace!("Found symbol at frame {}: {}", frame_idx, name_str);
             }
         }
-
-        if bus_frame_index.is_some() {
-            break;
-        }
     }
-
-    if bus_frame_index.is_none() {
-        error!("No __bus_* frame identified in backtrace");
-        restore_default_handler_and_raise(signum);
-        return;
-    }
-
-    let stub_addr: u64 = match matched_pattern.unwrap() {
-        pattern if pattern.contains("__bus_write32") => {
-            io_write32_stub as *const () as u64
-        }
-        pattern if pattern.contains("__bus_read32") => {
-            io_read32_stub as *const () as u64
-        }
-        other => {
-            error!("Unrecognized helper pattern: {}", other);
-            restore_default_handler_and_raise(signum);
-            return;
-        }
-    };
-
-    trace!("Selected patch stub @ 0x{:x}", stub_addr);
 
     let cs = match H::create_disassembler() {
         Ok(c) => c,
@@ -265,89 +226,77 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
         }
     };
 
-    let target_frame_index = bus_frame_index.unwrap() + 1;
+    if is_jit {
+        trace!("Detected MMIO fastmem access! Patching...");
+        let mut bus_frame_index: Option<usize> = None;
+        let mut matched_pattern: Option<&'static str> = None;
 
-    if let Some(frame) = bt.frames().get(target_frame_index) {
-        let mut ip = frame.ip() as usize;
-        trace!("Processing frame at index {} with IP 0x{:x}", target_frame_index, ip);
-
-        let scan_back = 40usize;
-        ip = ip.add(16);
-        let scan_start = ip.saturating_sub(scan_back);
-        let buf: &[u8] = unsafe { std::slice::from_raw_parts(scan_start as *const u8, scan_back) };
-        trace!("Disassembling buffer: start=0x{:x}, size={}", scan_start, scan_back);
-
-        if let Ok(insns) = cs.disasm_all(buf, scan_start as u64) {
-            let insn_vec = insns.iter().collect::<Vec<_>>();
-            trace!("Disassembled instructions starting at 0x{:x}:", scan_start);
-            for insn in &insn_vec {
-                trace!(
-                    "0x{:x}:\t{}\t{}",
-                    insn.address(),
-                    insn.mnemonic().unwrap_or(""),
-                    insn.op_str().unwrap_or("")
-                );
+        for (frame_idx, frame) in bt.frames().iter().enumerate() {
+            for sym in frame.symbols() {
+                if let Some(name) = sym.name() {
+                    let name_str = name.to_string();
+                    for &pattern in H::get_helper_pattern().iter() {
+                        if name_str.contains(pattern) {
+                            bus_frame_index = Some(frame_idx);
+                            matched_pattern = Some(pattern);
+                            trace!(
+                                "Found helper symbol `{}` at frame {} (matched `{}`)",
+                                name_str, frame_idx, pattern
+                            );
+                            break;
+                        }
+                    }
+                }
+                if bus_frame_index.is_some() { break; }
             }
+            if bus_frame_index.is_some() { break; }
+        }
 
-            for i in 0..insn_vec.len().saturating_sub(1) {
-                let insn = &insn_vec[i];
-                let mnem = insn.mnemonic().unwrap_or("");
-                if mnem == "movabs" {
-                    let opstr = insn.op_str().unwrap_or("");
-                    let ops: Vec<&str> = opstr.split(',').map(|s| s.trim()).collect();
-                    if ops.len() >= 2 {
-                        let mov_reg = ops[0];
-                        let next_insn = &insn_vec[i + 1];
-                        let next_mnem = next_insn.mnemonic().unwrap_or("");
-                        if next_mnem == "call" {
-                            let call_opstr = next_insn.op_str().unwrap_or("").trim();
-                            if call_opstr == mov_reg {
+        if bus_frame_index.is_none() {
+            error!("No __bus_* frame identified in backtrace for JIT");
+            restore_default_handler_and_raise(signum);
+            return;
+        }
+
+        let stub_addr: u64 = match matched_pattern.unwrap() {
+            pattern if pattern.contains("__bus_write32") => io_write32_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read32") => io_read32_stub as *const () as u64,
+            other => {
+                error!("Unrecognized helper pattern: {}", other);
+                restore_default_handler_and_raise(signum);
+                return;
+            }
+        };
+
+        let target_frame_index = bus_frame_index.unwrap() + 1;
+        if let Some(frame) = bt.frames().get(target_frame_index) {
+            let mut ip = frame.ip() as usize;
+            trace!("Processing frame at index {} with IP 0x{:x}", target_frame_index, ip);
+
+            let scan_back = 40usize;
+            ip = ip.add(16);
+            let scan_start = ip.saturating_sub(scan_back);
+            let buf: &[u8] = unsafe { std::slice::from_raw_parts(scan_start as *const u8, scan_back) };
+            trace!("Disassembling buffer: start=0x{:x}, size={}", scan_start, scan_back);
+
+            if let Ok(insns) = cs.disasm_all(buf, scan_start as u64) {
+                let insn_vec = insns.iter().collect::<Vec<_>>();
+                for i in 0..insn_vec.len().saturating_sub(1) {
+                    let insn = &insn_vec[i];
+                    let mnem = insn.mnemonic().unwrap_or("");
+                    if mnem == "movabs" {
+                        let opstr = insn.op_str().unwrap_or("");
+                        let ops: Vec<&str> = opstr.split(',').map(|s| s.trim()).collect();
+                        if ops.len() >= 2 {
+                            let mov_reg = ops[0];
+                            let next_insn = &insn_vec[i + 1];
+                            let next_mnem = next_insn.mnemonic().unwrap_or("");
+                            if next_mnem == "call" && next_insn.op_str().unwrap_or("").trim() == mov_reg {
                                 let movabs_addr = insn.address();
-                                trace!(
-                                    "Found movabs+call pattern at 0x{:x}: {} {}; call {}",
-                                    movabs_addr, mnem, opstr, call_opstr
-                                );
-
-                                let reg = match H::parse_register_from_operand(mov_reg) {
-                                    Some(r) => r,
-                                    None => {
-                                        error!("Failed to parse register {}", mov_reg);
-                                        continue;
-                                    }
-                                };
-
-                                let patch_bytes = match H::encode_stub_call(&reg, stub_addr) {
-                                    Some(bytes) => {
-                                        trace!("Generated patch bytes: {:x?}", bytes);
-                                        bytes
-                                    }
-                                    None => {
-                                        error!("Failed to encode stub call for register {}", mov_reg);
-                                        continue;
-                                    }
-                                };
-
-                                trace!(
-                                    "Patching movabs at 0x{:x} with bytes: {:x?}",
-                                    movabs_addr, patch_bytes
-                                );
-                                if let Err(e) = patch_instruction(movabs_addr, &patch_bytes) {
-                                    error!(
-                                        "Failed to patch instruction at 0x{:x}: {}",
-                                        movabs_addr, e
-                                    );
-                                    return;
-                                }
-
-                                let fault_rip = H::get_instruction_pointer(ctx);
-                                trace!("Fault RIP: 0x{:x}, advancing instruction pointer", 
-                                    fault_rip);
-                                if let Err(e) = H::advance_instruction_pointer(ctx, &cs, fault_rip) {
-                                    error!("Failed to advance instruction pointer: {}", e);
-                                    return;
-                                }
-
-                                trace!("Fixing return address for patch at 0x{:x}", movabs_addr);
+                                let reg = H::parse_register_from_operand(mov_reg).unwrap();
+                                let patch_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
+                                patch_instruction(movabs_addr, &patch_bytes).unwrap();
+                                H::advance_instruction_pointer(ctx, &cs, H::get_instruction_pointer(ctx)).unwrap();
                                 fix_return_address::<H>(ctx, movabs_addr, 12);
                                 return;
                             }
@@ -355,19 +304,33 @@ fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_
                     }
                 }
             }
+        }
+        error!("Failed to patch JIT code");
+        restore_default_handler_and_raise(signum);
+    } else if let Some(access) = access_type {
+        trace!("Detected interpreter fastmem access, redirecting to I/O...");
+        let uc = unsafe { &mut *(ctx as *mut libc::ucontext_t) };
+        let bus_ptr = uc.uc_mcontext.gregs[libc::REG_RDI as usize] as *mut Bus;
+        let addr = uc.uc_mcontext.gregs[libc::REG_RSI as usize] as u32;
+        let fault_rip = uc.uc_mcontext.gregs[libc::REG_RIP as usize];
 
-            error!("No movabs+call pattern found in disassembled instructions");
-            return;
+        if access == "write" {
+            let value = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u32;
+            io_write32_stub(bus_ptr, addr as u64, value);
+            trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+        } else {
+            let value = io_read32_stub(bus_ptr, addr as u64);
+            uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
+            trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
         }
 
-        error!("Failed to disassemble buffer at 0x{:x}", scan_start);
-        return;
-    } else {
-        error!("No frame found at {} after __bus_*", target_frame_index);
-        return;
+        if let Err(e) = H::advance_instruction_pointer(ctx, &cs, fault_rip) {
+            error!("Failed to advance instruction pointer: {}", e);
+            restore_default_handler_and_raise(signum);
+            return;
+        }
     }
 }
-
 
 fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     let page_size = nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
