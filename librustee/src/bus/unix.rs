@@ -42,7 +42,8 @@ mod x86_64_impl {
     use super::*;
     use capstone::arch::x86::ArchMode;
     use nix::libc;
-    
+    use tracing::error;
+
     #[derive(Clone, PartialEq)]
     pub enum X86Register {
         Rax,
@@ -62,9 +63,22 @@ mod x86_64_impl {
         fn create_disassembler() -> Result<Capstone, capstone::Error> {
             Capstone::new().x86().mode(ArchMode::Mode64).build()
         }
-        
+
         fn encode_stub_call(reg: &Self::Register, stub_addr: u64) -> Option<Vec<u8>> {
-            let mut buf = vec![0x48, 0xB9]; // movabs rcx, imm64
+            let mut buf = match reg {
+                X86Register::Rax => vec![0x48, 0xB8], // movabs rax, imm64
+                X86Register::Rcx => vec![0x48, 0xB9], // movabs rcx, imm64
+                X86Register::R8  => vec![0x49, 0xB8], // movabs r8, imm64
+                X86Register::R9  => vec![0x49, 0xB9], // movabs r9, imm64
+                _ => {
+                    error!(
+                "Unsupported register for stub call: {}",
+                Self::register_name(reg)
+            );
+                    return None;
+                }
+            };
+
             buf.extend_from_slice(&stub_addr.to_le_bytes());
             Some(buf)
         }
