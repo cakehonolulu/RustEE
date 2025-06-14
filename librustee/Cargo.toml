@@ -22,7 +22,7 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59.0", features = ["Win32_System_Kernel"] }
+windows-sys = { version = "0.59.0", features = ["Win32_System_Kernel", "Win32_System_SystemInformation"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30.0", features = ["signal"] }
