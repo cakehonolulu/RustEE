@@ -14,163 +14,8 @@ use tracing::{debug, error, info, trace};
 
 use super::{Bus, HW_BASE, HW_LENGTH};
 
-struct Context {
-    bus: *mut Bus,
-}
-
-static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
-
-trait ArchHandler {
-    type Context;
-    type Register: Clone + PartialEq;
-    
-    fn create_disassembler() -> Result<Capstone, capstone::Error>;
-    fn encode_stub_call(reg: &Self::Register, stub_addr: u64) -> Option<Vec<u8>>;
-    fn get_instruction_pointer(ctx: *mut c_void) -> i64;
-    fn set_instruction_pointer(ctx: *mut c_void, addr: u64);
-    fn get_stack_pointer(ctx: *mut c_void) -> u64;
-    fn advance_instruction_pointer(ctx: *mut c_void, cs: &Capstone, fault_addr: i64) -> Result<(), &'static str>;
-    fn parse_register_from_operand(operand: &str) -> Option<Self::Register>;
-    fn register_name(reg: &Self::Register) -> &'static str;
-    fn get_helper_pattern() -> &'static [&'static str];
-    fn get_call_instruction() -> &'static str;
-}
-
-// X86-64 implementation
 #[cfg(target_arch = "x86_64")]
-mod x86_64_impl {
-    use super::*;
-    use capstone::arch::x86::ArchMode;
-    use nix::libc;
-    use tracing::error;
-
-    #[derive(Clone, PartialEq)]
-    pub enum X86Register {
-        Rax,
-        Rcx,
-        R8,
-        R9,
-        R10,
-        R11,
-    }
-    
-    pub struct X86Handler;
-    
-    impl ArchHandler for X86Handler {
-        type Context = libc::ucontext_t;
-        type Register = X86Register;
-        
-        fn create_disassembler() -> Result<Capstone, capstone::Error> {
-            Capstone::new().x86().mode(ArchMode::Mode64).build()
-        }
-
-        fn encode_stub_call(reg: &Self::Register, stub_addr: u64) -> Option<Vec<u8>> {
-            let mut buf = match reg {
-                X86Register::Rax => vec![0x48, 0xB8], // movabs rax, imm64
-                X86Register::Rcx => vec![0x48, 0xB9], // movabs rcx, imm64
-                X86Register::R8  => vec![0x49, 0xB8], // movabs r8, imm64
-                X86Register::R9  => vec![0x49, 0xB9], // movabs r9, imm64
-                _ => {
-                    error!(
-                "Unsupported register for stub call: {}",
-                Self::register_name(reg)
-            );
-                    return None;
-                }
-            };
-
-            buf.extend_from_slice(&stub_addr.to_le_bytes());
-            Some(buf)
-        }
-        
-        fn get_instruction_pointer(ctx: *mut c_void) -> i64 {
-            let uc = unsafe { &*(ctx as *const libc::ucontext_t) };
-            uc.uc_mcontext.gregs[libc::REG_RIP as usize]
-        }
-        
-        fn set_instruction_pointer(ctx: *mut c_void, addr: u64) {
-            let uc = unsafe { &mut *(ctx as *mut libc::ucontext_t) };
-            uc.uc_mcontext.gregs[libc::REG_RIP as usize] = addr as i64;
-        }
-        
-        fn get_stack_pointer(ctx: *mut c_void) -> u64 {
-            let uc = unsafe { &*(ctx as *const libc::ucontext_t) };
-            uc.uc_mcontext.gregs[libc::REG_RSP as usize] as u64
-        }
-        
-        fn advance_instruction_pointer(ctx: *mut c_void, cs: &Capstone, fault_addr: i64) -> Result<(), &'static str> {
-            let inst_buf: &[u8] = unsafe { std::slice::from_raw_parts(fault_addr as *const u8, 16) };
-            
-            let instruction_length = if let Ok(insns) = cs.disasm_count(inst_buf, fault_addr.try_into().unwrap(), 1) {
-                if let Some(insn) = insns.iter().next() {
-                    trace!("avance_instruction_pointer: Instruction at {}", insn.to_string());
-                    insn.len() as u64
-                } else {
-                    return Err("Could not disassemble faulting instruction");
-                }
-            } else {
-                return Err("Failed to disassemble faulting instruction");
-            };
-            
-            let uc = unsafe { &mut *(ctx as *mut libc::ucontext_t) };
-            uc.uc_mcontext.gregs[libc::REG_RIP as usize] += instruction_length as i64;
-            Ok(())
-        }
-        
-        fn parse_register_from_operand(operand: &str) -> Option<Self::Register> {
-            match operand.trim() {
-                "rax" => Some(X86Register::Rax),
-                "rcx" => Some(X86Register::Rcx),
-                "r8" => Some(X86Register::R8),
-                "r9" => Some(X86Register::R9),
-                "r10" => Some(X86Register::R10),
-                "r11" => Some(X86Register::R11),
-                _ => None,
-            }
-        }
-        
-        fn register_name(reg: &Self::Register) -> &'static str {
-            match reg {
-                X86Register::Rax => "rax",
-                X86Register::Rcx => "rcx",
-                X86Register::R8 => "r8",
-                X86Register::R9 => "r9",
-                X86Register::R10 => "r10",
-                X86Register::R11 => "r11",
-            }
-        }
-        
-        fn get_helper_pattern() -> &'static [&'static str] {
-            &[
-                "librustee::ee::jit::__bus_write32",
-                "librustee::ee::jit::__bus_read32",
-            ]
-        }
-
-        
-        fn get_call_instruction() -> &'static str {
-            "call"
-        }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-type CurrentArchHandler = x86_64_impl::X86Handler;
-
-#[cfg(not(any(target_arch = "x86_64")))]
-compile_error!("Unsupported architecture");
-
-#[unsafe(no_mangle)]
-extern "C" fn io_write32_stub(bus_ptr: *mut Bus, address: u64, value: u32) {
-    let bus = unsafe { &mut *bus_ptr };
-    bus.io_write32(address as u32, value);
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn io_read32_stub(bus_ptr: *mut Bus, address: u64) -> u32 {
-    let bus = unsafe { &mut *bus_ptr };
-    bus.io_read32(address as u32)
-}
+use super::backpatch::{ArchHandler, HANDLER_INSTALLED, io_write32_stub, io_read32_stub, CurrentArchHandler};
 
 fn restore_default_handler_and_raise(signum: c_int) {
     unsafe {
@@ -186,7 +31,7 @@ extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut 
     generic_segv_handler::<CurrentArchHandler>(signum, info, ctx)
 }
 
-fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
+fn generic_segv_handler<H: ArchHandler<Context = c_void>>(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
     if info.is_null() || ctx.is_null() {
         error!("Null info or ctx in segv_handler");
         return;
@@ -384,7 +229,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn fix_return_address<H: ArchHandler>(
+fn fix_return_address<H: ArchHandler<Context = c_void>>(
     ctx: *mut c_void,
     patch_addr: u64,
     patch_len: usize,

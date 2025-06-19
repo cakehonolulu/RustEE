@@ -10,6 +10,7 @@ pub mod tlb;
 mod ranged;
 mod sw_fastmem;
 mod hw_fastmem;
+pub mod backpatch;
 
 use tlb::{OperatingMode, Tlb};
 
