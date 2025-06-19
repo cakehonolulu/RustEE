@@ -1,35 +1,27 @@
 use std::ffi::c_void;
 use std::io::{self, ErrorKind};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::ops::Add;
 use tracing::{debug, error, info, trace};
 use windows_sys::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace;
-use std::io::Write;
 use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
-use windows_sys::Win32::{
-    Foundation::{HANDLE, HMODULE, NTSTATUS},
-    System::{
+use windows_sys::Win32::System::{
         Diagnostics::Debug::{
             AddVectoredExceptionHandler, EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, 
             EXCEPTION_POINTERS, CONTEXT,
         },
         Memory::{VirtualProtect, PAGE_EXECUTE_READ, PAGE_READWRITE},
-        LibraryLoader::{GetModuleHandleA, GetProcAddress},
-        Threading::GetCurrentThread,
-    },
-};
+    };
 
-use backtrace::{resolve, Backtrace};
-use capstone::Capstone;
-use capstone::arch::BuildsCapstone;
+use backtrace::resolve;
 
 use super::{Bus, HW_BASE, HW_LENGTH};
 
 #[cfg(target_arch = "x86_64")]
 use super::backpatch::{ArchHandler, HANDLER_INSTALLED, io_write32_stub, io_read32_stub, CurrentArchHandler};
 
-unsafe fn capture_raw_backtrace(skip: u32, max_frames: u32) -> Vec<*mut c_void> {
+unsafe fn capture_raw_backtrace(skip: u32, max_frames: u32) -> Vec<*mut c_void> { unsafe {
     let mut buffer: Vec<*mut c_void> = Vec::with_capacity(max_frames as usize);
     buffer.set_len(max_frames as usize);
 
@@ -42,7 +34,7 @@ unsafe fn capture_raw_backtrace(skip: u32, max_frames: u32) -> Vec<*mut c_void> 
 
     buffer.truncate(captured as usize);
     buffer
-}
+}}
 
 fn find_frame_ip_by_name(frames: &[ *mut c_void ], pattern: &str) -> Option<*mut c_void> {
     for &ip in frames {
@@ -62,11 +54,11 @@ fn find_frame_ip_by_name(frames: &[ *mut c_void ], pattern: &str) -> Option<*mut
     None
 }
 
-unsafe extern "system" fn veh_handler(info: *mut EXCEPTION_POINTERS) -> i32 {
+unsafe extern "system" fn veh_handler(info: *mut EXCEPTION_POINTERS) -> i32 { unsafe {
     generic_exception_handler::<CurrentArchHandler>(info)
-}
+}}
 
-unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mut EXCEPTION_POINTERS) -> i32 {
+unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mut EXCEPTION_POINTERS) -> i32 { unsafe {
     if info.is_null() {
         error!("Null info in exception handler");
         return EXCEPTION_CONTINUE_SEARCH;
@@ -247,7 +239,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
     }
 
     EXCEPTION_CONTINUE_SEARCH
-}
+}}
 
 fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     let mut system_info: SYSTEM_INFO = unsafe { std::mem::zeroed() };

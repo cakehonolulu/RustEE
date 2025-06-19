@@ -1,13 +1,12 @@
-use std::io;
 use std::ops::Add;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use backtrace::Backtrace;
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, trace};
 
-use super::{Bus, HW_BASE, HW_LENGTH};
+use super::Bus;
 
 pub struct Context {
     pub bus: *mut Bus,
@@ -226,8 +225,6 @@ impl x86_64_impl::X86HandlerImpl for CurrentArchHandler {}
 #[cfg(all(target_arch = "x86_64", unix))]
 use nix::libc;
 
-#[cfg(all(target_arch = "x86_64", windows))]
-use windows_sys::Win32::System::Diagnostics::Debug::CONTEXT;
 
 #[cfg(all(target_arch = "x86_64", unix))]
 impl ArchHandler for CurrentArchHandler {

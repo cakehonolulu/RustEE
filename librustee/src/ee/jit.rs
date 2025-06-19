@@ -2,15 +2,12 @@ use crate::bus::tlb::TlbEntry;
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
 use crate::Bus;
-use capstone::arch::BuildsCapstone;
-use capstone::{Arch, Capstone, Mode};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
-use core::slice;
 use std::num::NonZero;
 use tracing::{debug, error};
 

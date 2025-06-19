@@ -1,7 +1,7 @@
 pub mod bios;
 
 use bios::BIOS;
-use tracing::{trace, info, debug};
+use tracing::{info, debug};
 
 use std::{cell::RefCell, ptr::null_mut};
 use std::sync::atomic::AtomicUsize;
