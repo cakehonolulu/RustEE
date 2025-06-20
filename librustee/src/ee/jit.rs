@@ -39,6 +39,20 @@ enum BranchTarget {
     Reg(Value),
 }
 
+enum BranchInfo {
+    Conditional {
+        cond: Value,
+        target: BranchTarget,
+    },
+    Unconditional {
+        target: BranchTarget,
+    },
+    ConditionalLikely {
+        cond: Value,
+        target: BranchTarget,
+    },
+}
+
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
 fn bus_from_ptr<'a>(bus_ptr: &'a mut Bus) -> &'a mut Bus {
@@ -316,68 +330,46 @@ impl<'a> JIT<'a> {
             let instruction_cycles = self.get_instruction_cycles(opcode);
             total_cycles += instruction_cycles;
 
-            if let Some((cond, branch_target, is_likely)) =
-                self.branch_info(opcode, &mut builder, current_pc)
-            {
-                // delay slot
-                let mut delay_pc = current_pc.wrapping_add(4);
-
-                if is_likely {
-                    let then_blk = builder.create_block();
-                    let else_blk = builder.create_block();
-                    let merge_ds = builder.create_block();
-                    builder.ins().brif(cond, then_blk, &[], else_blk, &[]);
-                    builder.switch_to_block(then_blk);
-                    self.decode(&mut builder, opcode, &mut delay_pc);
-                    builder.ins().jump(merge_ds, &[]);
-                    builder.seal_block(then_blk);
-                    builder.switch_to_block(else_blk);
-                    builder.ins().jump(merge_ds, &[]);
-                    builder.seal_block(else_blk);
-                    builder.switch_to_block(merge_ds);
-                    builder.seal_block(merge_ds);
-                } else {
-                    let delay_opcode = self.cpu.fetch_at(delay_pc);
-                    self.decode(&mut builder, delay_opcode, &mut delay_pc);
-                    current_pc = current_pc.wrapping_add(8);
-                }
-
-                // branch / jump path
-                let branch_blk = builder.create_block();
-                let fallthrough_blk = builder.create_block();
-                let merge_blk = builder.create_block();
-                builder.ins().brif(cond, branch_blk, &[], fallthrough_blk, &[]);
-
-                // branch/jump target
-                builder.switch_to_block(branch_blk);
-                match branch_target {
-                    BranchTarget::Const(addr) => {
-                        let t = builder.ins().iconst(types::I32, addr as i64);
-                        builder.ins().store(MemFlags::new(), t, pc_addr, 0);
+            let branch_info = self.decode(&mut builder, opcode, &mut current_pc);
+            if let Some(info) = branch_info {
+                match info {
+                    BranchInfo::Conditional { cond, target } => {
+                        let delay_opcode = self.cpu.fetch_at(current_pc);
+                        self.decode(&mut builder, delay_opcode, &mut current_pc);
+                        let branch_blk = builder.create_block();
+                        let fallthrough_blk = builder.create_block();
+                        builder.ins().brif(cond, branch_blk, &[], fallthrough_blk, &[]);
+                        builder.seal_block(branch_blk);
+                        builder.seal_block(fallthrough_blk);
+                        builder.switch_to_block(branch_blk);
+                        JIT::set_pc_to_target(&mut builder, target, pc_addr);
+                        builder.ins().return_(&[]);
+                        builder.switch_to_block(fallthrough_blk);
+                        JIT::set_pc_to_const(&mut builder, current_pc, pc_addr);
                     }
-                    BranchTarget::Reg(val) => {
-                        let t32 = builder.ins().ireduce(types::I32, val);
-                        builder.ins().store(MemFlags::new(), t32, pc_addr, 0);
+                    BranchInfo::Unconditional { target } => {
+                        let delay_opcode = self.cpu.fetch_at(current_pc);
+                        self.decode(&mut builder, delay_opcode, &mut current_pc);
+                        JIT::set_pc_to_target(&mut builder, target, pc_addr);
+                    }
+                    BranchInfo::ConditionalLikely { cond, target } => {
+                        let branch_blk = builder.create_block();
+                        let fallthrough_blk = builder.create_block();
+                        builder.ins().brif(cond, branch_blk, &[], fallthrough_blk, &[]);
+                        builder.seal_block(branch_blk);
+                        builder.seal_block(fallthrough_blk);
+                        builder.switch_to_block(branch_blk);
+                        let delay_opcode = self.cpu.fetch_at(current_pc);
+                        self.decode(&mut builder, delay_opcode, &mut current_pc);
+                        JIT::set_pc_to_target(&mut builder, target, pc_addr);
+                        builder.ins().return_(&[]);
+                        builder.switch_to_block(fallthrough_blk);
+                        let next_pc = current_pc.wrapping_add(4);
+                        JIT::set_pc_to_const(&mut builder, next_pc, pc_addr);
                     }
                 }
-                builder.ins().jump(merge_blk, &[]);
-                builder.seal_block(branch_blk);
-
-                // fallthrough path
-                builder.switch_to_block(fallthrough_blk);
-                let fall_val = builder.ins().iconst(types::I32, current_pc as i64);
-                builder.ins().store(MemFlags::new(), fall_val, pc_addr, 0);
-                builder.ins().jump(merge_blk, &[]);
-                builder.seal_block(fallthrough_blk);
-
-                // merge
-                builder.switch_to_block(merge_blk);
-                builder.seal_block(merge_blk);
                 break;
-            }
-
-            self.decode(&mut builder, opcode, &mut current_pc);
-            if single_step {
+            } else if single_step {
                 break;
             }
         }
@@ -402,38 +394,22 @@ impl<'a> JIT<'a> {
         unsafe { (std::mem::transmute(ptr), breakpoint, total_cycles) }
     }
 
-    fn branch_info(&self, opcode: u32, builder: &mut FunctionBuilder, pc: u32)
-        -> Option<(Value, BranchTarget, bool)> {
-        let primary = opcode >> 26;
-        if primary == 0 {
-            // SPECIAL group: check JR (funct 0x08)
-            let funct = opcode & 0x3F;
-            if funct == 0x08 {
-                // Build an always-true condition by comparing 1 != 0
-                let one = builder.ins().iconst(types::I32, 1);
-                let zero = builder.ins().iconst(types::I32, 0);
-                let cond = builder.ins().icmp(IntCC::NotEqual, one, zero);
-                // Load target from GPR[rs]
-                let rs = ((opcode >> 21) & 0x1F) as i64;
-                let addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
-                let target_i32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
-                let target64 = builder.ins().uextend(types::I64, target_i32);
-                return Some((cond, BranchTarget::Reg(target64), false));
+    pub fn set_pc_to_target(builder: &mut FunctionBuilder, target: BranchTarget, pc_addr: Value) {
+        match target {
+            BranchTarget::Const(addr) => {
+                let t = builder.ins().iconst(types::I32, addr as i64);
+                builder.ins().store(MemFlags::new(), t, pc_addr, 0);
             }
-        } else if primary == 0x05 {
-            // BNE
-            let rs = ((opcode >> 21) & 0x1F) as i64;
-            let rt = ((opcode >> 16) & 0x1F) as i64;
-            let imm = (opcode as u16) as i16 as i32;
-            let raddr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
-            let taddr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
-            let rv = builder.ins().load(types::I32, MemFlags::new(), raddr, 0);
-            let tv = builder.ins().load(types::I32, MemFlags::new(), taddr, 0);
-            let cond = builder.ins().icmp(IntCC::NotEqual, rv, tv);
-            let tgt = pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
-            return Some((cond, BranchTarget::Const(tgt), false));
+            BranchTarget::Reg(val) => {
+                let t32 = builder.ins().ireduce(types::I32, val);
+                builder.ins().store(MemFlags::new(), t32, pc_addr, 0);
+            }
         }
-        None
+    }
+
+    pub fn set_pc_to_const(builder: &mut FunctionBuilder, addr: u32, pc_addr: Value) {
+        let t = builder.ins().iconst(types::I32, addr as i64);
+        builder.ins().store(MemFlags::new(), t, pc_addr, 0);
     }
 
     pub fn mark_block_dirty(&mut self, pc: u32) {
@@ -443,7 +419,7 @@ impl<'a> JIT<'a> {
         }
     }
 
-    fn decode(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn decode(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let function = opcode >> 26;
         //debug!("decode: function: 0x{:02X}", function);
         match function {
@@ -451,10 +427,13 @@ impl<'a> JIT<'a> {
                 let subfunction = opcode & 0x3F;
                 match subfunction {
                     0x00 => {
-                        self.sll(builder, opcode, current_pc);
+                        self.sll(builder, opcode, current_pc)
                     }
+                    0x08 => {
+                        self.jr(builder, opcode, current_pc)
+                    },
                     0x0F => {
-                        self.sync(builder, opcode, current_pc);
+                        self.sync(builder, opcode, current_pc)
                     }
                     _ => {
                         error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
@@ -462,29 +441,32 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x05 => {
+                self.bne(builder, opcode, current_pc)
+            },
             0x09 => {
-                self.addiu(builder, opcode, current_pc);
+                self.addiu(builder, opcode, current_pc)
             }
             0x0A => {
-                self.slti(builder, opcode, current_pc);
+                self.slti(builder, opcode, current_pc)
             }
             0x0D => {
-                self.ori(builder, opcode, current_pc);
+                self.ori(builder, opcode, current_pc)
             }
             0x0F => {
-                self.lui(builder, opcode, current_pc);
+                self.lui(builder, opcode, current_pc)
             }
             0x10 => {
                 let subfunction = (opcode >> 21) & 0x1F;
                 match subfunction {
                     0x00 => {
-                        self.mfc0(builder, opcode, current_pc);
+                        self.mfc0(builder, opcode, current_pc)
                     }
                     0x04 => {
-                        self.mtc0(builder, opcode, current_pc);
+                        self.mtc0(builder, opcode, current_pc)
                     }
                     0x10 => {
-                        self.tlbwi(builder, opcode, current_pc);
+                        self.tlbwi(builder, opcode, current_pc)
                     }
                     _ => {
                         error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
@@ -493,10 +475,10 @@ impl<'a> JIT<'a> {
                 }
             }
             0x23 => {
-                self.lw(builder, opcode, current_pc);
+                self.lw(builder, opcode, current_pc)
             }
             0x2B => {
-                self.sw(builder, opcode, current_pc);
+                self.sw(builder, opcode, current_pc)
             }
             _ => {
                 error!("Unhandled EE JIT opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}", opcode, function, current_pc);
@@ -536,7 +518,7 @@ impl<'a> JIT<'a> {
         builder.ins().store(MemFlags::new(), pc_inc, pc_ptr_val, 0);
     }
 
-    fn mfc0(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn mfc0(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let rd = ((opcode >> 11) & 0x1F) as i64;
 
@@ -555,9 +537,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn sll(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn sll(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rd = ((opcode >> 11) & 0x1F) as i64;
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let sa = ((opcode >> 6) & 0x1F) as i64;
@@ -572,9 +555,10 @@ impl<'a> JIT<'a> {
     
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn slti(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn slti(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rs = ((opcode >> 21) & 0x1F) as i64;
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let imm = (opcode as i16) as i64;
@@ -592,9 +576,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn lui(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn lui(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let imm = (opcode & 0xFFFF) as i64;
 
@@ -604,9 +589,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn ori(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn ori(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rs = ((opcode >> 21) & 0x1F) as i64;
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let imm = (opcode & 0xFFFF) as i64;
@@ -621,9 +607,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn mtc0(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn mtc0(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let rd = ((opcode >> 11) & 0x1F) as i64;
 
@@ -635,15 +622,17 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn sync(&mut self, builder: &mut FunctionBuilder, _opcode: u32, current_pc: &mut u32) {
+    fn sync(&mut self, builder: &mut FunctionBuilder, _opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         // TODO: Implement SYNC instruction properly
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn addiu(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn addiu(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rs = ((opcode >> 21) & 0x1F) as i64;
         let rt = ((opcode >> 16) & 0x1F) as i64;
         let imm = (opcode as i16) as i64;
@@ -658,9 +647,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn sw(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn sw(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let base = ((opcode >> 21) & 0x1F) as i64;
         let rt   = ((opcode >> 16) & 0x1F) as i64;
         let imm  = ((opcode as i16) as i64) as i64;
@@ -679,9 +669,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn tlbwi(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn tlbwi(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let bus_raw = (&mut self.cpu.bus as *mut Bus) as i64;
         let bus_ptr = builder.ins().iconst(types::I64, bus_raw);
 
@@ -691,9 +682,10 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
     }
 
-    fn lw(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) {
+    fn lw(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let base_idx = ((opcode >> 21) & 0x1F) as usize;
         let rt_idx   = ((opcode >> 16) & 0x1F) as usize;
         let imm_i64  = (opcode as i16) as i64;
@@ -719,10 +711,36 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
-
+        None
     }
 
+    fn bne(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as u16) as i16 as i32;
+        let raddr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let taddr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rv = builder.ins().load(types::I32, MemFlags::new(), raddr, 0);
+        let tv = builder.ins().load(types::I32, MemFlags::new(), taddr, 0);
+        let cond = builder.ins().icmp(IntCC::NotEqual, rv, tv);
+        let target_addr = current_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+        *current_pc = current_pc.wrapping_add(4);
+        Some(BranchInfo::Conditional {
+            cond,
+            target: BranchTarget::Const(target_addr),
+        })
+    }
 
+    fn jr(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let target_i32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
+        let target = builder.ins().uextend(types::I64, target_i32);
+        *current_pc = current_pc.wrapping_add(4);
+        Some(BranchInfo::Unconditional {
+            target: BranchTarget::Reg(target),
+        })
+    }
 }
 
 impl EmulationBackend<EE> for JIT<'_> {
