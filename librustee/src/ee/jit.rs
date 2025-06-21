@@ -55,12 +55,12 @@ enum BranchInfo {
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
-fn bus_from_ptr<'a>(bus_ptr: &'a mut Bus) -> &'a mut Bus {
+fn bus_from_ptr(bus_ptr: &mut Bus) -> &mut Bus {
     &mut *bus_ptr
 }
 
-pub extern "C" fn __bus_write32<'a>(
-    bus_ptr: &'a mut Bus,
+pub extern "C" fn __bus_write32(
+    bus_ptr: &mut Bus,
     addr: u32,
     value: u32,
 ) {
@@ -68,8 +68,8 @@ pub extern "C" fn __bus_write32<'a>(
     (bus.write32)(bus, addr, value);
 }
 
-pub extern "C" fn __bus_read32<'a>(
-    bus_ptr: &'a mut Bus,
+pub extern "C" fn __bus_read32(
+    bus_ptr: &mut Bus,
     addr: u32,
 ) -> u32 {
     debug!("bus_read32 called: 0x{:X}", addr);
@@ -466,7 +466,7 @@ impl<'a> JIT<'a> {
                         self.mtc0(builder, opcode, current_pc)
                     }
                     0x10 => {
-                        self.tlbwi(builder, opcode, current_pc)
+                        self.tlbwi(builder, current_pc)
                     }
                     _ => {
                         error!("Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
@@ -672,7 +672,7 @@ impl<'a> JIT<'a> {
         None
     }
 
-    fn tlbwi(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+    fn tlbwi(&mut self, builder: &mut FunctionBuilder, current_pc: &mut u32) -> Option<BranchInfo> {
         let bus_raw = (&mut self.cpu.bus as *mut Bus) as i64;
         let bus_ptr = builder.ins().iconst(types::I64, bus_raw);
 
