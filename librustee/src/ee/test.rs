@@ -358,7 +358,7 @@ fn test_sw() {
     interp.step();
 
     // Verify the value written to memory
-    let written_value = (interp.cpu.bus.read32)(&interp.cpu.bus, 0x1000);
+    let written_value = (interp.cpu.bus.read32)(&mut interp.cpu.bus, 0x1000);
     assert_eq!(
         written_value, 42,
         "SW failed: expected 42 at address 0x1000, found 0x{:08X}",

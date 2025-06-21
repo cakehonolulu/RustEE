@@ -10,10 +10,10 @@ pub trait CPU {
     fn read_cop0_register(&self, index: usize) -> u32;
     fn write_cop0_register(&mut self, index: usize, value: u32);
 
-    fn read32(&self, addr: u32) -> u32;
+    fn read32(&mut self, addr: u32) -> u32;
 
-    fn fetch(&self) -> u32;
-    fn fetch_at(&self, addr: u32) -> u32;
+    fn fetch(&mut self) -> u32;
+    fn fetch_at(&mut self, addr: u32) -> u32;
 
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);

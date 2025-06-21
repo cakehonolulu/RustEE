@@ -80,8 +80,8 @@ pub struct Bus {
     pub cop0_registers_ptr: *mut u32,
 
     // Function pointers for read/write operations
-    pub read32: fn(&Bus, u32) -> u32,
-    pub write32: fn(&mut Bus, u32, u32),
+    pub read32: fn(&mut Self, u32) -> u32,
+    pub write32: fn(&mut Self, u32, u32),
 }
 
 impl Bus {

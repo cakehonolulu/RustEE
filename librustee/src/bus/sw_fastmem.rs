@@ -10,7 +10,7 @@ pub fn init_software_fastmem(bus: &mut Bus) {
 }
 
 impl Bus {
-    pub fn sw_fmem_read32(&self, va: u32) -> u32 {
+    pub fn sw_fmem_read32(&mut self, va: u32) -> u32 {
         let page = (va as usize) >> PAGE_BITS;
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_read[page];

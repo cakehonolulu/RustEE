@@ -9,38 +9,37 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
         TlbEntry {
             vpn2: 0x0000_0000 >> 13,
             asid: 0,
-            g: true,  // Global
+            g: true,
             pfn0: 0x0000_0000 >> 12,
-            pfn1: 0x0010_0000 >> 12, // Next 1MB block
+            pfn1: 0x0010_0000 >> 12,
             v0: true,
-            d0: true,                // Writable
+            d0: true,
             v1: true,
             d1: true,
             s0: false,
             s1: false,
             c0: 0,
             c1: 0,
-            mask: 0x001F_E000,       // 1MB page size
+            mask: 0x001F_E000,
         },
         TlbEntry {
             vpn2: 0x1FC0_0000 >> 13,
             asid: 0,
             g: true,  // Global
             pfn0: 0x1FC0_0000 >> 12,
-            pfn1: 0x1FD0_0000 >> 12, // Next 1MB block
+            pfn1: 0x1FD0_0000 >> 12,
             v0: true,
-            d0: false,               // BIOS is read-only
+            d0: false,
             v1: true,
-            d1: false,               // BIOS is read-only
+            d1: false,
             s0: false,
             s1: false,
             c0: 0,
             c1: 0,
-            mask: 0x001F_E000,       // 1MB page size
+            mask: 0x001F_E000,
         },
     ];
 
-    // Nullify the immutable borrow by storing the pointer outside the block
     let bus_ptr = bus as *mut Bus;
 
     for (index, entry) in default_mappings.iter().enumerate() {
@@ -55,44 +54,46 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
 }
 
 impl Bus {
-    pub fn ranged_read32(&self, va: u32) -> u32 {
-        let mut tlb = self.tlb.borrow_mut();
-        match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
-            Ok(pa) => {
-                if let Some(offset) = map::RAM.contains(pa) {
-                    let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u32;
-                    unsafe { ptr.read_unaligned() }
-                } else if let Some(offset) = map::IO.contains(pa) {
-                    todo!("Ranged: IO read at 0x{:08X}", pa);
-                } else if let Some(offset) = map::BIOS.contains(pa) {
-                    let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u32;
-                    unsafe { ptr.read_unaligned() }
-                } else {
-                    panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
-                }
+    pub fn ranged_read32(&mut self, va: u32) -> u32 {
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
             }
-            Err(e) => {
-                panic!("Ranged: TLB exception on read: {:?}", e);
-            }
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u32;
+            unsafe { ptr.read_unaligned() }
+        } else if map::IO.contains(pa).is_some() {
+            self.io_read32(pa)
+        } else if let Some(offset) = map::BIOS.contains(pa) {
+            let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u32;
+            unsafe { ptr.read_unaligned() }
+        } else {
+            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
         }
     }
 
     pub fn ranged_write32(&mut self, va: u32, val: u32) {
-        let mut tlb = self.tlb.borrow_mut();
-        match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
-            Ok(pa) => {
-                if let Some(offset) = map::RAM.contains(pa) {
-                    let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u32;
-                    unsafe { ptr.write_unaligned(val); }
-                } else if let Some(offset) = map::IO.contains(pa) {
-                    todo!("Ranged: IO write at 0x{:08X}", pa);
-                } else {
-                    panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
-                }
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
             }
-            Err(e) => {
-                panic!("Ranged: TLB exception on write: {:?}", e);
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u32;
+            unsafe {
+                ptr.write_unaligned(val);
             }
+        } else if map::IO.contains(pa).is_some() {
+            self.io_write32(pa, val)
+        } else {
+            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
         }
     }
 }

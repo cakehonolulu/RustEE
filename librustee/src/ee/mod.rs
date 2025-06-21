@@ -93,18 +93,18 @@ impl CPU for EE {
         self.cop0_registers[index] = value;
     }
 
-    fn read32(&self, addr: u32) -> u32 {
-        (self.bus.read32)(&self.bus, addr)
+    fn read32(&mut self, addr: u32) -> u32 {
+        (self.bus.read32)(&mut self.bus, addr)
     }
 
     #[inline(always)]
-    fn fetch(&self) -> u32 {
-        self.read32(self.pc)
+    fn fetch(&mut self) -> u32 {
+        (self.bus.read32)(&mut self.bus, self.pc)
     }
 
     #[inline(always)]
-    fn fetch_at(&self, address: u32) -> u32 {
-        self.read32(address)
+    fn fetch_at(&mut self, address: u32) -> u32 {
+        (self.bus.read32)(&mut self.bus, address)
     }
 
     fn add_breakpoint(&mut self, addr: u32) {
