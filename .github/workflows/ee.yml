@@ -1,0 +1,39 @@
+name: EE+Bus Weekly Test
+
+on:
+  schedule:
+    - cron: "59 22 * * 0"
+
+jobs:
+  test:
+    name: Run Weekly Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Check if changes were made this week
+        id: check_changes
+        run: |
+          # Fetch changes from the past 7 days in the repository
+          RECENT_COMMITS=$(git log --since="7 days ago" --oneline)
+          echo "Recent commits:"
+          echo "$RECENT_COMMITS"
+
+          # Exit successfully if no commits were found
+          if [ -z "$RECENT_COMMITS" ]; then
+            echo "No changes found this week. Skipping tests."
+            exit 0
+          fi
+
+      - name: Run tests
+        if: steps.check_changes.outcome == 'success'
+        run: |
+          cargo test --package librustee --verbose --lib --bins --tests
