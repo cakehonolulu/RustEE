@@ -116,6 +116,7 @@ impl Bus {
                 bus.write32 = Bus::sw_fmem_write32;
             },
             BusMode::Ranged => {
+                ranged::init_ranged_tlb_mappings(&mut bus);
                 bus.read32 = Bus::ranged_read32;
                 bus.write32 = Bus::ranged_write32;
             },

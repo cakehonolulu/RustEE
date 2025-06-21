@@ -101,7 +101,7 @@ impl Interpreter {
                         self.jr(opcode);
                     }
                     0x0F => {
-                        self.sync(opcode);
+                        self.sync();
                     }
                     _ => {
                         error!(
@@ -137,7 +137,7 @@ impl Interpreter {
                         self.mtc0(opcode);
                     }
                     0x10 => {
-                        self.tlbwi(opcode);
+                        self.tlbwi();
                     }
                     _ => {
                         error!(
@@ -258,7 +258,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sync(&mut self, opcode: u32) {
+    fn sync(&mut self) {
         // TODO: Implement SYNC instruction properly
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -289,7 +289,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn tlbwi(&mut self, opcode: u32) {
+    fn tlbwi(&mut self) {
         let index = (self.cpu.read_cop0_register(0) & 0x3F) as usize;
 
         let entry_hi  = self.cpu.read_cop0_register(10);

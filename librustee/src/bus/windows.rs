@@ -25,34 +25,16 @@ unsafe fn capture_raw_backtrace(skip: u32, max_frames: u32) -> Vec<*mut c_void> 
     let mut buffer: Vec<*mut c_void> = Vec::with_capacity(max_frames as usize);
     buffer.set_len(max_frames as usize);
 
-    let captured = unsafe { RtlCaptureStackBackTrace(
+    let captured = RtlCaptureStackBackTrace(
         skip,
         max_frames,
         buffer.as_mut_ptr(),
         ptr::null_mut(),
-    ) };
+    );
 
     buffer.truncate(captured as usize);
     buffer
 }}
-
-fn find_frame_ip_by_name(frames: &[ *mut c_void ], pattern: &str) -> Option<*mut c_void> {
-    for &ip in frames {
-        let mut found = false;
-        resolve(ip, |symbol| {
-            if let Some(name) = symbol.name() {
-                let demangled = format!("{}", name);
-                if demangled.contains(pattern) {
-                    found = true;
-                }
-            }
-        });
-        if found {
-            return Some(ip);
-        }
-    }
-    None
-}
 
 unsafe extern "system" fn veh_handler(info: *mut EXCEPTION_POINTERS) -> i32 { unsafe {
     generic_exception_handler::<CurrentArchHandler>(info)
@@ -64,22 +46,22 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    let record = unsafe { (*info).ExceptionRecord };
-    let ctx = unsafe { (*info).ContextRecord };
+    let record = (*info).ExceptionRecord;
+    let ctx = (*info).ContextRecord;
 
     if record.is_null() || ctx.is_null() {
         error!("Null record or context in exception handler");
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    let exception_code = unsafe { (*record).ExceptionCode };
+    let exception_code = (*record).ExceptionCode;
 
     // Handle access violations (0xC0000005)
     if exception_code != 0xC0000005u32 as i32 {
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    let guest_addr = unsafe { (*record).ExceptionInformation[1] as usize };
+    let guest_addr = (*record).ExceptionInformation[1] as usize;
     let base = HW_BASE.load(Ordering::SeqCst);
     let size = HW_LENGTH.load(Ordering::SeqCst);
 
@@ -97,7 +79,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         guest_addr, fault_addr
     );
 
-    let raw_frames = unsafe { capture_raw_backtrace(0, 20) };
+    let raw_frames = capture_raw_backtrace(0, 20);
     let mut is_jit = false;
     let mut access_type = None;
 
@@ -178,7 +160,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
             let scan_back = 64usize;
             let adjusted_ip = ip.add(16);
             let scan_start = adjusted_ip.saturating_sub(scan_back);
-            let buf: &[u8] = unsafe { std::slice::from_raw_parts(scan_start as *const u8, scan_back) };
+            let buf: &[u8] = std::slice::from_raw_parts(scan_start as *const u8, scan_back);
             trace!("Disassembling buffer: start=0x{:x}, size={}", scan_start, scan_back);
 
             if let Ok(insns) = cs.disasm_all(buf, scan_start as u64) {

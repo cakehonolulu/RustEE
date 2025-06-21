@@ -117,11 +117,13 @@ struct TestCase {
 }
 
 fn run_test(tc: &TestCase) {
-    let bios = create_mock_bios(tc.asm);
-    let bus  = Bus::new(BusMode::Ranged, bios);
+    let bios_i = create_mock_bios(tc.asm);
+    let bios_j = create_mock_bios(tc.asm);
+    let bus_i  = Bus::new(BusMode::Ranged, bios_i);
+    let bus_j  = Bus::new(BusMode::Ranged, bios_j);
 
-    let mut ee_i = EE::new(bus.clone());
-    let mut ee_j = EE::new(bus.clone());
+    let mut ee_i = EE::new(bus_i);
+    let mut ee_j = EE::new(bus_j);
     (tc.setup)(&mut ee_i);
     (tc.setup)(&mut ee_j);
 

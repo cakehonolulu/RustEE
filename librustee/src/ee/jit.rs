@@ -34,7 +34,7 @@ pub struct JIT<'a> {
     tlbwi_func: FuncId,
 }
 
-enum BranchTarget {
+pub enum BranchTarget {
     Const(u32),
     Reg(Value),
 }
