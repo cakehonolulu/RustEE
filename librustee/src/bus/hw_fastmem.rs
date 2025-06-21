@@ -24,8 +24,87 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     HW_LENGTH.store(size, Ordering::SeqCst);
     HW_BASE.store(base as usize, Ordering::SeqCst);
 
+    debug!("Populating TLB mappings for Hardware Fast Memory...");
+
+    let default_mappings = [
+        TlbEntry {
+            vpn2: 0x00000000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x00000000 >> 12,
+            pfn1: 0x00100000 >> 12,
+            v0: true,
+            d0: true,
+            v1: true,
+            d1: true,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x001F_E000,
+        },
+        TlbEntry {
+            vpn2: 0x80000000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x00000000 >> 12,
+            pfn1: 0x00100000 >> 12,
+            v0: true,
+            d0: true,
+            v1: true,
+            d1: true,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x001F_E000,
+        },
+        TlbEntry {
+            vpn2: 0xA0000000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x00000000 >> 12,
+            pfn1: 0x00100000 >> 12,
+            v0: true,
+            d0: true,
+            v1: true,
+            d1: true,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x001F_E000,
+        },
+        TlbEntry {
+            vpn2: 0xBFC00000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x1FC00000 >> 12,
+            pfn1: 0x1FD00000 >> 12,
+            v0: true,
+            d0: false,
+            v1: true,
+            d1: false,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x001F_E000,
+        },
+    ];
+
+    let bus_ptr = bus as *mut Bus;
+    for (index, entry) in default_mappings.iter().enumerate() {
+        {
+            let mut tlb = bus.tlb.borrow_mut();
+            tlb.write_tlb_entry(bus_ptr, index, *entry);
+        }
+        bus.tlb.borrow().install_hw_fastmem_mapping(bus, entry);
+        debug!("Installed HW-FastMem TLB mapping: {:?}", entry);
+    }
+
     debug!(
-        "Initialized Hardware Fast Memory: base=0x{:08X}, size={}",
+        "Initialized Hardware Fast Memory: base=0x{:08X}, size={} bytes",
         bus.hw_base as usize, bus.hw_size
     );
 }

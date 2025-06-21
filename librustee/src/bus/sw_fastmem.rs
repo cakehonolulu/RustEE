@@ -1,3 +1,4 @@
+use std::process::exit;
 use tracing::debug;
 use super::{map, tlb::mask_to_page_size, Bus, PAGE_BITS, PAGE_SIZE};
 use crate::bus::tlb::{AccessType, TlbEntry};
@@ -7,6 +8,53 @@ pub fn init_software_fastmem(bus: &mut Bus) {
     bus.page_read.fill(0);
     bus.page_write.fill(0);
     debug!("Software Fast Memory tables cleared");
+
+    let default_mappings = [
+        TlbEntry {
+            vpn2: 0x0000_0000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x0000_0000 >> 12,
+            pfn1: 0x0010_0000 >> 12,
+            v0: true,
+            d0: true,
+            v1: true,
+            d1: true,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x001F_E000,
+        },
+        TlbEntry {
+            vpn2: 0x1FC0_0000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x1FC0_0000 >> 12,
+            pfn1: 0x1FD0_0000 >> 12,
+            v0: true,
+            d0: false,
+            v1: true,
+            d1: false,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x001F_E000,
+        },
+    ];
+
+    let bus_ptr = bus as *mut Bus;
+    for (index, entry) in default_mappings.iter().enumerate() {
+        {
+            let mut tlb_ref = bus.tlb.borrow_mut();
+            tlb_ref.write_tlb_entry(bus_ptr, index, *entry);
+        }
+        bus.tlb.borrow().install_sw_fastmem_mapping(bus, entry);
+        debug!("Installed SW-FMEM TLB mapping: {:?}", entry);
+    }
+
+    debug!("Software Fast Memory initialized with predefined TLB mappings.");
 }
 
 impl Bus {
@@ -32,11 +80,13 @@ impl Bus {
         }
     }
 
-    fn retry_read(&self, va: u32) -> u32 {
-        let mut tlb = self.tlb.borrow_mut();
-        let pa = match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
-            Ok(p) => p,
-            Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
+    fn retry_read(&mut self, va: u32) -> u32 {
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
+            }
         };
 
         let vpn = (va as usize) >> PAGE_BITS;
@@ -57,9 +107,10 @@ impl Bus {
                 return (host as *const u8).add(offset).cast::<u32>().read_unaligned();
             }
         } else if map::IO.contains(pa).is_some() {
-            todo!("SW Fastmem: IO read at 0x{:08X}", pa);
+            return self.io_read32(pa)
         }
 
+        let mut tlb = self.tlb.borrow_mut();
         tlb.install_all_sw_fastmem_mappings(self);
         let host = self.page_read[vpn];
         if host == 0 {
@@ -69,10 +120,12 @@ impl Bus {
     }
 
     fn retry_write(&mut self, va: u32, value: u32) {
-        let mut tlb = self.tlb.borrow_mut();
-        let pa = match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
-            Ok(p) => p,
-            Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
+            }
         };
 
         let vpn = (va as usize) >> PAGE_BITS;
@@ -94,9 +147,10 @@ impl Bus {
             }
             panic!("SW-FMEM write to read-only BIOS VA=0x{:08X}", va);
         } else if map::IO.contains(pa).is_some() {
-            todo!("SW Fastmem: IO write at 0x{:08X}", pa);
+            self.io_write32(pa, value);
         }
 
+        let mut tlb = self.tlb.borrow_mut();
         tlb.install_all_sw_fastmem_mappings(self);
         let host = self.page_write[vpn];
         if host == 0 {

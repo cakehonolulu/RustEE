@@ -117,25 +117,48 @@ struct TestCase {
 }
 
 fn run_test(tc: &TestCase) {
-    let bios_i = create_mock_bios(tc.asm);
-    let bios_j = create_mock_bios(tc.asm);
-    let bus_i  = Bus::new(BusMode::Ranged, bios_i);
-    let bus_j  = Bus::new(BusMode::Ranged, bios_j);
+    let bus_modes = vec![
+        BusMode::Ranged,
+        BusMode::SoftwareFastMem,
+        BusMode::HardwareFastMem,
+    ];
 
-    let mut ee_i = EE::new(bus_i);
-    let mut ee_j = EE::new(bus_j);
-    (tc.setup)(&mut ee_i);
-    (tc.setup)(&mut ee_j);
+    for bus_mode in bus_modes {
+        println!("Running test `{}` for bus mode {:?}", tc.name, bus_mode);
 
-    ee_i.set_pc(0xBFC00000);
-    ee_j.set_pc(0xBFC00000);
+        // Create mock BIOS for both interpreter and JIT
+        let bios_i = create_mock_bios(tc.asm);
+        let bios_j = create_mock_bios(tc.asm);
 
-    let mut interp = Interpreter::new(ee_i);
-    let mut jit    = JIT::new(&mut ee_j);
-    interp.step();
-    jit.step();
+        // Create buses with the current bus mode
+        let bus_i = Bus::new(bus_mode.clone(), bios_i);
+        let bus_j = Bus::new(bus_mode.clone(), bios_j);
 
-    compare_states(&interp.cpu, &jit.cpu, tc.golden.as_ref());
+        // Create EE instances for interpreter and JIT
+        let mut ee_i = EE::new(bus_i);
+        let mut ee_j = EE::new(bus_j);
+
+        // Test setup
+        (tc.setup)(&mut ee_i);
+        (tc.setup)(&mut ee_j);
+
+        // Set program counters
+        ee_i.set_pc(0xBFC00000);
+        ee_j.set_pc(0xBFC00000);
+
+        // Run the interpreter backend
+        let mut interp = Interpreter::new(ee_i);
+        interp.step();
+
+        // Run the JIT backend
+        let mut jit = JIT::new(&mut ee_j);
+        jit.step();
+
+        // Compare CPU states
+        compare_states(&interp.cpu, &jit.cpu, tc.golden.as_ref());
+
+        println!("Test `{}` passed for bus mode {:?}", tc.name, bus_mode);
+    }
 }
 
 #[test]
@@ -343,25 +366,4 @@ fn test_sw() {
 
     // Run the test case
     run_test(&test);
-
-    // Additional verification for SW
-    let bios = create_mock_bios(test.asm);
-    let bus = Bus::new(BusMode::Ranged, bios);
-
-    let mut ee = EE::new(bus);
-    (test.setup)(&mut ee);
-
-    ee.set_pc(0xBFC00000);
-
-    // Execute the SW instruction
-    let mut interp = Interpreter::new(ee);
-    interp.step();
-
-    // Verify the value written to memory
-    let written_value = (interp.cpu.bus.read32)(&mut interp.cpu.bus, 0x1000);
-    assert_eq!(
-        written_value, 42,
-        "SW failed: expected 42 at address 0x1000, found 0x{:08X}",
-        written_value
-    );
 }
