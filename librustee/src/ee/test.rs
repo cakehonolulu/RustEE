@@ -163,56 +163,201 @@ fn run_test(tc: &TestCase) {
 
 #[test]
 fn test_mfc0() {
-    let test = TestCase {
-        name:  "mfc0",
-        asm:   "mfc0 $v0, $1",
-        setup: |ee| ee.write_cop0_register(1, 42),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc          = 0xBFC00004;
-            g.cop0[1]     = 42;
-            g.gpr[2]      = 42;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "mfc0_basic",
+            asm: "mfc0 $v0, $1",
+            setup: |ee| ee.write_cop0_register(1, 42),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 42;
+                g.cop0[1] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "mfc0_zero",
+            asm: "mfc0 $v0, $1",
+            setup: |ee| ee.write_cop0_register(1, 0),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 0;
+                g.cop0[1] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mfc0_max",
+            asm: "mfc0 $v0, $1",
+            setup: |ee| ee.write_cop0_register(1, 0xFFFFFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 0xFFFFFFFF;
+                g.cop0[1] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
 fn test_sll() {
-    let test = TestCase {
-        name:  "sll",
-        asm:   "sll $at, $v0, 4",
-        setup: |ee| ee.write_register32(2, 0x0000000F),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00004;
-            g.gpr[2]    = 0x0F;
-            g.gpr[1]    = 0xF0;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "sll_basic",
+            asm: "sll $at, $v0, 4",
+            setup: |ee| ee.write_register32(2, 0x0000000F),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 0x0F;
+                g.gpr[1] = 0xF0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "sll_zero",
+            asm: "sll $at, $v0, 4",
+            setup: |ee| ee.write_register32(2, 0),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 0;
+                g.gpr[1] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sll_sign_bit",
+            asm: "sll $at, $v0, 1",
+            setup: |ee| ee.write_register32(2, 0x80000000),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 0x80000000;
+                g.gpr[1] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sll_no_shift",
+            asm: "sll $at, $v0, 0",
+            setup: |ee| ee.write_register32(2, 0xFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 0xFF;
+                g.gpr[1] = 0xFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sll_max_shift",
+            asm: "sll $at, $v0, 31",
+            setup: |ee| ee.write_register32(2, 1),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[2] = 1;
+                g.gpr[1] = 0xFFFFFFFF80000000u128;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
 fn test_slti() {
-    let test = TestCase {
-        name:  "slti",
-        asm:   "slti $v0, $t0, 4",
-        setup: |ee| ee.write_register32(8, 2),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00004;
-            g.gpr[8]    = 2;
-            g.gpr[2]    = 1;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "slti_less",
+            asm: "slti $v0, $t0, 4",
+            setup: |ee| ee.write_register32(8, 2),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 2;
+                g.gpr[2] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "slti_equal",
+            asm: "slti $v0, $t0, 4",
+            setup: |ee| ee.write_register32(8, 4),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 4;
+                g.gpr[2] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slti_greater",
+            asm: "slti $v0, $t0, 4",
+            setup: |ee| ee.write_register32(8, 5),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 5;
+                g.gpr[2] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slti_negative",
+            asm: "slti $v0, $t0, 4",
+            setup: |ee| ee.write_register32(8, 0xFFFFFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFF;
+                g.gpr[2] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slti_max_pos",
+            asm: "slti $v0, $t0, 4",
+            setup: |ee| ee.write_register32(8, 0x7FFFFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x7FFFFFFF;
+                g.gpr[2] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
@@ -250,99 +395,296 @@ fn test_bne() {
                 Some(g)
             },
         },
+        TestCase {
+            name: "bne_zero_vs_nonzero",
+            asm: "bne $t0, $t1, 0x4",
+            setup: |ee| {
+                ee.write_register32(8, 0);
+                ee.write_register32(9, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
     ];
 
     for test in tests {
-        println!("Running test case: {}", test.name);
         run_test(&test);
     }
 }
 
 #[test]
 fn test_lui() {
-    let test = TestCase {
-        name:  "lui",
-        asm:   "lui $t0, 0x1234",
-        setup: |ee| ee.write_register32(8, 0),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00004;
-            g.gpr[8]    = 0x12340000;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "lui_basic",
+            asm: "lui $t0, 0x1234",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12340000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "lui_zero",
+            asm: "lui $t0, 0x0",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lui_max",
+            asm: "lui $t0, 0xFFFF",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFF0000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lui_lower_bits",
+            asm: "lui $t0, 0x1234",
+            setup: |ee| ee.write_register32(8, 0x0000FFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12340000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
 fn test_ori() {
-    let test = TestCase {
-        name:  "ori",
-        asm:   "ori $t0, $t0, 0x1234",
-        setup: |ee| ee.write_register32(8, 0),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00004;
-            g.gpr[8]    = 0x00001234;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "ori_basic",
+            asm: "ori $t0, $t0, 0x1234",
+            setup: |ee| ee.write_register32(8, 0xFFFF0000),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFF1234;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "ori_zero_imm",
+            asm: "ori $t0, $t0, 0x0",
+            setup: |ee| ee.write_register32(8, 0x1234),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1234;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "ori_max_imm",
+            asm: "ori $t0, $t0, 0xFFFF",
+            setup: |ee| ee.write_register32(8, 0),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "ori_with_bits",
+            asm: "ori $t0, $t0, 0x1234",
+            setup: |ee| ee.write_register32(8, 0xFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFF | 0x1234;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
 fn test_jr() {
-    let test = TestCase {
-        name:  "jr",
-        asm:   "jr $t0",
-        setup: |ee| ee.write_register32(8, 0xBFC00008),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00008;
-            g.gpr[8]    = 0xBFC00008;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "jr_basic",
+            asm: "jr $t0",
+            setup: |ee| ee.write_register32(8, 0xBFC00008),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 0xBFC00008;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "jr_zero",
+            asm: "jr $t0",
+            setup: |ee| ee.write_register32(8, 0),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0;
+                g.gpr[8] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "jr_max",
+            asm: "jr $t0",
+            setup: |ee| ee.write_register32(8, 0xFFFFFFFC),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xFFFFFFFC;
+                g.gpr[8] = 0xFFFFFFFC;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
 fn test_mtc0() {
-    let test = TestCase {
-        name:  "mtc0",
-        asm:   "mtc0 $t0, $1",
-        setup: |ee| ee.write_register32(8, 42),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00004;
-            g.gpr[8]    = 42;
-            g.cop0[1]   = 42;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "mtc0_basic",
+            asm: "mtc0 $t0, $1",
+            setup: |ee| ee.write_register32(8, 42),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 42;
+                g.cop0[1] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "mtc0_zero",
+            asm: "mtc0 $t0, $1",
+            setup: |ee| ee.write_register32(8, 0),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.cop0[1] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mtc0_max",
+            asm: "mtc0 $t0, $1",
+            setup: |ee| ee.write_register32(8, 0xFFFFFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFF;
+                g.cop0[1] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
 fn test_addiu() {
-    let test = TestCase {
-        name:  "addiu",
-        asm:   "addiu $t0, $t0, 4",
-        setup: |ee| ee.write_register32(8, 2),
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc        = 0xBFC00004;
-            g.gpr[8]    = 2;
-            g.gpr[8]    = 6;
-            g.cop0[15]  = 0x59;
-            Some(g)
+    let tests = vec![
+        TestCase {
+            name: "addiu_basic",
+            asm: "addiu $t0, $t0, 2",
+            setup: |ee| ee.write_register32(8, 40),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
-    };
-    run_test(&test);
+        TestCase {
+            name: "addiu_negative_imm",
+            asm: "addiu $t0, $t0, -1",
+            setup: |ee| ee.write_register32(8, 0),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "addiu_overflow",
+            asm: "addiu $t0, $t0, 1",
+            setup: |ee| ee.write_register32(8, 0xFFFFFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "addiu_negative_reg",
+            asm: "addiu $t0, $t0, 2",
+            setup: |ee| ee.write_register32(8, 0xFFFFFFFF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
 }
 
 #[test]
@@ -351,19 +693,18 @@ fn test_sw() {
         name: "sw",
         asm: "sw $t0, 0($t1)",
         setup: |ee| {
-            ee.write_register32(8, 42); // $t0 = 42
-            ee.write_register32(9, 0x1000); // $t1 = 0x1000
+            ee.write_register32(8, 42);
+            ee.write_register32(9, 0x1000);
         },
         golden: {
             let mut g = GoldenState::default();
-            g.pc = 0xBFC00004; // PC after instruction
-            g.gpr[8] = 42; // $t0
-            g.gpr[9] = 0x1000; // $t1
-            g.cop0[15] = 0x59; // Cycle count
+            g.pc = 0xBFC00004;
+            g.gpr[8] = 42;
+            g.gpr[9] = 0x1000;
+            g.cop0[15] = 0x59;
             Some(g)
         },
     };
 
-    // Run the test case
     run_test(&test);
 }

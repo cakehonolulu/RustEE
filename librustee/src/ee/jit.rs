@@ -566,7 +566,8 @@ impl<'a> JIT<'a> {
         let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
         let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
 
-        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_a, 0);
+        let rs_val32 = builder.ins().load(types::I32, MemFlags::new(), rs_a, 0);
+        let rs_val = builder.ins().sextend(types::I64, rs_val32);
         let imm_val = builder.ins().iconst(types::I64, imm);
         let cmp = builder.ins().icmp(IntCC::SignedLessThan, rs_val, imm_val);
         let one = builder.ins().iconst(types::I64, 1);
@@ -602,7 +603,7 @@ impl<'a> JIT<'a> {
 
         let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
         let imm_val = builder.ins().iconst(types::I32, imm);
-        let result = builder.ins().iadd(rs_val, imm_val);
+        let result = builder.ins().bor(rs_val, imm_val);
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
         Self::increment_pc(builder, self.pc_ptr as i64);

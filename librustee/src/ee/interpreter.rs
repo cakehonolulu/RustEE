@@ -197,7 +197,7 @@ impl Interpreter {
 
         let imm = opcode as i16 as i64;
 
-        let rs_val = self.cpu.read_register64(rs) as i64;
+        let rs_val = self.cpu.read_register32(rs) as i32 as i64;
 
         let out = if rs_val < imm { 1u64 } else { 0u64 };
         self.cpu.write_register64(rt, out);
@@ -271,7 +271,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs) as i32;
         let result = rs_val.wrapping_add(imm);
 
-        self.cpu.write_register32(rt, result.try_into().unwrap());
+        self.cpu.write_register32(rt, result as u32);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
