@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use backtrace::Backtrace;
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
-use tracing::{debug, trace};
+use tracing::trace;
 
 use super::Bus;
 
@@ -297,7 +297,7 @@ impl ArchHandler for CurrentArchHandler {
 
         if let Ok(insns) = cs.disasm_all(buf, fault_addr as u64) {
             if let Some(insn) = insns.iter().next() {
-                debug!("Current instruction at 0x{:x}: {} {}", 
+                trace!("Current instruction at 0x{:x}: {} {}",
                       fault_addr, insn.mnemonic().unwrap_or(""), insn.op_str().unwrap_or(""));
                 Self::set_instruction_pointer(ctx, (fault_addr + insn.bytes().len() as i64) as u64);
                 return Ok(());

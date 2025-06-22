@@ -5,7 +5,7 @@ use region::{Allocation, Protection};
 use std::io::{self, ErrorKind};
 use super::HW_BASE;
 use std::sync::atomic::Ordering;
-use tracing::debug;
+use tracing::{debug, trace};
 
 pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     debug!("Initializing Hardware Fast Memory...");
@@ -100,7 +100,7 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
             tlb.write_tlb_entry(bus_ptr, index, *entry);
         }
         bus.tlb.borrow().install_hw_fastmem_mapping(bus, entry);
-        debug!("Installed HW-FastMem TLB mapping: {:?}", entry);
+        trace!("Installed HW-FastMem TLB mapping: {:?}", entry);
     }
 
     debug!(

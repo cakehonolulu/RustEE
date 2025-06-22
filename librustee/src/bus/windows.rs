@@ -74,7 +74,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
     }
 
     let fault_addr = (guest_addr - base) as u32;
-    debug!(
+    trace!(
         "SIGSEGV at host VA=0x{:x}, guest PA=0x{:08x}",
         guest_addr, fault_addr
     );
