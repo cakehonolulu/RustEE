@@ -11,6 +11,7 @@ struct GoldenState {
     pc:   u32,
     gpr:  [u128; 32],
     cop0: [u32; 32],
+    memory_checks: Vec<(u32, u32)>,
 }
 
 fn create_mock_bios(assembly: &str) -> BIOS {
@@ -29,7 +30,7 @@ fn create_mock_bios(assembly: &str) -> BIOS {
 
 fn compare_states(
     ee_interpreter: &EE,
-    ee_jit:         &EE,
+    ee_jit: &mut EE,
     golden:         Option<&GoldenState>,
 ) {
     let names = [
@@ -106,6 +107,17 @@ fn compare_states(
                 i, jit_c, expected,
             );
         }
+
+        for (addr, expected) in golden.unwrap().memory_checks.iter() {
+            let interp_val = ee_jit.read32(*addr);
+            let jit_val = ee_jit.read32(*addr);
+            assert_eq!(interp_val, *expected,
+                       "Memory at 0x{:08X} mismatch for interpreter: expected 0x{:08X}, got 0x{:08X}",
+                       addr, expected, interp_val);
+            assert_eq!(jit_val, *expected,
+                       "Memory at 0x{:08X} mismatch for JIT: expected 0x{:08X}, got 0x{:08X}",
+                       addr, expected, jit_val);
+        }
     }
 }
 
@@ -155,7 +167,7 @@ fn run_test(tc: &TestCase) {
         jit.step();
 
         // Compare CPU states
-        compare_states(&interp.cpu, &jit.cpu, tc.golden.as_ref());
+        compare_states(&interp.cpu, jit.cpu, tc.golden.as_ref());
 
         println!("Test `{}` passed for bus mode {:?}", tc.name, bus_mode);
     }
@@ -689,22 +701,78 @@ fn test_addiu() {
 
 #[test]
 fn test_sw() {
-    let test = TestCase {
-        name: "sw",
-        asm: "sw $t0, 0($t1)",
-        setup: |ee| {
-            ee.write_register32(8, 42);
-            ee.write_register32(9, 0x1000);
+    let tests = vec![
+        TestCase {
+            name: "sw_basic",
+            asm: "sw $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(8, 42);
+                ee.write_register32(9, 0x1000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 42;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 42)];
+                Some(g)
+            },
         },
-        golden: {
-            let mut g = GoldenState::default();
-            g.pc = 0xBFC00004;
-            g.gpr[8] = 42;
-            g.gpr[9] = 0x1000;
-            g.cop0[15] = 0x59;
-            Some(g)
+        TestCase {
+            name: "sw_zero",
+            asm: "sw $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(8, 0);
+                ee.write_register32(9, 0x1000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0)];
+                Some(g)
+            },
         },
-    };
+        TestCase {
+            name: "sw_max",
+            asm: "sw $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(8, 0xFFFFFFFF);
+                ee.write_register32(9, 0x1004);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFF;
+                g.gpr[9] = 0x1004;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1004, 0xFFFFFFFF)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sw_offset",
+            asm: "sw $t0, 4($t1)",
+            setup: |ee| {
+                ee.write_register32(8, 42);
+                ee.write_register32(9, 0x1000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 42;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1004, 42)];
+                Some(g)
+            },
+        },
+    ];
 
-    run_test(&test);
+    for test in tests {
+        run_test(&test);
+    }
 }
