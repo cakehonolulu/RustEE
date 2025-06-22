@@ -187,7 +187,7 @@ pub fn detect_access_type(backtrace: &Backtrace) -> (bool, Option<&'static str>)
     let mut is_jit = false;
     let mut access_type = None;
 
-    for (frame_idx, frame) in backtrace.frames().iter().enumerate() {
+    for (_frame_idx, frame) in backtrace.frames().iter().enumerate() {
         for sym in frame.symbols() {
             if let Some(name) = sym.name() {
                 let name_str = name.to_string();

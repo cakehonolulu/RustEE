@@ -1,4 +1,3 @@
-use std::process::exit;
 use tracing::debug;
 use super::{map, tlb::mask_to_page_size, Bus, PAGE_BITS, PAGE_SIZE};
 use crate::bus::tlb::{AccessType, TlbEntry};
@@ -110,7 +109,7 @@ impl Bus {
             return self.io_read32(pa)
         }
 
-        let mut tlb = self.tlb.borrow_mut();
+        let tlb = self.tlb.borrow_mut();
         tlb.install_all_sw_fastmem_mappings(self);
         let host = self.page_read[vpn];
         if host == 0 {
@@ -150,7 +149,7 @@ impl Bus {
             self.io_write32(pa, value);
         }
 
-        let mut tlb = self.tlb.borrow_mut();
+        let tlb = self.tlb.borrow_mut();
         tlb.install_all_sw_fastmem_mappings(self);
         let host = self.page_write[vpn];
         if host == 0 {
