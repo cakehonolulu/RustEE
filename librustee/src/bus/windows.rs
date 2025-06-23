@@ -204,10 +204,10 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
 
         if access == "write" {
             let value = (*ctx).R8 as u32;
-            io_write32_stub(bus_ptr, addr as u64, value);
+            io_write32_stub(bus_ptr, addr, value);
             trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
         } else {
-            let value = io_read32_stub(bus_ptr, addr as u64);
+            let value = io_read32_stub(bus_ptr, addr);
             (*ctx).Rax = value as u64;
             trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
         }
