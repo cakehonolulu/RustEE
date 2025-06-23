@@ -175,10 +175,10 @@ fn generic_segv_handler<H: ArchHandler<Context = c_void>>(signum: c_int, info: *
 
         if access == "write" {
             let value = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u32;
-            io_write32_stub(bus_ptr, addr as u64, value);
+            io_write32_stub(bus_ptr, addr, value);
             trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
         } else {
-            let value = io_read32_stub(bus_ptr, addr as u64);
+            let value = io_read32_stub(bus_ptr, addr);
             uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
             trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
         }
