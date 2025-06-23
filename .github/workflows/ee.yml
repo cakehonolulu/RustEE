@@ -2,7 +2,7 @@ name: EE+Bus Weekly Test
 
 on:
   schedule:
-    - cron: "* * * * *"
+    - cron: "59 22 * * 0"
 
 jobs:
   test:
