@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 clap = "4.5.36"
+egui = "0.31.1"
+egui-wgpu = "0.31.1"
+egui-winit = "0.31.1"
 librustee = { path = "../librustee" }
+pollster = "0.4.0"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+wgpu = "25.0.2"
+winit = "0.30.11"

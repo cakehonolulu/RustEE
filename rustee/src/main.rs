@@ -1,9 +1,13 @@
 use std::path::Path;
-
-use librustee::{bus::{Bus, BusMode}, cpu::{EmulationBackend, CPU}, ee::{Interpreter, EE, JIT}, BIOS};
+use std::sync::{Arc, Mutex};
+use librustee::{bus::{Bus, BusMode}, cpu::{CPU}, ee::EE, BIOS};
 use clap::{arg, Command};
 
 use tracing_subscriber::EnvFilter;
+use winit::event_loop::{ControlFlow, EventLoop};
+
+mod app;
+mod egui_tools;
 
 fn main() {
     println!("RustEE - A Rust, PlayStation 2 Emulator");
@@ -37,6 +41,16 @@ fn main() {
         .with_env_filter(
             EnvFilter::new("debug")
                 .add_directive("cranelift_codegen=warn".parse().unwrap())
+                .add_directive("wgpu_hal::vulkan::instance=error".parse().unwrap())
+                .add_directive("wgpu_hal::gles::adapter=error".parse().unwrap())
+                .add_directive("wgpu_core::instance=error".parse().unwrap())
+                .add_directive("wgpu_hal::gles::wgl=error".parse().unwrap())
+                .add_directive("naga::valid::interface=error".parse().unwrap())
+                .add_directive("naga::valid::function=error".parse().unwrap())
+                .add_directive("egui_wgpu::renderer=error".parse().unwrap())
+                .add_directive("wgpu_core::device::global=error".parse().unwrap())
+                .add_directive("wgpu_hal::vulkan::adapter=error".parse().unwrap())
+                .add_directive("naga::front=error".parse().unwrap())
                 .add_directive("cranelift_jit=warn".parse().unwrap()),
         )
         .without_time()
@@ -53,28 +67,35 @@ fn main() {
             _ => BusMode::Ranged,
         };
 
-        let bus = Bus::new(bus_mode, bios);
-        let mut ee: EE = EE::new(bus);
+        let bus = Arc::new(Mutex::new(Bus::new(bus_mode, bios)));
+        let ee = Arc::new(Mutex::new(EE::new(bus.clone())));
 
         if let Some(breakpoints) = arguments.get_one::<Vec<u32>>("ee-breakpoint") {
             for &addr in breakpoints {
-                ee.add_breakpoint(addr);
+                ee.lock().unwrap().add_breakpoint(addr);
             }
         }
 
-        match arguments.get_one::<String>("ee-backend").map(String::as_str) {
-            Some("interpreter") => {
-                tracing::info!("Using EE Interpreter backend");
-                let mut ee_backend = Interpreter::new(ee);
-                ee_backend.run();
-            }
-            Some("jit") | _ => {
-                tracing::info!("Using EE JIT backend");
-                let mut ee_backend = JIT::new(&mut ee);
-                ee_backend.run();
-            }
+        let backend = arguments
+            .get_one::<String>("ee-backend")
+            .map(String::clone)
+            .unwrap_or_else(|| "jit".to_string());
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            pollster::block_on(run(ee.clone(), bus.clone(), backend));
         }
     } else {
         panic!("No BIOS path provided!");
     }
+}
+
+async fn run(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Bus>>, backend: String) {
+    let event_loop = EventLoop::new().unwrap();
+
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    let mut app = app::App::new(ee, bus, backend);
+
+    event_loop.run_app(&mut app).expect("Failed to run app");
 }

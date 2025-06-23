@@ -1,3 +1,4 @@
+use std::ops::DerefMut;
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 use crate::Bus;
@@ -284,8 +285,11 @@ impl Interpreter {
         let rt_val = self.cpu.read_register32(rt);
 
         let address = rs_val.wrapping_add(imm as u32);
-        (self.cpu.bus.write32)(&mut self.cpu.bus, address, rt_val);
 
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write32)(&mut *bus, address, rt_val);
+        }
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -335,8 +339,9 @@ impl Interpreter {
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
 
-        let bus_ptr = &mut self.cpu.bus as *mut Bus;
-        let mut tlb_refmut = self.cpu.bus.tlb.borrow_mut();
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus as *const Bus as *mut Bus;
+        let mut tlb_refmut = bus.tlb.borrow_mut();
         tlb_refmut.write_tlb_entry(bus_ptr, index, new_entry);
     }
 
@@ -349,13 +354,16 @@ impl Interpreter {
 
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_word = (self.cpu.bus.read32)(&mut self.cpu.bus, address);
+        {
+            let loaded_word = {
+                let mut bus = self.cpu.bus.lock().unwrap();
+                (bus.read32)(bus.deref_mut(), address)
+            };
 
-        self.cpu.write_register32(rt, loaded_word);
-
+            self.cpu.write_register32(rt, loaded_word);
+        }
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
-
 }
 
 impl EmulationBackend<EE> for Interpreter {

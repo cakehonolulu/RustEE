@@ -55,76 +55,71 @@ enum BranchInfo {
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
-fn bus_from_ptr(bus_ptr: &mut Bus) -> &mut Bus {
-    &mut *bus_ptr
+pub extern "C" fn __bus_write32(bus_ptr: *mut Bus, addr: u32, value: u32) {
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.write32)(bus, addr, value);
+    }
 }
 
-pub extern "C" fn __bus_write32(
-    bus_ptr: &mut Bus,
-    addr: u32,
-    value: u32,
-) {
-    let bus: &mut Bus = bus_from_ptr(bus_ptr);
-    (bus.write32)(bus, addr, value);
-}
-
-pub extern "C" fn __bus_read32(
-    bus_ptr: &mut Bus,
-    addr: u32,
-) -> u32 {
+pub extern "C" fn __bus_read32(bus_ptr: *mut Bus, addr: u32) -> u32 {
     debug!("bus_read32 called: 0x{:X}", addr);
-    let bus: &mut Bus = bus_from_ptr(bus_ptr);
-    return (bus.read32)(bus, addr)
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.read32)(bus, addr)
+    }
 }
 
 pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
-    let bus = unsafe { &mut *bus_ptr };
-    let mut tlb_ref = bus.tlb.borrow_mut();
+    unsafe {
+        let bus = &mut *bus_ptr;
+        let mut tlb_ref = bus.tlb.borrow_mut();
 
-    let index = (unsafe { *bus.cop0_registers_ptr.add(0) } & 0x3F) as usize;
+        let index = (*bus.cop0_registers_ptr.add(0) & 0x3F) as usize;
 
-    let entry_hi  = unsafe { *bus.cop0_registers_ptr.add(10) }; // EntryHi
-    let entry_lo0 = unsafe { *bus.cop0_registers_ptr.add(2)  }; // EntryLo0
-    let entry_lo1 = unsafe { *bus.cop0_registers_ptr.add(3)  }; // EntryLo1
-    let page_mask = unsafe { *bus.cop0_registers_ptr.add(5)  }; // PageMask
+        let entry_hi  = *bus.cop0_registers_ptr.add(10); // EntryHi
+        let entry_lo0 = *bus.cop0_registers_ptr.add(2); // EntryLo0
+        let entry_lo1 = *bus.cop0_registers_ptr.add(3); // EntryLo1
+        let page_mask = *bus.cop0_registers_ptr.add(5); // PageMask
 
-    let vpn2 = entry_hi >> 13;
-    let asid = (entry_hi & 0xFF) as u8;
+        let vpn2 = entry_hi >> 13;
+        let asid = (entry_hi & 0xFF) as u8;
 
-    let s0   = ((entry_lo0 >> 31) & 0x1) != 0;     // scratchpad flag
-    let pfn0 = (entry_lo0 >> 6) & 0x000F_FFFF;     // bits [31:6]
-    let c0   = ((entry_lo0 >> 3) & 0x7) as u8;     // bits [5:3]
-    let d0   = ((entry_lo0 >> 2) & 0x1) != 0;      // bit [2]
-    let v0   = ((entry_lo0 >> 1) & 0x1) != 0;      // bit [1]
-    let g0   =  (entry_lo0 & 0x1) != 0;            // bit [0]
+        let s0   = ((entry_lo0 >> 31) & 0x1) != 0;     // scratchpad flag
+        let pfn0 = (entry_lo0 >> 6) & 0x000F_FFFF;     // bits [31:6]
+        let c0   = ((entry_lo0 >> 3) & 0x7) as u8;     // bits [5:3]
+        let d0   = ((entry_lo0 >> 2) & 0x1) != 0;      // bit [2]
+        let v0   = ((entry_lo0 >> 1) & 0x1) != 0;      // bit [1]
+        let g0   =  (entry_lo0 & 0x1) != 0;            // bit [0]
 
-    let s1   = ((entry_lo1 >> 31) & 0x1) != 0;     // scratchpad flag
-    let pfn1 = (entry_lo1 >> 6) & 0x000F_FFFF;     // bits [31:6]
-    let c1   = ((entry_lo1 >> 3) & 0x7) as u8;     // bits [5:3]
-    let d1   = ((entry_lo1 >> 2) & 0x1) != 0;      // bit [2]
-    let v1   = ((entry_lo1 >> 1) & 0x1) != 0;      // bit [1]
-    let g1   =  (entry_lo1 & 0x1) != 0;            // bit [0]
+        let s1   = ((entry_lo1 >> 31) & 0x1) != 0;     // scratchpad flag
+        let pfn1 = (entry_lo1 >> 6) & 0x000F_FFFF;     // bits [31:6]
+        let c1   = ((entry_lo1 >> 3) & 0x7) as u8;     // bits [5:3]
+        let d1   = ((entry_lo1 >> 2) & 0x1) != 0;      // bit [2]
+        let v1   = ((entry_lo1 >> 1) & 0x1) != 0;      // bit [1]
+        let g1   =  (entry_lo1 & 0x1) != 0;            // bit [0]
 
-    let g = g0 | g1;
+        let g = g0 | g1;
 
-    let new_entry = TlbEntry {
-        vpn2,
-        asid,
-        g,
-        pfn0,
-        pfn1,
-        c0,
-        c1,
-        d0,
-        d1,
-        v0,
-        v1,
-        s0,
-        s1,
-        mask: page_mask,
-    };
+        let new_entry = TlbEntry {
+            vpn2,
+            asid,
+            g,
+            pfn0,
+            pfn1,
+            c0,
+            c1,
+            d0,
+            d1,
+            v0,
+            v1,
+            s0,
+            s1,
+            mask: page_mask,
+        };
 
-    tlb_ref.write_tlb_entry(bus_ptr, index, new_entry);
+        tlb_ref.write_tlb_entry(bus_ptr, index, new_entry);
+    }
 }
 
 impl<'a> JIT<'a> {
@@ -661,12 +656,14 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         let store_val = Self::load32(builder, rt_addr);
 
-        let bus_ptr_const = builder.ins().iconst(types::I64, &self.cpu.bus as *const _ as i64);
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let addr_arg = addr;
         let val_arg  = store_val;
 
         let callee = self.module.declare_func_in_func(self.bus_write32_func, builder.func);
-        builder.ins().call(callee, &[bus_ptr_const, addr_arg, val_arg]);
+        builder.ins().call(callee, &[bus_value, addr_arg, val_arg]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -674,12 +671,13 @@ impl<'a> JIT<'a> {
     }
 
     fn tlbwi(&mut self, builder: &mut FunctionBuilder, current_pc: &mut u32) -> Option<BranchInfo> {
-        let bus_raw = (&mut self.cpu.bus as *mut Bus) as i64;
-        let bus_ptr = builder.ins().iconst(types::I64, bus_raw);
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
 
         let local_callee = self.module.declare_func_in_func(self.tlbwi_func, builder.func);
 
-        builder.ins().call(local_callee, &[bus_ptr]);
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+        builder.ins().call(local_callee, &[bus_value]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);

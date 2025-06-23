@@ -3,7 +3,7 @@
 */
 
 use std::collections::HashSet;
-
+use std::sync::{Arc, Mutex};
 use crate::Bus;
 use crate::cpu::CPU;
 
@@ -17,17 +17,30 @@ pub use jit::JIT as JIT;
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
 pub struct EE {
-    bus: Bus,
-    pc: u32,
-    registers: [u128; 32],
+    bus: Arc<Mutex<Bus>>,
+    pub pc: u32,
+    pub registers: [u128; 32],
     cop0_registers: [u32; 32],
     lo: u128,
     hi: u128,
     breakpoints: HashSet<u32>,
 }
+impl Clone for EE {
+    fn clone(&self) -> EE {
+        EE {
+            bus: Arc::clone(&self.bus),
+            pc: self.pc,
+            registers: self.registers.clone(),
+            cop0_registers: self.cop0_registers.clone(),
+            lo: self.lo,
+            hi: self.hi,
+            breakpoints: self.breakpoints.clone(),
+        }
+    }
+}
 
 impl EE {
-    pub fn new(bus: Bus) -> Self {
+    pub fn new(bus: Arc<Mutex<Bus>>) -> Self {
         let mut ee = EE {
             pc: EE_RESET_VEC,
             registers: [0; 32],
@@ -40,8 +53,10 @@ impl EE {
 
         ee.cop0_registers[15] = 0x59;
 
-
-        ee.bus.cop0_registers_ptr = ee.cop0_registers.as_mut_ptr();
+        {
+            let mut bus = ee.bus.lock().unwrap();
+            bus.cop0_registers_ptr = ee.cop0_registers.as_mut_ptr();
+        }
 
         ee
     }
@@ -94,17 +109,20 @@ impl CPU for EE {
     }
 
     fn read32(&mut self, addr: u32) -> u32 {
-        (self.bus.read32)(&mut self.bus, addr)
+        let mut bus = self.bus.lock().unwrap();
+        (bus.read32)(&mut *bus, addr)
     }
 
     #[inline(always)]
     fn fetch(&mut self) -> u32 {
-        (self.bus.read32)(&mut self.bus, self.pc)
+        let mut bus = self.bus.lock().unwrap();
+        (bus.read32)(&mut *bus, self.pc)
     }
 
     #[inline(always)]
     fn fetch_at(&mut self, address: u32) -> u32 {
-        (self.bus.read32)(&mut self.bus, address)
+        let mut bus = self.bus.lock().unwrap();
+        (bus.read32)(&mut *bus, address)
     }
 
     fn add_breakpoint(&mut self, addr: u32) {
