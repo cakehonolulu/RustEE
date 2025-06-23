@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use crate::{
     bus::{Bus, BusMode},
     ee::{Interpreter, JIT, EE},
@@ -145,6 +146,9 @@ fn run_test(tc: &TestCase) {
         // Create buses with the current bus mode
         let bus_i = Bus::new(bus_mode.clone(), bios_i);
         let bus_j = Bus::new(bus_mode.clone(), bios_j);
+
+        let bus_i = Arc::new(Mutex::new(bus_i));
+        let bus_j = Arc::new(Mutex::new(bus_j));
 
         // Create EE instances for interpreter and JIT
         let mut ee_i = EE::new(bus_i);
