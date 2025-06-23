@@ -8,6 +8,7 @@ clap = "4.5.36"
 egui = "0.31.1"
 egui-wgpu = "0.31.1"
 egui-winit = "0.31.1"
+egui_extras = "0.31.1"
 librustee = { path = "../librustee" }
 pollster = "0.4.0"
 tracing = "0.1.41"

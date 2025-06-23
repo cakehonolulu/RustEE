@@ -1,4 +1,5 @@
 use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 use crate::Bus;
@@ -393,5 +394,9 @@ impl EmulationBackend<EE> for Interpreter {
             executed_cycles += instruction_cycles;
             self.cycles += instruction_cycles as usize;
         }
+    }
+
+    fn get_cpu(&self) -> Arc<Mutex<EE>> {
+        Arc::new(Mutex::new(self.cpu.clone()))
     }
 }

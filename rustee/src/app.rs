@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use crate::egui_tools::EguiRenderer;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{wgpu, ScreenDescriptor};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use egui::ScrollArea;
+use egui_extras::{Column, TableBuilder};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -104,6 +107,11 @@ pub struct App {
     ee: Arc<Mutex<EE>>,
     bus: Arc<Mutex<Bus>>,
     last_frame_time: Instant,
+    selected_ee_tab: usize,
+    prev_registers: HashMap<usize, u128>,
+    change_timers: HashMap<usize, f32>,
+    prev_cop0_registers: HashMap<usize, u32>,
+    cop0_change_timers: HashMap<usize, f32>,
 }
 
 impl App {
@@ -121,7 +129,6 @@ impl App {
             _ => panic!("Unsupported backend: {}", backend),
         };
 
-        // Construct the app
         App {
             instance: egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default()),
             state: None,
@@ -130,6 +137,11 @@ impl App {
             ee,
             bus,
             last_frame_time: Instant::now(),
+            selected_ee_tab: 0,
+            prev_registers: HashMap::new(),
+            change_timers: HashMap::new(),
+            prev_cop0_registers: HashMap::new(),
+            cop0_change_timers: HashMap::new(),
         }
     }
 
@@ -169,7 +181,6 @@ impl App {
         let delta = now.duration_since(self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
 
-        // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref() {
             if let Some(min) = window.is_minimized() {
                 if min {
@@ -191,7 +202,6 @@ impl App {
 
         match surface_texture {
             Err(SurfaceError::Outdated) => {
-                // Ignoring outdated to allow resizing and minimization
                 println!("wgpu surface outdated");
                 return;
             }
@@ -217,30 +227,179 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
-            egui::Window::new("Debugger").show(state.egui_renderer.context(), |ui| {
-                ui.label(format!("Frame Time: {:.2} ms", delta * 1000.0));
-                ui.separator();
+            egui::Window::new("EE CPU State").show(state.egui_renderer.context(), |ui| {
+                if let Ok(ee) = self.ee_backend.get_cpu().lock() {
+                    for (i, &value) in ee.registers.iter().enumerate() {
+                        if let Some(prev_value) = self.prev_registers.get(&i) {
+                            if *prev_value != value {
+                                self.change_timers.insert(i, 1.0);
+                            }
+                        }
+                        self.prev_registers.insert(i, value);
+                    }
+
+                    for timer in self.change_timers.values_mut() {
+                        *timer -= delta;
+                    }
+                    self.change_timers.retain(|_, &mut timer| timer > 0.0);
+
+                    for (i, &value) in ee.cop0_registers.iter().enumerate() {
+                        if let Some(prev_value) = self.prev_cop0_registers.get(&i) {
+                            if *prev_value != value {
+                                self.cop0_change_timers.insert(i, 1.0);
+                            }
+                        }
+                        self.prev_cop0_registers.insert(i, value);
+                    }
+
+                    for timer in self.cop0_change_timers.values_mut() {
+                        *timer -= delta;
+                    }
+                    self.cop0_change_timers.retain(|_, &mut timer| timer > 0.0);
+
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.selected_ee_tab, 0, "GP Registers");
+                        ui.selectable_value(&mut self.selected_ee_tab, 1, "COP0 Registers");
+                    });
+
+                    ui.separator();
+
+                    match self.selected_ee_tab {
+                        0 => {
+                            ScrollArea::both()
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                    TableBuilder::new(ui)
+                                        .striped(true)
+                                        .column(Column::auto().resizable(true))
+                                        .column(Column::remainder())
+                                        .header(20.0, |mut header| {
+                                            header.col(|ui| { ui.label("Name"); });
+                                            header.col(|ui| { ui.label("Value"); });
+                                        })
+                                        .body(|mut body| {
+                                            for (i, &value) in ee.registers.iter().enumerate() {
+                                                let name = [
+                                                    "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3",
+                                                    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
+                                                    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
+                                                    "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
+                                                ]
+                                                    .get(i)
+                                                    .unwrap_or(&"UNK");
+
+                                                let animation_progress = self
+                                                    .change_timers
+                                                    .get(&i)
+                                                    .cloned()
+                                                    .unwrap_or(0.0);
+
+                                                let text_color = if animation_progress > 0.0 {
+                                                    let t = animation_progress;
+                                                    let r = 255.0;
+                                                    let g = 255.0 * (1.0 - t);
+                                                    let b = 255.0 * (1.0 - t);
+                                                    egui::Color32::from_rgb(r as u8, g as u8, b as u8)
+                                                } else {
+                                                    egui::Color32::WHITE
+                                                };
+
+                                                body.row(18.0, |mut row| {
+                                                    row.col(|ui| { ui.label(*name); });
+                                                    row.col(|ui| {
+                                                        ui.colored_label(
+                                                            text_color,
+                                                            format!("{:#018X}", value),
+                                                        );
+                                                    });
+                                                });
+                                            }
+                                        });
+                                });
+                        }
+
+                        1 => {
+                            ScrollArea::both()
+                                .max_width(f32::INFINITY)
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                    TableBuilder::new(ui)
+                                        .striped(true)
+                                        .column(Column::auto().resizable(true))
+                                        .column(Column::remainder())
+                                        .header(20.0, |mut header| {
+                                            header.col(|ui| { ui.label("Register"); });
+                                            header.col(|ui| { ui.label("Value"); });
+                                        })
+                                        .body(|mut body| {
+                                            for (i, &value) in ee.cop0_registers.iter().enumerate() {
+                                                let name = [
+                                                    "Index", "Random", "EntryLo0", "EntryLo1", "Context",
+                                                    "PageMask", "Wired", "", "BadVAddr", "Count", "EntryHi",
+                                                    "Compare", "Status", "Cause", "EPC", "PRId", "Config",
+                                                    "", "", "", "", "", "", "BadPAddr", "Debug", "Perf",
+                                                    "", "", "TagLo", "TagHi", "ErrorEPC", ""
+                                                ]
+                                                    .get(i)
+                                                    .unwrap_or(&"UNK");
+
+                                                if name.is_empty() {
+                                                    continue;
+                                                }
+
+                                                let animation_progress = self
+                                                    .cop0_change_timers
+                                                    .get(&i)
+                                                    .copied()
+                                                    .unwrap_or(0.0);
+
+                                                let text_color = if animation_progress > 0.0 {
+                                                    let t = animation_progress;
+                                                    let r = 255.0;
+                                                    let g = 255.0 * (1.0 - t);
+                                                    let b = 255.0 * (1.0 - t);
+                                                    egui::Color32::from_rgb(r as u8, g as u8, b as u8)
+                                                } else {
+                                                    egui::Color32::WHITE
+                                                };
+
+                                                body.row(18.0, |mut row| {
+                                                    row.col(|ui| { ui.label(*name); });
+                                                    row.col(|ui| {
+                                                        ui.colored_label(
+                                                            text_color,
+                                                            format!("{:#010X}", value),
+                                                        );
+                                                    });
+                                                });
+                                            }
+                                        });
+                                });
+                        }
+
+                        _ => {}
+                    }
+                } else {
+                    ui.label("Unable to lock CPU state.");
+                }
+            });
+
+            egui::TopBottomPanel::bottom("EE Taskbar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Step").clicked() {
-                        println!("Stepping");
-                        self.ee_backend.step(); // Emulator step
+                        self.ee_backend.step();
                     }
                     if ui.button("Run").clicked() {
-                        self.ee_backend.run(); // Emulator run
+                        self.ee_backend.run();
                     }
                     if ui.button("Reset").clicked() {
-                        //self.ee_backend.reset(); // Emulator reset
+                        // Reset logic
                     }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("Frame Time: {:.2} ms", delta * 1000.0));
+                    });
                 });
-                ui.separator();
-                let ee = self.ee.lock().unwrap();
-                ui.heading("Registers");
-                for (i, &r) in ee.registers.iter().enumerate() {
-                    ui.label(format!("R{}: {:#X}", i, r));
-                }
-                ui.separator();
-                ui.heading("PC");
-                ui.label(format!("PC: {:#X}", ee.pc));
             });
 
             state.egui_renderer.end_frame_and_draw(

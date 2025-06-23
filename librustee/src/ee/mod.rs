@@ -20,9 +20,9 @@ pub struct EE {
     bus: Arc<Mutex<Bus>>,
     pub pc: u32,
     pub registers: [u128; 32],
-    cop0_registers: [u32; 32],
-    lo: u128,
-    hi: u128,
+    pub cop0_registers: [u32; 32],
+    pub lo: u128,
+    pub hi: u128,
     breakpoints: HashSet<u32>,
 }
 impl Clone for EE {

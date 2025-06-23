@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 pub trait CPU {
     type RegisterType;
 
@@ -24,4 +26,6 @@ pub trait EmulationBackend<C> {
     fn step(&mut self);
     fn run(&mut self);
     fn run_for_cycles(&mut self, cycles: u32);
+
+    fn get_cpu(&self) -> Arc<Mutex<C>>;
 }

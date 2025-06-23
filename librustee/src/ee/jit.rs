@@ -9,6 +9,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
 use std::num::NonZero;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
 
 #[derive(Clone)]
@@ -772,5 +773,9 @@ impl EmulationBackend<EE> for JIT<'_> {
                 break;
             }
         }
+    }
+
+    fn get_cpu(&self) -> Arc<Mutex<EE>> {
+        Arc::new(Mutex::new((*self.cpu).clone()))
     }
 }
