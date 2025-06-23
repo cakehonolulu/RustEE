@@ -4,6 +4,7 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
+capstone = "0.13.0"
 clap = "4.5.36"
 egui = "0.31.1"
 egui-wgpu = "0.31.1"

@@ -4,6 +4,7 @@ use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{wgpu, ScreenDescriptor};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use capstone::{Capstone, Endian};
 use egui::ScrollArea;
 use egui_extras::{Column, TableBuilder};
 use winit::application::ApplicationHandler;
@@ -14,7 +15,10 @@ use winit::window::{Window, WindowId};
 use librustee::Bus;
 use librustee::ee::{EE, Interpreter, JIT};
 use librustee::cpu::EmulationBackend;
-
+use capstone::arch::BuildsCapstone;
+use capstone::arch::BuildsCapstoneEndian;
+use capstone::arch::mips::ArchMode::Mips32;
+use librustee::cpu::CPU;
 
 pub struct AppState {
     pub device: wgpu::Device,
@@ -99,6 +103,39 @@ impl AppState {
     }
 }
 
+pub struct Disassembler {
+    cs: Capstone,
+}
+
+impl Disassembler {
+    pub fn new() -> Result<Self, capstone::Error> {
+        let cs = Capstone::new()
+            .mips()
+            .mode(Mips32)
+            .endian(Endian::Little)
+            .build()?;
+
+        Ok(Self { cs })
+    }
+
+    pub fn disassemble(&self, bytes: &[u8], base_addr: u64) -> Result<Vec<String>, capstone::Error> {
+        let insns = self.cs.disasm_all(bytes, base_addr)?;
+
+        let mut results = Vec::new();
+        for insn in insns.iter() {
+            let disassembled = format!(
+                "0x{:08x}:\t{}\t{}",
+                insn.address(),
+                insn.mnemonic().unwrap_or(""),
+                insn.op_str().unwrap_or("")
+            );
+            results.push(disassembled);
+        }
+
+        Ok(results)
+    }
+}
+
 pub struct App {
     instance: wgpu::Instance,
     state: Option<AppState>,
@@ -112,6 +149,9 @@ pub struct App {
     change_ee_timers: HashMap<usize, f32>,
     prev_cop0_registers: HashMap<usize, u32>,
     cop0_change_ee_timers: HashMap<usize, f32>,
+    disassembly_open: bool,
+    disassembly_data: Vec<String>,
+    disassembler: Disassembler,
 }
 
 impl App {
@@ -142,6 +182,32 @@ impl App {
             change_ee_timers: HashMap::new(),
             prev_cop0_registers: HashMap::new(),
             cop0_change_ee_timers: HashMap::new(),
+            disassembler: Disassembler::new().unwrap(),
+            disassembly_open: false,
+            disassembly_data: Vec::new(),
+        }
+    }
+
+    fn update_disassembly(&mut self) {
+        let mut ee = self.ee.lock().unwrap();
+        let pc = ee.pc;
+
+        let mut bytes = Vec::new();
+        for offset in 0..16 {
+            let addr = pc + (offset * 4);
+            let word = ee.read32(addr);
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+
+        // Use the disassembler to decode the instructions
+        match self.disassembler.disassemble(&bytes, pc as u64) {
+            Ok(disasm) => {
+                self.disassembly_data = disasm;
+            }
+            Err(err) => {
+                eprintln!("Error during disassembly: {}", err);
+                self.disassembly_data.clear();
+            }
         }
     }
 
@@ -177,6 +243,10 @@ impl App {
     }
 
     fn handle_redraw(&mut self) {
+        if self.disassembly_open {
+            self.update_disassembly();
+        }
+
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
@@ -309,11 +379,33 @@ impl App {
                                                     row.col(|ui| {
                                                         ui.colored_label(
                                                             text_color,
-                                                            format!("{:#018X}", value),
+                                                            format!("{:#034X}", value),
                                                         );
                                                     });
                                                 });
+
                                             }
+
+                                            body.row(1.0, |mut row| {
+                                                row.col(|ui| {
+                                                    ui.separator(); // Adds visual separation
+                                                });
+                                            });
+
+
+                                            body.row(18.0, |mut row| {
+                                                row.col(|ui| { ui.label("hi"); });
+                                                row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#034X}", ee.hi)); });
+                                            });
+                                            body.row(18.0, |mut row| {
+                                                row.col(|ui| { ui.label("lo"); });
+                                                row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#034X}", ee.lo)); });
+                                            });
+                                            body.row(18.0, |mut row| {
+                                                row.col(|ui| { ui.label("pc"); });
+                                                row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#010X}", ee.pc)); });
+                                            });
+
                                         });
                                 });
                         }
@@ -401,6 +493,28 @@ impl App {
                     });
                 });
             });
+
+
+            egui::TopBottomPanel::top("Menubar").show(state.egui_renderer.context(), |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Toggle Disassembly").clicked() {
+                        self.disassembly_open = !self.disassembly_open;
+                    }
+                });
+            });
+
+            if self.disassembly_open {
+                egui::Window::new("Disassembly")
+                    .resizable(true)
+                    .default_size(egui::vec2(400.0, 300.0))
+                    .show(state.egui_renderer.context(), |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for line in &self.disassembly_data {
+                                ui.label(line);
+                            }
+                        });
+                    });
+            }
 
             state.egui_renderer.end_frame_and_draw(
                 &state.device,
