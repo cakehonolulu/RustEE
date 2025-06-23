@@ -12,4 +12,4 @@
 
 ------
 
-[![EE+Bus Weekly Test](https://github.com/cakehonolulu/RustEE/actions/workflows/ee.yml/badge.svg?branch=main&event=status)](https://github.com/cakehonolulu/RustEE/actions/workflows/ee.yml)
+[![EE+Bus Weekly Test](https://github.com/cakehonolulu/RustEE/actions/workflows/ee.yml/badge.svg?branch=main)](https://github.com/cakehonolulu/RustEE/actions/workflows/ee.yml)
