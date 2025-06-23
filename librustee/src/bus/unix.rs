@@ -27,11 +27,11 @@ fn restore_default_handler_and_raise(signum: c_int) {
     }
 }
 
-extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
+extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut libc::ucontext_t) {
     generic_segv_handler::<CurrentArchHandler>(signum, info, ctx)
 }
 
-fn generic_segv_handler<H: ArchHandler<Context = c_void>>(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
+fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut H::Context) {
     if info.is_null() || ctx.is_null() {
         error!("Null info or ctx in segv_handler");
         return;
