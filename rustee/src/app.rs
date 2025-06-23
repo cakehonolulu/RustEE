@@ -152,6 +152,9 @@ pub struct App {
     disassembly_open: bool,
     disassembly_data: Vec<String>,
     disassembler: Disassembler,
+    disassembly_start_addr: u32,
+    address_input: String,
+    follow_pc: bool,
 }
 
 impl App {
@@ -185,6 +188,9 @@ impl App {
             disassembler: Disassembler::new().unwrap(),
             disassembly_open: false,
             disassembly_data: Vec::new(),
+            disassembly_start_addr: 0,
+            address_input: "0x0".to_string(),
+            follow_pc: true,
         }
     }
 
@@ -243,10 +249,6 @@ impl App {
     }
 
     fn handle_redraw(&mut self) {
-        if self.disassembly_open {
-            self.update_disassembly();
-        }
-
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
@@ -264,8 +266,7 @@ impl App {
 
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [state.surface_config.width, state.surface_config.height],
-            pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32
-                * state.scale_factor,
+            pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32 * state.scale_factor,
         };
 
         let surface_texture = state.surface.get_current_texture();
@@ -354,9 +355,7 @@ impl App {
                                                     "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
                                                     "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
                                                     "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
-                                                ]
-                                                    .get(i)
-                                                    .unwrap_or(&"UNK");
+                                                ].get(i).unwrap_or(&"UNK");
 
                                                 let animation_progress = self
                                                     .change_ee_timers
@@ -383,15 +382,11 @@ impl App {
                                                         );
                                                     });
                                                 });
-
                                             }
 
                                             body.row(1.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.separator(); // Adds visual separation
-                                                });
+                                                row.col(|ui| { ui.separator(); });
                                             });
-
 
                                             body.row(18.0, |mut row| {
                                                 row.col(|ui| { ui.label("hi"); });
@@ -405,11 +400,9 @@ impl App {
                                                 row.col(|ui| { ui.label("pc"); });
                                                 row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#010X}", ee.pc)); });
                                             });
-
                                         });
                                 });
                         }
-
                         1 => {
                             ScrollArea::both()
                                 .max_width(f32::INFINITY)
@@ -431,13 +424,9 @@ impl App {
                                                     "Compare", "Status", "Cause", "EPC", "PRId", "Config",
                                                     "", "", "", "", "", "", "BadPAddr", "Debug", "Perf",
                                                     "", "", "TagLo", "TagHi", "ErrorEPC", ""
-                                                ]
-                                                    .get(i)
-                                                    .unwrap_or(&"UNK");
+                                                ].get(i).unwrap_or(&"UNK");
 
-                                                if name.is_empty() {
-                                                    continue;
-                                                }
+                                                if name.is_empty() { continue; }
 
                                                 let animation_progress = self
                                                     .cop0_change_ee_timers
@@ -468,7 +457,6 @@ impl App {
                                         });
                                 });
                         }
-
                         _ => {}
                     }
                 } else {
@@ -494,7 +482,6 @@ impl App {
                 });
             });
 
-
             egui::TopBottomPanel::top("Menubar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Toggle Disassembly").clicked() {
@@ -504,16 +491,57 @@ impl App {
             });
 
             if self.disassembly_open {
-                egui::Window::new("Disassembly")
-                    .resizable(true)
-                    .default_size(egui::vec2(400.0, 300.0))
-                    .show(state.egui_renderer.context(), |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for line in &self.disassembly_data {
-                                ui.label(line);
-                            }
-                        });
+                if let Ok(mut ee) = self.ee_backend.get_cpu().lock() {
+                    if self.follow_pc {
+                        self.disassembly_start_addr = ee.pc;
+                    }
+
+                    // Generate disassembly
+                    let start_addr = self.disassembly_start_addr;
+                    let num_instructions = 100; // Increased from 16 for scrollability
+                    let mut bytes = Vec::new();
+                    for i in 0..num_instructions {
+                        let addr = start_addr.wrapping_add(i * 4); // MIPS instructions are 4 bytes
+                        let word = ee.read32(addr); // Assuming ee.read32 returns u32
+                        bytes.extend_from_slice(&word.to_le_bytes());
+                    }
+                    let disasm = self.disassembler.disassemble(&bytes, start_addr as u64).unwrap_or_else(|err| {
+                        eprintln!("Error during disassembly: {}", err);
+                        Vec::new()
                     });
+
+                    // Compute disassembly data locally
+                    let pc = ee.pc;
+                    let mut bytes = Vec::new();
+                    for offset in 0..16 {
+                        let addr = pc + (offset * 4);
+                        let word = ee.read32(addr);
+                        bytes.extend_from_slice(&word.to_le_bytes());
+                    }
+                    let disasm = self.disassembler.disassemble(&bytes, pc as u64).unwrap_or_else(|err| {
+                        eprintln!("Error during disassembly: {}", err);
+                        Vec::new()
+                    });
+
+                    egui::Window::new("Disassembly")
+                        .resizable(true)
+                        .default_size(egui::vec2(400.0, 300.0))
+                        .show(state.egui_renderer.context(), |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                let current_pc = ee.pc;
+                                for line in &disasm {
+                                    if let Some((address, _)) = line.split_once(":") {
+                                        let address = u64::from_str_radix(address.trim_start_matches("0x"), 16).unwrap_or(0);
+                                        if address == current_pc as u64 {
+                                            ui.colored_label(egui::Color32::LIGHT_BLUE, line);
+                                        } else {
+                                            ui.label(line);
+                                        }
+                                    }
+                                }
+                            });
+                        });
+                }
             }
 
             state.egui_renderer.end_frame_and_draw(
@@ -529,6 +557,7 @@ impl App {
         state.queue.submit(Some(encoder.finish()));
         surface_texture.present();
     }
+
 }
 
 impl ApplicationHandler for App {
