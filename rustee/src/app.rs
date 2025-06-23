@@ -108,10 +108,10 @@ pub struct App {
     bus: Arc<Mutex<Bus>>,
     last_frame_time: Instant,
     selected_ee_tab: usize,
-    prev_registers: HashMap<usize, u128>,
-    change_timers: HashMap<usize, f32>,
+    prev_ee_registers: HashMap<usize, u128>,
+    change_ee_timers: HashMap<usize, f32>,
     prev_cop0_registers: HashMap<usize, u32>,
-    cop0_change_timers: HashMap<usize, f32>,
+    cop0_change_ee_timers: HashMap<usize, f32>,
 }
 
 impl App {
@@ -138,10 +138,10 @@ impl App {
             bus,
             last_frame_time: Instant::now(),
             selected_ee_tab: 0,
-            prev_registers: HashMap::new(),
-            change_timers: HashMap::new(),
+            prev_ee_registers: HashMap::new(),
+            change_ee_timers: HashMap::new(),
             prev_cop0_registers: HashMap::new(),
-            cop0_change_timers: HashMap::new(),
+            cop0_change_ee_timers: HashMap::new(),
         }
     }
 
@@ -230,32 +230,32 @@ impl App {
             egui::Window::new("EE CPU State").show(state.egui_renderer.context(), |ui| {
                 if let Ok(ee) = self.ee_backend.get_cpu().lock() {
                     for (i, &value) in ee.registers.iter().enumerate() {
-                        if let Some(prev_value) = self.prev_registers.get(&i) {
+                        if let Some(prev_value) = self.prev_ee_registers.get(&i) {
                             if *prev_value != value {
-                                self.change_timers.insert(i, 1.0);
+                                self.change_ee_timers.insert(i, 1.0);
                             }
                         }
-                        self.prev_registers.insert(i, value);
+                        self.prev_ee_registers.insert(i, value);
                     }
 
-                    for timer in self.change_timers.values_mut() {
+                    for timer in self.change_ee_timers.values_mut() {
                         *timer -= delta;
                     }
-                    self.change_timers.retain(|_, &mut timer| timer > 0.0);
+                    self.change_ee_timers.retain(|_, &mut timer| timer > 0.0);
 
                     for (i, &value) in ee.cop0_registers.iter().enumerate() {
                         if let Some(prev_value) = self.prev_cop0_registers.get(&i) {
                             if *prev_value != value {
-                                self.cop0_change_timers.insert(i, 1.0);
+                                self.cop0_change_ee_timers.insert(i, 1.0);
                             }
                         }
                         self.prev_cop0_registers.insert(i, value);
                     }
 
-                    for timer in self.cop0_change_timers.values_mut() {
+                    for timer in self.cop0_change_ee_timers.values_mut() {
                         *timer -= delta;
                     }
-                    self.cop0_change_timers.retain(|_, &mut timer| timer > 0.0);
+                    self.cop0_change_ee_timers.retain(|_, &mut timer| timer > 0.0);
 
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut self.selected_ee_tab, 0, "GP Registers");
@@ -289,7 +289,7 @@ impl App {
                                                     .unwrap_or(&"UNK");
 
                                                 let animation_progress = self
-                                                    .change_timers
+                                                    .change_ee_timers
                                                     .get(&i)
                                                     .cloned()
                                                     .unwrap_or(0.0);
@@ -348,7 +348,7 @@ impl App {
                                                 }
 
                                                 let animation_progress = self
-                                                    .cop0_change_timers
+                                                    .cop0_change_ee_timers
                                                     .get(&i)
                                                     .copied()
                                                     .unwrap_or(0.0);
