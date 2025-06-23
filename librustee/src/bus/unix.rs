@@ -27,11 +27,16 @@ fn restore_default_handler_and_raise(signum: c_int) {
     }
 }
 
-extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut libc::ucontext_t) {
+extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
+    let ctx = ctx as *mut ucontext_t;
     generic_segv_handler::<CurrentArchHandler>(signum, info, ctx)
 }
 
-fn generic_segv_handler<H: ArchHandler>(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut H::Context) {
+fn generic_segv_handler<H: ArchHandler>(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    ctx: *mut H::Context,
+) {
     if info.is_null() || ctx.is_null() {
         error!("Null info or ctx in segv_handler");
         return;
@@ -229,8 +234,8 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn fix_return_address<H: ArchHandler<Context = c_void>>(
-    ctx: *mut c_void,
+fn fix_return_address<H: ArchHandler>(
+    ctx: *mut H::Context,
     patch_addr: u64,
     patch_len: usize,
 ) {
@@ -272,8 +277,8 @@ pub fn install_handler() -> io::Result<()> {
         debug!("Handler already installed, skipping");
         return Ok(());
     }
-    
-    let handler = SigHandler::SigAction(segv_handler);
+
+    let handler = SigHandler::SigAction(segv_handler as extern "C" fn(_, _, *mut c_void));
     let flags = SaFlags::SA_SIGINFO;
     let mask = SigSet::empty();
     let action = SigAction::new(handler, flags, mask);
