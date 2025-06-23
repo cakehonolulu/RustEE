@@ -1,6 +1,8 @@
 name: EE+Bus Weekly Test
 
 on:
+  workflow_dispatch:
+
   schedule:
     - cron: "59 22 * * 0"
 
@@ -10,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout the code
+      - name: Checkout the code (with full history & submodules)
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -25,12 +27,11 @@ jobs:
       - name: Check if changes were made this week
         id: check_changes
         run: |
-          # Fetch changes from the past 7 days in the repository
+          # Fetch commits from the past 7 days
           RECENT_COMMITS=$(git log --since="7 days ago" --oneline)
           echo "Recent commits:"
           echo "$RECENT_COMMITS"
 
-          # Exit successfully if no commits were found
           if [ -z "$RECENT_COMMITS" ]; then
             echo "No changes found this week. Skipping tests."
             exit 0
