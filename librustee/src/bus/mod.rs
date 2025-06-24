@@ -37,7 +37,7 @@ pub enum BusMode {
     HardwareFastMem,
 }
 
-mod map {
+pub mod map {
     pub struct Range(pub u32, pub u32);
 
     impl Range {
@@ -62,11 +62,11 @@ const PAGE_SIZE:    usize = 1 << PAGE_BITS;        // 4096
 const NUM_PAGES:    usize = 1 << (32 - PAGE_BITS); // 4 GiB / 4 KiB = 1 048 576
 
 pub struct Bus {
-    bios: BIOS,
-    ram: Vec<u8>,
+    pub(crate) bios: BIOS,
+    pub(crate) ram: Vec<u8>,
 
     pub tlb: RefCell<Tlb>,
-    operating_mode: OperatingMode,
+    pub(crate) operating_mode: OperatingMode,
 
     mode: BusMode,
 

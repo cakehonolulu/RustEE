@@ -478,7 +478,7 @@ impl App {
                     let mut bytes = Vec::new();
                     for i in 0..num_instructions {
                         let addr = start_addr.wrapping_add(i * 4);
-                        let word = ee.read32(addr);
+                        let word = ee.read32_raw(addr);
                         bytes.extend_from_slice(&word.to_le_bytes());
                     }
 
@@ -486,7 +486,7 @@ impl App {
                     let mut bytes = Vec::new();
                     for offset in 0..16 {
                         let addr = pc + (offset * 4);
-                        let word = ee.read32(addr);
+                        let word = ee.read32_raw(addr);
                         bytes.extend_from_slice(&word.to_le_bytes());
                     }
                     let disasm = self.disassembler.disassemble(&bytes, pc as u64).unwrap_or_else(|err| {

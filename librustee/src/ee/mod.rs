@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use crate::Bus;
+use crate::{bus, Bus};
 use crate::cpu::CPU;
 
 pub mod jit;
@@ -12,7 +12,8 @@ pub mod interpreter;
 
 pub use interpreter::Interpreter;
 pub use jit::JIT as JIT;
-
+use crate::bus::map;
+use crate::bus::tlb::AccessType;
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
@@ -111,6 +112,31 @@ impl CPU for EE {
     fn read32(&mut self, addr: u32) -> u32 {
         let mut bus = self.bus.lock().unwrap();
         (bus.read32)(&mut *bus, addr)
+    }
+
+    fn read32_raw(&mut self, addr: u32) -> u32 {
+        let mut bus = self.bus.lock().unwrap();
+        let pa = match bus.tlb.borrow_mut().translate_address(
+            addr,
+            AccessType::Read,
+            bus.operating_mode,
+            bus.read_cop0_asid(),
+        ) {
+            Ok(pa) => pa,
+            Err(_) => return 0,
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { bus.ram.as_ptr().add(offset as usize) } as *const u32;
+            unsafe { ptr.read_unaligned() }
+        } else if map::IO.contains(pa).is_some() {
+            0
+        } else if let Some(offset) = map::BIOS.contains(pa) {
+            let ptr = unsafe { bus.bios.bytes.as_ptr().add(offset as usize) } as *const u32;
+            unsafe { ptr.read_unaligned() }
+        } else {
+            0
+        }
     }
 
     #[inline(always)]
