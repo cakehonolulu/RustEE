@@ -5,7 +5,7 @@ use egui_wgpu::{wgpu, ScreenDescriptor};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use capstone::{Capstone, Endian};
-use egui::ScrollArea;
+use egui::{Color32, FontId, Grid, RichText, ScrollArea, TextStyle};
 use egui_extras::{Column, TableBuilder};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -191,29 +191,6 @@ impl App {
             disassembly_start_addr: 0,
             address_input: "0x0".to_string(),
             follow_pc: true,
-        }
-    }
-
-    fn update_disassembly(&mut self) {
-        let mut ee = self.ee.lock().unwrap();
-        let pc = ee.pc;
-
-        let mut bytes = Vec::new();
-        for offset in 0..16 {
-            let addr = pc + (offset * 4);
-            let word = ee.read32(addr);
-            bytes.extend_from_slice(&word.to_le_bytes());
-        }
-
-        // Use the disassembler to decode the instructions
-        match self.disassembler.disassemble(&bytes, pc as u64) {
-            Ok(disasm) => {
-                self.disassembly_data = disasm;
-            }
-            Err(err) => {
-                eprintln!("Error during disassembly: {}", err);
-                self.disassembly_data.clear();
-            }
         }
     }
 
@@ -496,21 +473,15 @@ impl App {
                         self.disassembly_start_addr = ee.pc;
                     }
 
-                    // Generate disassembly
                     let start_addr = self.disassembly_start_addr;
-                    let num_instructions = 100; // Increased from 16 for scrollability
+                    let num_instructions = 100;
                     let mut bytes = Vec::new();
                     for i in 0..num_instructions {
-                        let addr = start_addr.wrapping_add(i * 4); // MIPS instructions are 4 bytes
-                        let word = ee.read32(addr); // Assuming ee.read32 returns u32
+                        let addr = start_addr.wrapping_add(i * 4);
+                        let word = ee.read32(addr);
                         bytes.extend_from_slice(&word.to_le_bytes());
                     }
-                    let disasm = self.disassembler.disassemble(&bytes, start_addr as u64).unwrap_or_else(|err| {
-                        eprintln!("Error during disassembly: {}", err);
-                        Vec::new()
-                    });
 
-                    // Compute disassembly data locally
                     let pc = ee.pc;
                     let mut bytes = Vec::new();
                     for offset in 0..16 {
@@ -527,20 +498,52 @@ impl App {
                         .resizable(true)
                         .default_size(egui::vec2(400.0, 300.0))
                         .show(state.egui_renderer.context(), |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                let current_pc = ee.pc;
-                                for line in &disasm {
-                                    if let Some((address, _)) = line.split_once(":") {
-                                        let address = u64::from_str_radix(address.trim_start_matches("0x"), 16).unwrap_or(0);
-                                        if address == current_pc as u64 {
-                                            ui.colored_label(egui::Color32::LIGHT_BLUE, line);
-                                        } else {
-                                            ui.label(line);
-                                        }
-                                    }
-                                }
-                            });
+                            egui::ScrollArea::both()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    let current_pc = ee.pc as u64;
+                                    let style = ui.style();
+                                    let mono_font: FontId = style.text_styles[&TextStyle::Monospace].clone();
+                                    let available_width = ui.available_width();
+                                    ui.set_min_width(available_width);
+
+                                    Grid::new("disasm_grid")
+                                        .spacing([10.0, 4.0])
+                                        .min_col_width(0f32)
+                                        .show(ui, |ui| {
+                                            for line in &disasm {
+                                                if let Some((addr_str, rest)) = line.split_once(':') {
+                                                    let address = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16)
+                                                        .unwrap_or(0);
+                                                    let addr_text = RichText::new(format!("0x{:08x}:", address))
+                                                        .font(mono_font.clone())
+                                                        .color(if address == current_pc { Color32::LIGHT_BLUE } else { Color32::GRAY });
+
+                                                    let (mnemonic, operands) = if let Some((m, ops)) = rest.trim().split_once('\t') {
+                                                        (m, ops)
+                                                    } else {
+                                                        (rest.trim(), "")
+                                                    };
+
+                                                    let mnemonic_text = RichText::new(mnemonic)
+                                                        .font(mono_font.clone())
+                                                        .color(Color32::LIGHT_GREEN);
+
+                                                    let operands_text = RichText::new(operands)
+                                                        .font(mono_font.clone())
+                                                        .color(Color32::WHITE);
+
+                                                    ui.label(addr_text);
+                                                    ui.label(mnemonic_text);
+                                                    ui.label(operands_text);
+                                                    ui.end_row();
+                                                }
+                                            }
+                                        });
+                                });
                         });
+
+
                 }
             }
 
