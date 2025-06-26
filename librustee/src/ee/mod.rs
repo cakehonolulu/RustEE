@@ -3,8 +3,8 @@
 */
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-use crate::{bus, Bus};
+use std::sync::{Arc, RwLock, Mutex};
+use crate::Bus;
 use crate::cpu::CPU;
 
 pub mod jit;
@@ -21,7 +21,7 @@ pub struct EE {
     bus: Arc<Mutex<Bus>>,
     pub pc: u32,
     pub registers: [u128; 32],
-    pub cop0_registers: [u32; 32],
+    pub cop0_registers: Arc<RwLock<[u32; 32]>>,
     pub lo: u128,
     pub hi: u128,
     breakpoints: HashSet<u32>,
@@ -32,7 +32,7 @@ impl Clone for EE {
             bus: Arc::clone(&self.bus),
             pc: self.pc,
             registers: self.registers.clone(),
-            cop0_registers: self.cop0_registers.clone(),
+            cop0_registers: Arc::clone(&self.cop0_registers),
             lo: self.lo,
             hi: self.hi,
             breakpoints: self.breakpoints.clone(),
@@ -41,23 +41,18 @@ impl Clone for EE {
 }
 
 impl EE {
-    pub fn new(bus: Arc<Mutex<Bus>>) -> Self {
-        let mut ee = EE {
+    pub fn new(bus: Arc<Mutex<Bus>>, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Self {
+        cop0_registers.write().unwrap()[15] = 0x59;
+
+        let ee = EE {
             pc: EE_RESET_VEC,
             registers: [0; 32],
-            cop0_registers: [0; 32],
+            cop0_registers,
             lo: 0,
             hi: 0,
             bus,
             breakpoints: HashSet::new(),
         };
-
-        ee.cop0_registers[15] = 0x59;
-
-        {
-            let mut bus = ee.bus.lock().unwrap();
-            bus.cop0_registers_ptr = ee.cop0_registers.as_mut_ptr();
-        }
 
         ee
     }
@@ -102,11 +97,10 @@ impl CPU for EE {
     }
 
     fn read_cop0_register(&self, index: usize) -> u32 {
-        self.cop0_registers[index]
+        self.cop0_registers.read().unwrap()[index]
     }
-
     fn write_cop0_register(&mut self, index: usize, value: u32) {
-        self.cop0_registers[index] = value;
+        self.cop0_registers.write().unwrap()[index] = value;
     }
 
     fn read32(&mut self, addr: u32) -> u32 {
@@ -115,7 +109,7 @@ impl CPU for EE {
     }
 
     fn read32_raw(&mut self, addr: u32) -> u32 {
-        let mut bus = self.bus.lock().unwrap();
+        let bus = self.bus.lock().unwrap();
         let pa = match bus.tlb.borrow_mut().translate_address(
             addr,
             AccessType::Read,

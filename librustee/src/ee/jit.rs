@@ -10,7 +10,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
 use std::num::NonZero;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, error};
+use tracing::error;
 
 #[derive(Clone)]
 pub struct Block {
@@ -27,12 +27,13 @@ pub struct JIT<'a> {
     blocks: LruCache<u32, Block>,
     max_blocks: usize,
     gpr_ptr: *mut u128,
-    cop0_ptr: *mut u32,
     pc_ptr: *mut u32,
     cycles: usize,
     bus_write32_func: FuncId,
     bus_read32_func: FuncId,
     tlbwi_func: FuncId,
+    read_cop0_func: FuncId,
+    write_cop0_func: FuncId,
 }
 
 pub enum BranchTarget {
@@ -56,6 +57,22 @@ enum BranchInfo {
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
 
+#[unsafe(no_mangle)]
+pub extern "C" fn __read_cop0(cpu_ptr: *mut EE, index: u32) -> u32 {
+    unsafe {
+        let cpu = &mut *cpu_ptr;
+        cpu.read_cop0_register(index as usize)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn __write_cop0(cpu_ptr: *mut EE, index: u32, value: u32) {
+    unsafe {
+        let cpu = &mut *cpu_ptr;
+        cpu.write_cop0_register(index as usize, value)
+    }
+}
+
 pub extern "C" fn __bus_write32(bus_ptr: *mut Bus, addr: u32, value: u32) {
     unsafe {
         let bus = &mut *bus_ptr;
@@ -64,7 +81,6 @@ pub extern "C" fn __bus_write32(bus_ptr: *mut Bus, addr: u32, value: u32) {
 }
 
 pub extern "C" fn __bus_read32(bus_ptr: *mut Bus, addr: u32) -> u32 {
-    debug!("bus_read32 called: 0x{:X}", addr);
     unsafe {
         let bus = &mut *bus_ptr;
         (bus.read32)(bus, addr)
@@ -75,13 +91,14 @@ pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
     unsafe {
         let bus = &mut *bus_ptr;
         let mut tlb_ref = bus.tlb.borrow_mut();
+      
 
-        let index = (*bus.cop0_registers_ptr.add(0) & 0x3F) as usize;
+        let index = ((bus.read_cop0_register(0)) & 0x3F) as usize;
 
-        let entry_hi  = *bus.cop0_registers_ptr.add(10); // EntryHi
-        let entry_lo0 = *bus.cop0_registers_ptr.add(2); // EntryLo0
-        let entry_lo1 = *bus.cop0_registers_ptr.add(3); // EntryLo1
-        let page_mask = *bus.cop0_registers_ptr.add(5); // PageMask
+        let entry_hi  = bus.read_cop0_register(10); // EntryHi
+        let entry_lo0 = bus.read_cop0_register(2); // EntryLo0
+        let entry_lo1 = bus.read_cop0_register(3); // EntryLo1
+        let page_mask = bus.read_cop0_register(5); // PageMask
 
         let vpn2 = entry_hi >> 13;
         let asid = (entry_hi & 0xFF) as u8;
@@ -145,9 +162,12 @@ impl<'a> JIT<'a> {
             __bus_tlbwi as *const u8,
         );
 
+        builder.symbol("__read_cop0", __read_cop0 as *const u8);
+
+        builder.symbol("__write_cop0", __write_cop0 as *const u8);
+
         let mut module = JITModule::new(builder);
         let gpr_ptr = cpu.registers.as_mut_ptr();
-        let cop0_ptr = cpu.cop0_registers.as_mut_ptr();
         let pc_ptr = &mut cpu.pc as *mut u32;
 
         let mut store32_sig = module.make_signature();
@@ -175,18 +195,35 @@ impl<'a> JIT<'a> {
             .declare_function("__bus_tlbwi", Linkage::Import, &tlbwi_sig)
             .expect("Failed to declare __bus_tlbwi!");
 
+        let mut read_cop0_sig = module.make_signature();
+        read_cop0_sig.params.push(AbiParam::new(types::I64)); // cpu_ptr
+        read_cop0_sig.params.push(AbiParam::new(types::I32)); // index
+        read_cop0_sig.returns.push(AbiParam::new(types::I32));
+        let read_cop0_func = module
+            .declare_function("__read_cop0", Linkage::Import, &read_cop0_sig)
+            .expect("Failed to declare __read_cop0");
+
+        let mut write_cop0_sig = module.make_signature();
+        write_cop0_sig.params.push(AbiParam::new(types::I64)); // cpu_ptr
+        write_cop0_sig.params.push(AbiParam::new(types::I32)); // index
+        write_cop0_sig.params.push(AbiParam::new(types::I32)); // value
+        let write_cop0_func = module
+            .declare_function("__write_cop0", Linkage::Import, &write_cop0_sig)
+            .expect("Failed to declare __write_cop0");
+
         JIT {
             cpu,
             module,
             blocks: LruCache::new(MAX_BLOCKS),
             max_blocks: MAX_BLOCKS.into(),
             gpr_ptr,
-            cop0_ptr,
             pc_ptr,
             cycles: 0,
             bus_write32_func,
             bus_read32_func,
-            tlbwi_func
+            tlbwi_func,
+            read_cop0_func,
+            write_cop0_func
         }
     }
 
@@ -428,6 +465,9 @@ impl<'a> JIT<'a> {
                     0x08 => {
                         self.jr(builder, opcode, current_pc)
                     },
+                    0x09 => {
+                        self.jalr(builder, opcode, current_pc)
+                    },
                     0x0F => {
                         self.sync(builder, opcode, current_pc)
                     }
@@ -519,17 +559,18 @@ impl<'a> JIT<'a> {
         let rd = ((opcode >> 11) & 0x1F) as i64;
 
         let gpr_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
-        let cop0_addr = Self::ptr_add(builder, self.cop0_ptr as i64, rd, 4);
 
-        let cop0_val = Self::load32(builder, cop0_addr);
+        // Prepare arguments
+        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
+        let rd_arg = builder.ins().iconst(types::I32, rd);
+
+        // Call __read_cop0
+        let callee = self.module.declare_func_in_func(self.read_cop0_func, builder.func);
+        let call = builder.ins().call(callee, &[cpu_arg, rd_arg]);
+        let cop0_val = builder.inst_results(call)[0];
+
         builder.ins().store(MemFlags::new(), cop0_val, gpr_addr, 0);
-
-        // Add self.cycles to COP0.Count (cop0[9])
-        let count_addr = Self::ptr_add(builder, self.cop0_ptr as i64, 9, 4);
-        let count_val = Self::load32(builder, count_addr);
-        let cycles_val = builder.ins().iconst(types::I32, self.cycles as i64);
-        let new_count_val = builder.ins().iadd(count_val, cycles_val);
-        builder.ins().store(MemFlags::new(), new_count_val, count_addr, 0);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -612,10 +653,15 @@ impl<'a> JIT<'a> {
         let rd = ((opcode >> 11) & 0x1F) as i64;
 
         let gpr_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
-        let cop0_addr = Self::ptr_add(builder, self.cop0_ptr as i64, rd, 4);
 
+        // Prepare arguments
+        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
+        let rd_arg = builder.ins().iconst(types::I32, rd);
         let gpr_val = Self::load32(builder, gpr_addr);
-        builder.ins().store(MemFlags::new(), gpr_val, cop0_addr, 0);
+
+        let callee = self.module.declare_func_in_func(self.write_cop0_func, builder.func);
+        builder.ins().call(callee, &[cpu_arg, rd_arg, gpr_val]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -674,10 +720,10 @@ impl<'a> JIT<'a> {
     fn tlbwi(&mut self, builder: &mut FunctionBuilder, current_pc: &mut u32) -> Option<BranchInfo> {
         let bus_lock = self.cpu.bus.lock().unwrap();
         let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let local_callee = self.module.declare_func_in_func(self.tlbwi_func, builder.func);
 
-        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         builder.ins().call(local_callee, &[bus_value]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
@@ -737,6 +783,28 @@ impl<'a> JIT<'a> {
         let target_i32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
         let target = builder.ins().uextend(types::I64, target_i32);
         *current_pc = current_pc.wrapping_add(4);
+        Some(BranchInfo::Unconditional {
+            target: BranchTarget::Reg(target),
+        })
+    }
+
+    fn jalr(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        // The return address is the instruction after the delay slot
+        let return_addr = current_pc.wrapping_add(8);
+        let ret_val = builder.ins().iconst(types::I64, return_addr as i64);
+        builder.ins().store(MemFlags::new(), ret_val, rd_addr, 0);
+
+        let target_i32 = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+        let target = builder.ins().uextend(types::I64, target_i32);
+
+        *current_pc = current_pc.wrapping_add(4);
+
         Some(BranchInfo::Unconditional {
             target: BranchTarget::Reg(target),
         })

@@ -1,7 +1,5 @@
-use std::ops::Add;
 use std::sync::atomic::AtomicBool;
 
-use backtrace::Backtrace;
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
 use tracing::trace;
@@ -71,6 +69,7 @@ pub mod x86_64_impl {
             X86Register::Rcx => vec![0x48, 0xB9], // movabs rcx, imm64
             X86Register::R8 => vec![0x49, 0xB8],  // movabs r8, imm64
             X86Register::R9 => vec![0x49, 0xB9],  // movabs r9, imm64
+            X86Register::R10 => vec![0x49, 0xBA], // movabs r10, imm64
             _ => {
                 error!("Unsupported register for stub call: {}", register_name_impl(reg));
                 return None;

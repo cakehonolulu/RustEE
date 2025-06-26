@@ -3,6 +3,7 @@ pub mod bios;
 use bios::BIOS;
 use tracing::{info, debug};
 
+use std::sync::{Arc, RwLock};
 use std::{cell::RefCell, ptr::null_mut};
 use std::sync::atomic::AtomicUsize;
 
@@ -77,7 +78,7 @@ pub struct Bus {
     hw_size: usize,
     arena: Option<region::Allocation>,
 
-    pub cop0_registers_ptr: *mut u32,
+    pub cop0_registers: Arc<RwLock<[u32; 32]>>,
 
     // Function pointers for read/write operations
     pub read32: fn(&mut Self, u32) -> u32,
@@ -85,7 +86,7 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(mode: BusMode, bios: BIOS) -> Bus {
+    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Bus {
         let mut bus = Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
@@ -99,7 +100,7 @@ impl Bus {
             arena: None,
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
-            cop0_registers_ptr: std::ptr::null_mut(),
+            cop0_registers: Arc::clone(&cop0_registers),
         };
 
         unsafe { BUS_PTR = &mut bus; }
@@ -127,15 +128,11 @@ impl Bus {
     }
 
     pub fn read_cop0_register(&self, index: usize) -> u32 {
-        unsafe {
-            *self.cop0_registers_ptr.add(index)
-        }
+        self.cop0_registers.read().unwrap()[index]
     }
 
     pub fn write_cop0_register(&mut self, index: usize, value: u32) {
-        unsafe {
-            *self.cop0_registers_ptr.add(index) = value;
-        }
+        self.cop0_registers.write().unwrap()[index] = value;
     }
 
     pub fn read_cop0_asid(&self) -> u8 {

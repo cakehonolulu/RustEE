@@ -1,15 +1,12 @@
-use std::arch::asm;
 use std::io;
 use std::ops::Add;
 use std::os::raw::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use crate::bus::unix::libc::ucontext_t;
 use nix::libc;
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::mman::{mprotect, ProtFlags};
 use backtrace::Backtrace;
-use capstone::Capstone;
-use capstone::arch::BuildsCapstone;
 use tracing::{debug, error, info, trace};
 
 use super::{Bus, HW_BASE, HW_LENGTH};

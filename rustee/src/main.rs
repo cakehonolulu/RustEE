@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use librustee::{bus::{Bus, BusMode}, cpu::{CPU}, ee::EE, BIOS};
 use clap::{arg, Command};
 
@@ -67,8 +67,9 @@ fn main() {
             _ => BusMode::Ranged,
         };
 
-        let bus = Arc::new(Mutex::new(Bus::new(bus_mode, bios)));
-        let ee = Arc::new(Mutex::new(EE::new(bus.clone())));
+        let cop0_registers = Arc::new(RwLock::new([0u32; 32]));
+        let bus = Arc::new(Mutex::new(Bus::new(bus_mode, bios, Arc::clone(&cop0_registers))));
+        let ee = Arc::new(Mutex::new(EE::new(Arc::clone(&bus), Arc::clone(&cop0_registers))));
 
         if let Some(breakpoints) = arguments.get_one::<Vec<u32>>("ee-breakpoint") {
             for &addr in breakpoints {

@@ -291,7 +291,8 @@ impl App {
                     }
                     self.change_ee_timers.retain(|_, &mut timer| timer > 0.0);
 
-                    for (i, &value) in ee.cop0_registers.iter().enumerate() {
+                    let cop0 = ee.cop0_registers.read().unwrap();
+                    for (i, &value) in cop0.iter().enumerate() {
                         if let Some(prev_value) = self.prev_cop0_registers.get(&i) {
                             if *prev_value != value {
                                 self.cop0_change_ee_timers.insert(i, 1.0);
@@ -394,7 +395,8 @@ impl App {
                                             header.col(|ui| { ui.label("Value"); });
                                         })
                                         .body(|mut body| {
-                                            for (i, &value) in ee.cop0_registers.iter().enumerate() {
+                                            let cop0 = ee.cop0_registers.read().unwrap();
+                                            for (i, &value) in cop0.iter().enumerate() {
                                                 let name = [
                                                     "Index", "Random", "EntryLo0", "EntryLo1", "Context",
                                                     "PageMask", "Wired", "", "BadVAddr", "Count", "EntryHi",
