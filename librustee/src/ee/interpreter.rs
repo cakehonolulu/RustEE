@@ -102,6 +102,9 @@ impl Interpreter {
                     0x08 => {
                         self.jr(opcode);
                     }
+                    0x09 => {
+                        self.jalr(opcode);
+                    }
                     0x0F => {
                         self.sync();
                     }
@@ -364,6 +367,23 @@ impl Interpreter {
             self.cpu.write_register32(rt, loaded_word);
         }
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn jalr(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let target = self.cpu.read_register32(rs) & 0xFFFF_FFFC;
+        let return_addr = self.cpu.pc().wrapping_add(8);
+
+        let delay_pc = self.cpu.pc().wrapping_add(4);
+        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        self.cpu.set_pc(delay_pc);
+        self.decode_execute(slot_opcode);
+
+        self.cpu.write_register32(rd, return_addr);
+
+        self.cpu.set_pc(target);
     }
 }
 

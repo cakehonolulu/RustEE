@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use crate::{
     bus::{Bus, BusMode},
     ee::{Interpreter, JIT, EE},
@@ -143,16 +143,21 @@ fn run_test(tc: &TestCase) {
         let bios_i = create_mock_bios(tc.asm);
         let bios_j = create_mock_bios(tc.asm);
 
+        // Create shared cop0_registers for each EE/Bus pair
+        let cop0_i = Arc::new(RwLock::new([0u32; 32]));
+        let cop0_j = Arc::new(RwLock::new([0u32; 32]));
+
         // Create buses with the current bus mode
-        let bus_i = Bus::new(bus_mode.clone(), bios_i);
-        let bus_j = Bus::new(bus_mode.clone(), bios_j);
+        let bus_i = Bus::new(bus_mode.clone(), bios_i, Arc::clone(&cop0_i));
+        let bus_j = Bus::new(bus_mode.clone(), bios_j, Arc::clone(&cop0_j));
 
         let bus_i = Arc::new(Mutex::new(bus_i));
         let bus_j = Arc::new(Mutex::new(bus_j));
 
         // Create EE instances for interpreter and JIT
-        let mut ee_i = EE::new(bus_i);
-        let mut ee_j = EE::new(bus_j);
+        let mut ee_i = EE::new(Arc::clone(&bus_i), Arc::clone(&cop0_i));
+        let mut ee_j = EE::new(Arc::clone(&bus_j), Arc::clone(&cop0_j));
+
 
         // Test setup
         (tc.setup)(&mut ee_i);
@@ -771,6 +776,31 @@ fn test_sw() {
                 g.gpr[9] = 0x1000;
                 g.cop0[15] = 0x59;
                 g.memory_checks = vec![(0x1004, 42)];
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_jalr() {
+    let tests = vec![
+        TestCase {
+            name: "jalr_ra_t0",
+            asm: "jalr $ra, $t0",
+            setup: |ee| {
+                ee.write_register32(8, 0xBFC00010);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[31] = 0xBFC0008;
+                g.gpr[8] = 0xBFC00010;
+                g.cop0[15] = 0x59;
                 Some(g)
             },
         },
