@@ -4,7 +4,7 @@ use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
 use tracing::trace;
 
-use super::Bus;
+use super::{Bus, BUS_PTR};
 
 pub struct Context {
     pub bus: *mut Bus,
@@ -33,12 +33,14 @@ pub trait ArchHandler {
 
 pub extern "C" fn io_write32_stub(bus: *mut Bus, addr: u32, value: u32) {
     unsafe {
+        let bus = &mut *BUS_PTR;
         (*bus).io_write32(addr, value);
     }
 }
 
 pub extern "C" fn io_read32_stub(bus: *mut Bus, addr: u32) -> u32 {
     unsafe {
+        let bus = &mut *BUS_PTR;
         (*bus).io_read32(addr)
     }
 }
@@ -70,6 +72,7 @@ pub mod x86_64_impl {
             X86Register::R8 => vec![0x49, 0xB8],  // movabs r8, imm64
             X86Register::R9 => vec![0x49, 0xB9],  // movabs r9, imm64
             X86Register::R10 => vec![0x49, 0xBA], // movabs r10, imm64
+            X86Register::R11 => vec![0x49, 0xBB], // movabs r11, imm64
             _ => {
                 error!("Unsupported register for stub call: {}", register_name_impl(reg));
                 return None;
