@@ -17,7 +17,7 @@ use librustee::ee::{EE, Interpreter, JIT};
 use librustee::cpu::EmulationBackend;
 use capstone::arch::BuildsCapstone;
 use capstone::arch::BuildsCapstoneEndian;
-use capstone::arch::mips::ArchMode::Mips32;
+use capstone::arch::mips::ArchMode::Mips64;
 use librustee::cpu::CPU;
 
 pub struct AppState {
@@ -111,7 +111,7 @@ impl Disassembler {
     pub fn new() -> Result<Self, capstone::Error> {
         let cs = Capstone::new()
             .mips()
-            .mode(Mips32)
+            .mode(Mips64)
             .endian(Endian::Little)
             .build()?;
 
@@ -475,25 +475,18 @@ impl App {
                         self.disassembly_start_addr = ee.pc;
                     }
 
-                    let start_addr = self.disassembly_start_addr;
-                    let num_instructions = 100;
+                    let pc = ee.pc;
+                    let num_instructions = 16;
                     let mut bytes = Vec::new();
-                    for i in 0..num_instructions {
-                        let addr = start_addr.wrapping_add(i * 4);
+                    for offset in 0..num_instructions {
+                        let addr = pc.wrapping_add(offset * 4);
                         let word = ee.read32_raw(addr);
                         bytes.extend_from_slice(&word.to_le_bytes());
                     }
 
-                    let pc = ee.pc;
-                    let mut bytes = Vec::new();
-                    for offset in 0..16 {
-                        let addr = pc + (offset * 4);
-                        let word = ee.read32_raw(addr);
-                        bytes.extend_from_slice(&word.to_le_bytes());
-                    }
                     let disasm = self.disassembler.disassemble(&bytes, pc as u64).unwrap_or_else(|err| {
                         eprintln!("Error during disassembly: {}", err);
-                        Vec::new()
+                        vec!["Disassembly error".to_string()]
                     });
 
                     egui::Window::new("Disassembly")
