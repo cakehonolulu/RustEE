@@ -131,6 +131,10 @@ pub unsafe fn init_hardware_arena(bus: &Bus) -> io::Result<(Allocation, *mut u8,
     region::protect(base.add(bios_kseg1_start), bios_size, Protection::READ_WRITE)
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
+    // Map kseg0 BIOS: 0x9FC00000–0x9FFFFFFF → 0x1FC00000–0x1FFFFFFF
+    region::protect(base.add(0x9FC00000 as usize), 0x400000, Protection::READ_WRITE);
+    std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), base.add(0x9FC00000 as usize), bios_size);
+
     // Copy BIOS data into the arena at virtual address 0xBFC00000
     let bios_len = bus.bios.bytes.len();
     let dst = base.add(bios_kseg1_start);
@@ -138,6 +142,8 @@ pub unsafe fn init_hardware_arena(bus: &Bus) -> io::Result<(Allocation, *mut u8,
 
     // Set BIOS region to READ-only after copying
     region::protect(base.add(bios_kseg1_start), bios_size, Protection::READ)
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    region::protect(base.add(0x9FC00000 as usize), bios_size, Protection::READ)
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     Ok((alloc, base, size))
