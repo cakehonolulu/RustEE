@@ -798,7 +798,7 @@ fn test_jalr() {
             golden: {
                 let mut g = GoldenState::default();
                 g.pc = 0xBFC00010;
-                g.gpr[31] = 0xBFC0008;
+                g.gpr[31] = 0xBFC00008;
                 g.gpr[8] = 0xBFC00010;
                 g.cop0[15] = 0x59;
                 Some(g)
