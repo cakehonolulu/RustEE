@@ -132,8 +132,14 @@ pub unsafe fn init_hardware_arena(bus: &Bus) -> io::Result<(Allocation, *mut u8,
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Map kseg0 BIOS: 0x9FC00000–0x9FFFFFFF → 0x1FC00000–0x1FFFFFFF
-    region::protect(base.add(0x9FC00000 as usize), 0x400000, Protection::READ_WRITE);
+    region::protect(base.add(0x9FC00000 as usize), 0x400000, Protection::READ_WRITE)
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
     std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), base.add(0x9FC00000 as usize), bios_size);
+
+    let sp_kseg1_start = 0x70000000 as usize;
+    let sp_size = 0x4000; // 32MB
+    region::protect(base.add(sp_kseg1_start), sp_size, Protection::READ_WRITE)
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Copy BIOS data into the arena at virtual address 0xBFC00000
     let bios_len = bus.bios.bytes.len();
@@ -212,6 +218,15 @@ impl Bus {
         assert!((addr as usize) + 4 <= self.hw_size);
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *mut u32;
+            *host_ptr = val;
+        }
+    }
+
+    #[inline]
+    pub fn hw_write64(&mut self, addr: u32, val: u64) {
+        assert!((addr as usize) + 4 <= self.hw_size);
+        unsafe {
+            let host_ptr = self.hw_base.add(addr as usize) as *mut u64;
             *host_ptr = val;
         }
     }

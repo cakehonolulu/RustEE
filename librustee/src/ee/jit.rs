@@ -30,6 +30,7 @@ pub struct JIT<'a> {
     pc_ptr: *mut u32,
     cycles: usize,
     bus_write32_func: FuncId,
+    bus_write64_func: FuncId,
     bus_read32_func: FuncId,
     tlbwi_func: FuncId,
     read_cop0_func: FuncId,
@@ -77,6 +78,13 @@ pub extern "C" fn __bus_write32(bus_ptr: *mut Bus, addr: u32, value: u32) {
     unsafe {
         let bus = &mut *bus_ptr;
         (bus.write32)(bus, addr, value);
+    }
+}
+
+pub extern "C" fn __bus_write64(bus_ptr: *mut Bus, addr: u32, value: u64) {
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.write64)(bus, addr, value);
     }
 }
 
@@ -153,6 +161,11 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
+            "__bus_write64",
+            __bus_write64 as *const u8,
+        );
+
+        builder.symbol(
             "__bus_read32",
             __bus_read32 as *const u8,
         );
@@ -176,6 +189,14 @@ impl<'a> JIT<'a> {
         store32_sig.params.push(AbiParam::new(types::I32));
         let bus_write32_func: FuncId = module
             .declare_function("__bus_write32", Linkage::Import, &store32_sig)
+            .expect("Failed to declare __bus_write32 function!");
+
+        let mut store64_sig = module.make_signature();
+        store64_sig.params.push(AbiParam::new(types::I64));
+        store64_sig.params.push(AbiParam::new(types::I32));
+        store64_sig.params.push(AbiParam::new(types::I64));
+        let bus_write64_func: FuncId = module
+            .declare_function("__bus_write64", Linkage::Import, &store64_sig)
             .expect("Failed to declare __bus_write32 function!");
 
         let mut load32_sig = module.make_signature();
@@ -220,6 +241,7 @@ impl<'a> JIT<'a> {
             pc_ptr,
             cycles: 0,
             bus_write32_func,
+            bus_write64_func,
             bus_read32_func,
             tlbwi_func,
             read_cop0_func,
@@ -516,6 +538,9 @@ impl<'a> JIT<'a> {
             0x2B => {
                 self.sw(builder, opcode, current_pc)
             }
+            0x3F => {
+                self.sd(builder, opcode, current_pc)
+            }
             _ => {
                 error!("Unhandled EE JIT opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}", opcode, function, current_pc);
                 panic!();
@@ -539,6 +564,11 @@ impl<'a> JIT<'a> {
     #[inline(always)]
     fn load32(builder: &mut FunctionBuilder, addr: Value) -> Value {
         builder.ins().load(types::I32, MemFlags::new(), addr, 0)
+    }
+
+    #[inline(always)]
+    fn load64(builder: &mut FunctionBuilder, addr: Value) -> Value {
+        builder.ins().load(types::I64, MemFlags::new(), addr, 0)
     }
 
     #[inline(always)]
@@ -808,6 +838,35 @@ impl<'a> JIT<'a> {
         Some(BranchInfo::Unconditional {
             target: BranchTarget::Reg(target),
         })
+    }
+
+    fn sd(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let base = ((opcode >> 21) & 0x1F) as i64;
+        let rt   = ((opcode >> 16) & 0x1F) as i64;
+        let imm  = (opcode as i16) as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val  = Self::load64(builder, base_addr);
+
+        let addr = builder.ins().iadd_imm(base_val, imm);
+
+        let addr32 = builder.ins().ireduce(types::I32, addr);
+
+        let rt_addr   = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let store_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+
+        let callee = self
+            .module
+            .declare_func_in_func(self.bus_write64_func, builder.func);
+        builder.ins().call(callee, &[bus_value, addr32, store_val]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
     }
 }
 

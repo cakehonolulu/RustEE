@@ -79,6 +79,17 @@ impl Bus {
         }
     }
 
+    pub fn sw_fmem_write64(&mut self, va: u32, value: u64) {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_write[page];
+        if host != 0 {
+            unsafe { (host as *mut u8).add(offset).cast::<u64>().write_unaligned(value) }
+        } else {
+            self.retry_write(va, value);
+        }
+    }
+
     fn retry_read(&mut self, va: u32) -> u32 {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
@@ -118,7 +129,11 @@ impl Bus {
         unsafe { (host as *const u8).add(offset).cast::<u32>().read_unaligned() }
     }
 
-    fn retry_write(&mut self, va: u32, value: u32) {
+    pub fn retry_write<V>(&mut self, va: u32, value: V)
+    where
+        V: TryInto<u128>,
+        V::Error: std::fmt::Debug,
+    {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
             match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
@@ -130,23 +145,41 @@ impl Bus {
         let vpn = (va as usize) >> PAGE_BITS;
         let offset = (pa as usize) & (PAGE_SIZE - 1);
 
+        let val128: u128 = value.try_into().unwrap();
+        let size = std::mem::size_of::<V>();
+
         if let Some(roff) = map::RAM.contains(pa) {
             let host = self.ram.as_ptr() as usize + (roff as usize);
             unsafe {
-                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
+                (self.page_read .as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(host);
-                (host as *mut u8).add(offset).cast::<u32>().write_unaligned(value);
+                let ptr = (host as *mut u8).add(offset);
+                match size {
+                    1 => ptr.cast::<u8>().write_unaligned(val128 as u8),
+                    2 => ptr.cast::<u16>().write_unaligned(val128 as u16),
+                    4 => ptr.cast::<u32>().write_unaligned(val128 as u32),
+                    8 => ptr.cast::<u64>().write_unaligned(val128 as u64),
+                    16 => ptr.cast::<u128>().write_unaligned(val128),
+                    _ => unreachable!("Unsupported write size {}", size),
+                }
             }
             return;
         } else if let Some(boff) = map::BIOS.contains(pa) {
             let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
             unsafe {
-                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
+                (self.page_read .as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
             }
             panic!("SW-FMEM write to read-only BIOS VA=0x{:08X}", va);
         } else if map::IO.contains(pa).is_some() {
-            self.io_write32(pa, value);
+            match size {
+                1 => todo!("IO Write 8"),
+                2 => todo!("IO Write 16"),
+                4 => self.io_write32(pa, val128 as u32),
+                8 => todo!("IO Write 64"),
+                _ => unreachable!("Unsupported I/O write size {}", size),
+            }
+            return;
         }
 
         let tlb = self.tlb.borrow_mut();
@@ -155,7 +188,17 @@ impl Bus {
         if host == 0 {
             panic!("SW-FMEM retry still unmapped or read-only VA=0x{:08X}", va);
         }
-        unsafe { (host as *mut u8).add(offset).cast::<u32>().write_unaligned(value) }
+        unsafe {
+            let ptr = (host as usize as *mut u8).add(offset);
+            match size {
+                1 => ptr.cast::<u8>().write_unaligned(val128 as u8),
+                2 => ptr.cast::<u16>().write_unaligned(val128 as u16),
+                4 => ptr.cast::<u32>().write_unaligned(val128 as u32),
+                8 => ptr.cast::<u64>().write_unaligned(val128 as u64),
+                16 => ptr.cast::<u128>().write_unaligned(val128),
+                _ => unreachable!("Unsupported write size {}", size),
+            }
+        }
     }
 }
 

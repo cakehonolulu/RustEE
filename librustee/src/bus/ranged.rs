@@ -96,4 +96,25 @@ impl Bus {
             panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
         }
     }
+    
+    pub fn ranged_write64(&mut self, va: u32, val: u64) {
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
+            }
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u64;
+            unsafe {
+                ptr.write_unaligned(val);
+            }
+        } else if map::IO.contains(pa).is_some() {
+            todo!("IO Write 64");
+        } else {
+            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+        }
+    }
 }
