@@ -134,9 +134,9 @@ fn generic_segv_handler<H: ArchHandler>(
             let mut ip = frame.ip() as usize;
             trace!("Processing frame at index {} with IP 0x{:x}", target_frame_index, ip);
 
-            let scan_back = 40usize;
-            ip = ip.add(16);
-            let scan_start = ip.saturating_sub(scan_back);
+            let scan_back = 64usize;
+            let adjusted_ip = ip.add(16);
+            let scan_start = adjusted_ip.saturating_sub(scan_back);
             let buf: &[u8] = unsafe { std::slice::from_raw_parts(scan_start as *const u8, scan_back) };
             trace!("Disassembling buffer: start=0x{:x}, size={}", scan_start, scan_back);
 
@@ -158,7 +158,7 @@ fn generic_segv_handler<H: ArchHandler>(
                                 let patch_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
                                 patch_instruction(movabs_addr, &patch_bytes).unwrap();
                                 H::advance_instruction_pointer(ctx, &cs, H::get_instruction_pointer(ctx)).unwrap();
-                                fix_return_address::<H>(ctx, movabs_addr, 12);
+                                fix_return_address::<H>(ctx, movabs_addr, ip);
                                 return;
                             }
                         }
@@ -237,22 +237,21 @@ fn fix_return_address<H: ArchHandler>(
     patch_len: usize,
 ) {
     let old_sp = H::get_stack_pointer(ctx) as usize;
-    let original_ret = patch_addr.wrapping_add(patch_len as u64);
     let target_ret = patch_addr;
 
     trace!(
         "old_sp = 0x{:016x}, original_ret = 0x{:016x}, target_ret = 0x{:016x}",
-        old_sp, original_ret, target_ret
+        old_sp, patch_len, target_ret
     );
 
     const MAX_SLOTS: usize = 512;
     let mut found = false;
-    
+
     for i in 0..MAX_SLOTS {
         let slot_addr = old_sp + i * 8;
-        let candidate: u64 = unsafe { *(slot_addr as *const u64) };
+        let candidate: usize = unsafe { *(slot_addr as *const usize) };
 
-        if candidate == original_ret {
+        if candidate.eq(&patch_len ) {
             trace!(
                 "Found match at slot[{}] → overwriting with 0x{:016x}",
                 i, target_ret
@@ -263,9 +262,9 @@ fn fix_return_address<H: ArchHandler>(
             break;
         }
     }
-    
+
     if !found {
-        debug!("No matching slot found in first {} QWORDs", MAX_SLOTS);
+        panic!("No matching slot found in first {} QWORDs", MAX_SLOTS);
     }
 }
 
