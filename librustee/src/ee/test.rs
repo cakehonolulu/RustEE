@@ -810,3 +810,76 @@ fn test_jalr() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_daddu() {
+    let tests = vec![
+        TestCase {
+            name: "daddu_basic",
+            asm: "daddu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register(9, 10);
+                ee.write_register(10, 20);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 30;
+                g.gpr[9] = 10;
+                g.gpr[10] = 20;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "daddu_overflow",
+            asm: "daddu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register(9, 0xFFFFFFFFFFFFFFFF);
+                ee.write_register(10, 2);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[10] = 2;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "daddu_zero",
+            asm: "daddu $t0, $zero, $zero",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "daddu_negative",
+            asm: "daddu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register(9, 0xFFFFFFFFFFFFFFFE);
+                ee.write_register(10, 3);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 0xFFFFFFFFFFFFFFFE;
+                g.gpr[10] = 3;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

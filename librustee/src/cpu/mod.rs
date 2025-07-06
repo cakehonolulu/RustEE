@@ -7,7 +7,11 @@ pub trait CPU {
     fn set_pc(&mut self, value: u32);
 
     fn read_register(&self, index: usize) -> Self::RegisterType;
+    fn read_register32(&self, index: usize) -> u32;
+    fn read_register64(&self, index: usize) -> u64;
     fn write_register(&mut self, index: usize, value: Self::RegisterType);
+    fn write_register32(&mut self, index: usize, value: u32);
+    fn write_register64(&mut self, index: usize, value: u64);
 
     fn read_cop0_register(&self, index: usize) -> u32;
     fn write_cop0_register(&mut self, index: usize, value: u32);

@@ -493,6 +493,9 @@ impl<'a> JIT<'a> {
                     0x0F => {
                         self.sync(builder, opcode, current_pc)
                     }
+                    0x2D => {
+                        self.daddu(builder, opcode, current_pc)
+                    }
                     _ => {
                         error!("Unhandled EE JIT function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}", opcode, subfunction, current_pc);
                         panic!();
@@ -863,6 +866,25 @@ impl<'a> JIT<'a> {
             .module
             .declare_func_in_func(self.bus_write64_func, builder.func);
         builder.ins().call(callee, &[bus_value, addr32, store_val]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn daddu(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let result = builder.ins().iadd(rs_val, rt_val);
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);

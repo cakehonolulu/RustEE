@@ -108,6 +108,9 @@ impl Interpreter {
                     0x0F => {
                         self.sync();
                     }
+                    0x2D => {
+                        self.daddu(opcode);
+                    }
                     _ => {
                         error!(
                             "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
@@ -402,6 +405,20 @@ impl Interpreter {
             let mut bus = self.cpu.bus.lock().unwrap();
             (bus.write64)(bus.deref_mut(), addr, value);
         }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn daddu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register64(rs);
+        let rt_val = self.cpu.read_register64(rt);
+        let result = rs_val.wrapping_add(rt_val);
+
+        self.cpu.write_register64(rd, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
