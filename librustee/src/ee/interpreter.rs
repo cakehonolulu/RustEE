@@ -108,6 +108,9 @@ impl Interpreter {
                     0x0F => {
                         self.sync();
                     }
+                    0x25 => {
+                        self.or(opcode);
+                    }
                     0x2D => {
                         self.daddu(opcode);
                     }
@@ -473,6 +476,19 @@ impl Interpreter {
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
 
         self.do_branch(branch_pc, taken, target, false);
+    }
+
+    fn or(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register64(rs);
+        let rt_val = self.cpu.read_register64(rt);
+        let result = rs_val | rt_val;
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 

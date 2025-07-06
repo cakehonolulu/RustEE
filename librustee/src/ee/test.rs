@@ -1045,3 +1045,56 @@ fn test_beq() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_or() {
+    let tests = vec![
+        TestCase {
+            name: "or_basic",
+            asm: "or $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register(9, 0x0F0F0F0F0F0F0F0F);
+                ee.write_register(10, 0xF0F0F0F0F0F0F0F0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0x0F0F0F0F0F0F0F0F;
+                g.gpr[10] = 0xF0F0F0F0F0F0F0F0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "or_zero",
+            asm: "or $t0, $zero, $t2",
+            setup: |ee| ee.write_register(10, 0x12345678),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12345678;
+                g.gpr[10] = 0x12345678;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "or_self",
+            asm: "or $t0, $t1, $t1",
+            setup: |ee| ee.write_register(9, 0xDEADBEEF),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xDEADBEEF;
+                g.gpr[9] = 0xDEADBEEF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
