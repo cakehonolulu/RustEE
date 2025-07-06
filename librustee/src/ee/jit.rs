@@ -502,9 +502,12 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x03 => {
+                self.jal(builder, opcode, current_pc)
+            }
             0x05 => {
                 self.bne(builder, opcode, current_pc)
-            },
+            }
             0x09 => {
                 self.addiu(builder, opcode, current_pc)
             }
@@ -889,6 +892,22 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
+    }
+
+    fn jal(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let instr_index = opcode & 0x03FFFFFF;
+        let target = (*current_pc).wrapping_add(4) & 0xF0000000 | (instr_index << 2);
+        
+        let ra_addr = Self::ptr_add(builder, self.gpr_ptr as i64, 31, 16);
+        let return_addr = (*current_pc).wrapping_add(8);
+        let ret_val = builder.ins().iconst(types::I64, return_addr as i64);
+        builder.ins().store(MemFlags::new(), ret_val, ra_addr, 0);
+        
+        *current_pc = current_pc.wrapping_add(4);
+        
+        Some(BranchInfo::Unconditional {
+            target: BranchTarget::Const(target),
+        })
     }
 }
 

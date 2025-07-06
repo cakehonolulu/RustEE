@@ -883,3 +883,50 @@ fn test_daddu() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_jal() {
+    let tests = vec![
+        TestCase {
+            name: "jal_basic",
+            asm: "jal 0xBFC00010",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[31] = 0xBFC00008;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "jal_zero",
+            asm: "jal 0x0",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xB0000000;
+                g.gpr[31] = 0xBFC00008;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "jal_max",
+            asm: "jal 0x3FFFFFFC",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                let imm26 = (0x3FFFFFFC >> 2) & 0x03FFFFFF;
+                g.pc = ((0xBFC00000 + 4) & 0xF0000000) | (imm26 << 2);
+                g.gpr[31] = 0xBFC00008;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
