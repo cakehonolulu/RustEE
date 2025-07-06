@@ -514,6 +514,9 @@ impl<'a> JIT<'a> {
             0x0A => {
                 self.slti(builder, opcode, current_pc)
             }
+            0x0C => {
+                self.andi(builder, opcode, current_pc)
+            }
             0x0D => {
                 self.ori(builder, opcode, current_pc)
             }
@@ -908,6 +911,24 @@ impl<'a> JIT<'a> {
         Some(BranchInfo::Unconditional {
             target: BranchTarget::Const(target),
         })
+    }
+
+    fn andi(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode & 0xFFFF) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
+        let imm_val = builder.ins().iconst(types::I64, imm);
+        let result = builder.ins().band(rs_val, imm_val);
+        builder.ins().store(MemFlags::new(), result, rt_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
     }
 }
 

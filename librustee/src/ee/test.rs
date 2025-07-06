@@ -930,3 +930,65 @@ fn test_jal() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_andi() {
+    let tests = vec![
+        TestCase {
+            name: "andi_basic",
+            asm: "andi $t0, $t1, 0x1234",
+            setup: |ee| ee.write_register32(9, 0xFFFF4321),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x4321 & 0x1234;
+                g.gpr[9] = 0xFFFF4321;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "andi_zero_imm",
+            asm: "andi $t0, $t1, 0x0",
+            setup: |ee| ee.write_register32(9, 0x12345678),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "andi_max_imm",
+            asm: "andi $t0, $t1, 0xFFFF",
+            setup: |ee| ee.write_register32(9, 0x1234ABCD),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xABCD;
+                g.gpr[9] = 0x1234ABCD;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "andi_upper_bits",
+            asm: "andi $t0, $t1, 0xFF00",
+            setup: |ee| ee.write_register32(9, 0x12345678),
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x5678 & 0xFF00;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
