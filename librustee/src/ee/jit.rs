@@ -505,6 +505,9 @@ impl<'a> JIT<'a> {
             0x03 => {
                 self.jal(builder, opcode, current_pc)
             }
+            0x04 => {
+                self.beq(builder, opcode, current_pc)
+            }
             0x05 => {
                 self.bne(builder, opcode, current_pc)
             }
@@ -929,6 +932,28 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
+    }
+
+    fn beq(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as u16) as i16 as i32;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+        let rt_val = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+
+        let cond = builder.ins().icmp(IntCC::Equal, rs_val, rt_val);
+
+        let target = current_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+        *current_pc = current_pc.wrapping_add(4);
+
+        Some(BranchInfo::Conditional {
+            cond,
+            target: BranchTarget::Const(target),
+        })
     }
 }
 

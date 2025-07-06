@@ -992,3 +992,56 @@ fn test_andi() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_beq() {
+    let tests = vec![
+        TestCase {
+            name: "beq_taken",
+            asm: "beq $t0, $t1, 0x4",
+            setup: |ee| {
+                ee.write_register32(8, 5);
+                ee.write_register32(9, 5);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 5;
+                g.gpr[9] = 5;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "beq_not_taken",
+            asm: "beq $t0, $t1, 0x4",
+            setup: |ee| {
+                ee.write_register32(8, 1);
+                ee.write_register32(9, 2);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 1;
+                g.gpr[9] = 2;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "beq_zero_vs_zero",
+            asm: "beq $zero, $zero, 0x4",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

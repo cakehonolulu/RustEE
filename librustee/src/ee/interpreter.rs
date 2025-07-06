@@ -123,6 +123,9 @@ impl Interpreter {
             0x03 => {
                 self.jal(opcode);
             }
+            0x04 => {
+                self.beq(opcode);
+            }
             0x05 => {
                 self.bne(opcode);
             }
@@ -456,6 +459,20 @@ impl Interpreter {
 
         self.cpu.write_register64(rt, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn beq(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let rt_val = self.cpu.read_register32(rt) as i32;
+        let taken = rs_val == rt_val;
+        let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
+
+        self.do_branch(branch_pc, taken, target, false);
     }
 }
 
