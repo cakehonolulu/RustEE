@@ -597,6 +597,9 @@ impl<'a> JIT<'a> {
                     0x0F => {
                         self.sync(builder, opcode, current_pc)
                     }
+                    0x10 => {
+                        self.mfhi(builder, opcode, current_pc)
+                    }
                     0x12 => {
                         self.mflo(builder, opcode, current_pc)
                     }
@@ -1517,6 +1520,21 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::new(), quot_128, lo_addr, 0);
         builder.ins().store(MemFlags::new(), rem_128, hi_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn mfhi(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let hi_ptr_val = builder.ins().iconst(types::I64, self.hi_ptr as i64);
+        let hi_val = builder.ins().load(types::I128, MemFlags::new(), hi_ptr_val, 0);
+        let hi_val_64 = builder.ins().ireduce(types::I64, hi_val);
+        builder.ins().store(MemFlags::new(), hi_val_64, rd_addr, 0);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);

@@ -2328,3 +2328,70 @@ fn test_div() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_mfhi() {
+    let tests = vec![
+        TestCase {
+            name: "mfhi_after_mult",
+            asm: "mult $t1, $t2\nmfhi $t0",
+            setup: |ee| {
+                ee.write_register32(9, 0x10000); // 65536
+                ee.write_register32(10, 0x10000); // 65536
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008; // After mult and mfhi
+                g.gpr[8] = 1; // HI from 65536 * 65536 = 0x00000001_00000000
+                g.gpr[9] = 0x10000;
+                g.gpr[10] = 0x10000;
+                g.lo = 0; // LO from mult
+                g.hi = 1; // HI from mult
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mfhi_after_div",
+            asm: "div $t1, $t2\nmfhi $t0",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 5);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008; // After div and mfhi
+                g.gpr[8] = 2; // HI from 42 / 5 = 2 (remainder)
+                g.gpr[9] = 42;
+                g.gpr[10] = 5;
+                g.lo = 8; // LO from div
+                g.hi = 2; // HI from div
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mfhi_zero",
+            asm: "mult $t1, $t2\nmfhi $t0",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+                ee.write_register32(10, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008; // After mult and mfhi
+                g.gpr[8] = 0; // HI from 0 * 42 = 0
+                g.gpr[9] = 0;
+                g.gpr[10] = 42;
+                g.lo = 0; // LO from mult
+                g.hi = 0; // HI from mult
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

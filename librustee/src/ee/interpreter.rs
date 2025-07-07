@@ -114,6 +114,9 @@ impl Interpreter {
                     0x0F => {
                         self.sync();
                     }
+                    0x10 => {
+                        self.mfhi(opcode);
+                    }
                     0x12 => {
                         self.mflo(opcode);
                     }
@@ -793,6 +796,15 @@ impl Interpreter {
 
         self.cpu.write_lo(quot as i32 as i64 as u128);
         self.cpu.write_hi(rem as i32 as i64 as u128);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn mfhi(&mut self, opcode: u32) {
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let hi_val = self.cpu.read_hi();
+        self.cpu.write_register64(rd, hi_val as u64);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
