@@ -1691,3 +1691,77 @@ fn test_swc1() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_lbu() {
+    let tests = vec![
+        TestCase {
+            name: "lbu_positive",
+            asm: "lbu $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write8(0x1000, 0x7F);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x7F;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lbu_zero",
+            asm: "lbu $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write8(0x1000, 0x00);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x00;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lbu_max",
+            asm: "lbu $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1004);
+                ee.write8(0x1004, 0xFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFF;
+                g.gpr[9] = 0x1004;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lbu_offset",
+            asm: "lbu $t0, 4($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write8(0x1004, 0x7F);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x7F;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

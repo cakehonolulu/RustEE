@@ -195,6 +195,9 @@ impl Interpreter {
             0x23 => {
                 self.lw(opcode);
             }
+            0x24 => {
+                self.lbu(opcode);
+            }
             0x2B => {
                 self.sw(opcode);
             }
@@ -641,6 +644,25 @@ impl Interpreter {
             let mut bus = self.cpu.bus.lock().unwrap();
             (bus.write32)(bus.deref_mut(), address, fpu_val);
         }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    pub fn lbu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let address = rs_val.wrapping_add(imm as u32);
+
+        let loaded_byte = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read8)(bus.deref_mut(), address)
+        };
+
+        let result = loaded_byte as u64;
+        self.cpu.write_register64(rt, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
