@@ -119,6 +119,16 @@ impl CPU for EE {
         self.cop0_registers.write().unwrap()[index] = value;
     }
 
+    fn write8(&mut self, addr: u32, value: u8) {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.write8)(&mut *bus, addr, value)
+    }
+
+    fn read8(&mut self, addr: u32) -> u8 {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.read8)(&mut *bus, addr)
+    }
+
     fn read32(&mut self, addr: u32) -> u32 {
         let mut bus = self.bus.lock().unwrap();
         (bus.read32)(&mut *bus, addr)

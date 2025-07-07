@@ -34,8 +34,8 @@ pub struct JIT<'a> {
     break_func: FuncId,
     bus_write32_func: FuncId,
     bus_write64_func: FuncId,
-    bus_read8_func: FuncId,
     bus_read32_func: FuncId,
+    bus_read8_func: FuncId,
     tlbwi_func: FuncId,
     read_cop0_func: FuncId,
     write_cop0_func: FuncId,
@@ -190,13 +190,13 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
-            "__bus_read32",
-            __bus_read32 as *const u8,
+            "__bus_read8",
+            __bus_read8 as *const u8,
         );
 
         builder.symbol(
-            "__bus_read8",
-            __bus_read8 as *const u8,
+            "__bus_read32",
+            __bus_read32 as *const u8,
         );
 
         builder.symbol(
@@ -618,6 +618,9 @@ impl<'a> JIT<'a> {
             }
             0x15 => {
                 self.bnel(builder, opcode, current_pc)
+            }
+            0x20 => {
+                self.lb(builder, opcode, current_pc)
             }
             0x23 => {
                 self.lw(builder, opcode, current_pc)
@@ -1211,6 +1214,36 @@ impl<'a> JIT<'a> {
             cond,
             target: BranchTarget::Const(target),
         })
+    }
+
+    fn lb(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64 = (opcode as i16) as i64;
+
+        let base = base_idx as i64;
+        let rt = rt_idx as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val = Self::load32(builder, base_addr);
+
+        let addr = builder.ins().iadd_imm(base_val, imm_i64);
+
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_read_callee = self.module.declare_func_in_func(self.bus_read8_func, builder.func);
+        let call_inst = builder.ins().call(bus_read_callee, &[bus_value, addr]);
+        let load_val = builder.inst_results(call_inst)[0];
+
+        let load_val_i64 = builder.ins().sextend(types::I64, load_val);
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        builder.ins().store(MemFlags::new(), load_val_i64, rt_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
     }
 }
 

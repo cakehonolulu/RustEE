@@ -79,6 +79,17 @@ impl Bus {
         }
     }
 
+    pub fn sw_fmem_write8(&mut self, va: u32, value: u8) {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_write[page];
+        if host != 0 {
+            unsafe { (host as *mut u8).add(offset).cast::<u8>().write_unaligned(value) }
+        } else {
+            self.retry_write(va, value);
+        }
+    }
+
     pub fn sw_fmem_write32(&mut self, va: u32, value: u32) {
         let page = (va as usize) >> PAGE_BITS;
         let offset = (va as usize) & (PAGE_SIZE - 1);
@@ -131,7 +142,6 @@ impl Bus {
                     16 => data_ptr.cast::<u128>().read_unaligned(),
                     _ => unreachable!("Unsupported read size"),
                 };
-                // Convert the `u128` to the desired type `V`
                 return V::try_from(data).unwrap();
             }
         } else if let Some(boff) = map::BIOS.contains(pa) {
@@ -148,11 +158,13 @@ impl Bus {
                     16 => data_ptr.cast::<u128>().read_unaligned(),
                     _ => unreachable!("Unsupported read size"),
                 };
-                // Convert the `u128` to the desired type `V`
                 return V::try_from(data).unwrap();
             }
-        } else if map::IO.contains(pa).is_some() {
-            let data = self.io_read32(pa) as u128;
+        } else if let Some(io_offset) = map::IO.contains(pa) {
+            let aligned_addr = pa & !0x3;
+            let byte_offset = (pa & 0x3) as usize;
+            let data = self.io_read32(aligned_addr) as u128;
+            let data = (data >> (byte_offset * 8)) & 0xFF;
             return V::try_from(data).unwrap();
         }
 

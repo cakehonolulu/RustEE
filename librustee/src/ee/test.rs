@@ -1565,3 +1565,45 @@ fn test_bnel() {
         run_test(&tc);
     }
 }
+
+#[test]
+fn test_lb() {
+    let tests = vec![
+        TestCase {
+            name: "lb_positive",
+            asm: "lb $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write8(0x1000, 0x7F);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x7F;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lb_negative",
+            asm: "lb $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1004);
+                ee.write8(0x1004, 0x80);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFF80;
+                g.gpr[9] = 0x1004;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for tc in tests {
+        run_test(&tc);
+    }
+}

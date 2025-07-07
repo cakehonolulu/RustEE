@@ -66,7 +66,7 @@ impl Bus {
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u8;
             unsafe { ptr.read_unaligned() }
-        } else if map::IO.contains(pa).is_some() {
+        } else if let Some(io_offset) = map::IO.contains(pa) {
             todo!("IO Read 8");
         } else if let Some(offset) = map::BIOS.contains(pa) {
             let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u8;
@@ -95,6 +95,27 @@ impl Bus {
             unsafe { ptr.read_unaligned() }
         } else {
             panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+        }
+    }
+
+    pub fn ranged_write8(&mut self, va: u32, val: u8) {
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
+            }
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u8;
+            unsafe {
+                ptr.write_unaligned(val);
+            }
+        } else if map::IO.contains(pa).is_some() {
+            todo!("IO Write 8");
+        } else {
+            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
         }
     }
 
