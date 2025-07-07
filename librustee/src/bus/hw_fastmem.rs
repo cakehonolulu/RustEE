@@ -205,6 +205,15 @@ impl Tlb {
 
 impl Bus {
     #[inline]
+    pub fn hw_read8(&mut self, addr: u32) -> u8 {
+        assert!((addr as usize) + 4 <= self.hw_size);
+        unsafe {
+            let host_ptr = self.hw_base.add(addr as usize) as *const u8;
+            *host_ptr
+        }
+    }
+
+    #[inline]
     pub fn hw_read32(&mut self, addr: u32) -> u32 {
         assert!((addr as usize) + 4 <= self.hw_size);
         unsafe {

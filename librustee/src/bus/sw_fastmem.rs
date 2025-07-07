@@ -57,6 +57,17 @@ pub fn init_software_fastmem(bus: &mut Bus) {
 }
 
 impl Bus {
+    pub fn sw_fmem_read8(&mut self, va: u32) -> u8 {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_read[page];
+        if host != 0 {
+            unsafe { (host as *const u8).add(offset).cast::<u8>().read_unaligned() }
+        } else {
+            self.retry_read(va)
+        }
+    }
+
     pub fn sw_fmem_read32(&mut self, va: u32) -> u32 {
         let page = (va as usize) >> PAGE_BITS;
         let offset = (va as usize) & (PAGE_SIZE - 1);
@@ -90,7 +101,11 @@ impl Bus {
         }
     }
 
-    fn retry_read(&mut self, va: u32) -> u32 {
+    fn retry_read<V>(&mut self, va: u32) -> V
+    where
+        V: TryFrom<u128>,
+        V::Error: std::fmt::Debug,
+    {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
             match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
@@ -107,17 +122,38 @@ impl Bus {
             unsafe {
                 (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(host);
-                return (host as *const u8).add(offset).cast::<u32>().read_unaligned();
+                let data_ptr = (host as *const u8).add(offset);
+                let data = match std::mem::size_of::<V>() {
+                    1 => data_ptr.cast::<u8>().read_unaligned() as u128,
+                    2 => data_ptr.cast::<u16>().read_unaligned() as u128,
+                    4 => data_ptr.cast::<u32>().read_unaligned() as u128,
+                    8 => data_ptr.cast::<u64>().read_unaligned() as u128,
+                    16 => data_ptr.cast::<u128>().read_unaligned(),
+                    _ => unreachable!("Unsupported read size"),
+                };
+                // Convert the `u128` to the desired type `V`
+                return V::try_from(data).unwrap();
             }
         } else if let Some(boff) = map::BIOS.contains(pa) {
             let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
             unsafe {
                 (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
-                return (host as *const u8).add(offset).cast::<u32>().read_unaligned();
+                let data_ptr = (host as *const u8).add(offset);
+                let data = match std::mem::size_of::<V>() {
+                    1 => data_ptr.cast::<u8>().read_unaligned() as u128,
+                    2 => data_ptr.cast::<u16>().read_unaligned() as u128,
+                    4 => data_ptr.cast::<u32>().read_unaligned() as u128,
+                    8 => data_ptr.cast::<u64>().read_unaligned() as u128,
+                    16 => data_ptr.cast::<u128>().read_unaligned(),
+                    _ => unreachable!("Unsupported read size"),
+                };
+                // Convert the `u128` to the desired type `V`
+                return V::try_from(data).unwrap();
             }
         } else if map::IO.contains(pa).is_some() {
-            return self.io_read32(pa)
+            let data = self.io_read32(pa) as u128;
+            return V::try_from(data).unwrap();
         }
 
         let tlb = self.tlb.borrow_mut();
@@ -126,7 +162,18 @@ impl Bus {
         if host == 0 {
             panic!("SW-FMEM retry still unmapped VA=0x{:08X}", va);
         }
-        unsafe { (host as *const u8).add(offset).cast::<u32>().read_unaligned() }
+        unsafe {
+            let data_ptr = (host as *const u8).add(offset);
+            let data = match std::mem::size_of::<V>() {
+                1 => data_ptr.cast::<u8>().read_unaligned() as u128,
+                2 => data_ptr.cast::<u16>().read_unaligned() as u128,
+                4 => data_ptr.cast::<u32>().read_unaligned() as u128,
+                8 => data_ptr.cast::<u64>().read_unaligned() as u128,
+                16 => data_ptr.cast::<u128>().read_unaligned(),
+                _ => unreachable!("Unsupported read size"),
+            };
+            return V::try_from(data).unwrap();
+        }
     }
 
     pub fn retry_write<V>(&mut self, va: u32, value: V)

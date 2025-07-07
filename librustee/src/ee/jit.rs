@@ -34,6 +34,7 @@ pub struct JIT<'a> {
     break_func: FuncId,
     bus_write32_func: FuncId,
     bus_write64_func: FuncId,
+    bus_read8_func: FuncId,
     bus_read32_func: FuncId,
     tlbwi_func: FuncId,
     read_cop0_func: FuncId,
@@ -96,6 +97,13 @@ pub extern "C" fn __bus_write64(bus_ptr: *mut Bus, addr: u32, value: u64) {
     unsafe {
         let bus = &mut *bus_ptr;
         (bus.write64)(bus, addr, value);
+    }
+}
+
+pub extern "C" fn __bus_read8(bus_ptr: *mut Bus, addr: u32) -> u8 {
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.read8)(bus, addr)
     }
 }
 
@@ -187,6 +195,11 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
+            "__bus_read8",
+            __bus_read8 as *const u8,
+        );
+
+        builder.symbol(
             "__bus_tlbwi",
             __bus_tlbwi as *const u8,
         );
@@ -216,6 +229,14 @@ impl<'a> JIT<'a> {
         let bus_write64_func: FuncId = module
             .declare_function("__bus_write64", Linkage::Import, &store64_sig)
             .expect("Failed to declare __bus_write32 function!");
+
+        let mut load8_sig = module.make_signature();
+        load8_sig.params.push(AbiParam::new(types::I64));
+        load8_sig.params.push(AbiParam::new(types::I32));
+        load8_sig.returns.push(AbiParam::new(types::I8));
+        let bus_read8_func = module
+            .declare_function("__bus_read8", Linkage::Import, &load8_sig)
+            .expect("Failed to declare __bus_read8");
 
         let mut load32_sig = module.make_signature();
         load32_sig.params.push(AbiParam::new(types::I64));
@@ -269,6 +290,7 @@ impl<'a> JIT<'a> {
             break_func,
             bus_write32_func,
             bus_write64_func,
+            bus_read8_func,
             bus_read32_func,
             tlbwi_func,
             read_cop0_func,
