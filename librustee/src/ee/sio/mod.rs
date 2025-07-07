@@ -103,7 +103,7 @@ impl SIO {
                 if let Some(transmitted_char) = value.to_char() {
                     trace!("Pushing char '{}' to ee_tx_buffer", transmitted_char);
                     if transmitted_char == '\r' {
-                        debug!("SIO TX Buffer Output: {}", self.ee_tx_buffer);
+                        debug!("{}", self.ee_tx_buffer);
                         self.ee_tx_buffer.clear();
                     } else {
                         self.ee_tx_buffer.push(transmitted_char);

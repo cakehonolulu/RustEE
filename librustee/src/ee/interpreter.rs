@@ -99,6 +99,9 @@ impl Interpreter {
                     0x00 => {
                         self.sll(opcode);
                     }
+                    0x02 => {
+                        self.srl(opcode);
+                    }
                     0x03 => {
                         self.sra(opcode);
                     }
@@ -107,6 +110,9 @@ impl Interpreter {
                     }
                     0x09 => {
                         self.jalr(opcode);
+                    }
+                    0x0B => {
+                        self.movn(opcode);
                     }
                     0x0D => {
                         self.break_();
@@ -132,8 +138,20 @@ impl Interpreter {
                     0x21 => {
                         self.addu(opcode);
                     }
+                    0x23 => {
+                        self.subu(opcode);
+                    }
+                    0x24 => {
+                        self.and(opcode);
+                    }
                     0x25 => {
                         self.or(opcode);
+                    }
+                    0x2A => {
+                        self.slt(opcode)
+                    }
+                    0x2B => {
+                        self.sltu(opcode)
                     }
                     0x2D => {
                         self.daddu(opcode);
@@ -161,6 +179,12 @@ impl Interpreter {
             }
             0x05 => {
                 self.bne(opcode);
+            }
+            0x06 => {
+                self.blez(opcode);
+            }
+            0x07 => {
+                self.bgtz(opcode);
             }
             0x09 => {
                 self.addiu(opcode);
@@ -806,6 +830,122 @@ impl Interpreter {
         let hi_val = self.cpu.read_hi();
         self.cpu.write_register64(rd, hi_val as u64);
 
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sltu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register64(rs);
+        let rt_val = self.cpu.read_register64(rt);
+
+        let out = if rs_val < rt_val { 1u64 } else { 0u64 };
+
+        self.cpu.write_register64(rd, out);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn blez(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let imm = (opcode as u16) as i16 as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let taken = rs_val <= 0;
+
+        let target = branch_pc
+            .wrapping_add(4)
+            .wrapping_add((imm << 2) as u32);
+
+        self.do_branch(branch_pc, taken, target, false);
+    }
+
+    fn subu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let a = self.cpu.read_register32(rs);
+        let b = self.cpu.read_register32(rt);
+
+        let diff32 = a.wrapping_sub(b);
+        let result = (diff32 as i32) as i64 as u64;
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn bgtz(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let imm = (opcode as u16) as i16 as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let taken = rs_val > 0;
+
+        let target = branch_pc
+            .wrapping_add(4)
+            .wrapping_add((imm << 2) as u32);
+
+        self.do_branch(branch_pc, taken, target, false);
+    }
+
+    fn movn(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rt_val = self.cpu.read_register64(rt);
+        if rt_val != 0 {
+            let rs_val = self.cpu.read_register64(rs);
+            self.cpu.write_register64(rd, rs_val);
+        }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn slt(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register64(rs) as i64;
+        let rt_val = self.cpu.read_register64(rt) as i64;
+
+        let out = if rs_val < rt_val { 1u64 } else { 0u64 };
+
+        self.cpu.write_register64(rd, out);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn and(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let a = self.cpu.read_register64(rs);
+        let b = self.cpu.read_register64(rt);
+
+        let res = a & b;
+
+        self.cpu.write_register64(rd, res);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn srl(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = ((opcode >> 6) & 0x1F) as u32;
+
+        let v = self.cpu.read_register32(rt);
+        let shifted = v >> sa;
+        let res = (shifted as i32) as i64 as u64;
+
+        self.cpu.write_register64(rd, res);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

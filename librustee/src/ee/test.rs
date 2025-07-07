@@ -2226,8 +2226,8 @@ fn test_div() {
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 42;
                 g.gpr[10] = 5;
-                g.lo = 8; // 42 / 5 = 8
-                g.hi = 2; // 42 % 5 = 2
+                g.lo = 8;
+                g.hi = 2;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2236,7 +2236,7 @@ fn test_div() {
             name: "div_negative_dividend",
             asm: "div $t1, $t2",
             setup: |ee| {
-                ee.write_register32(9, 0xFFFFFFFE); // -2
+                ee.write_register32(9, 0xFFFFFFFE);
                 ee.write_register32(10, 3);
             },
             golden: {
@@ -2244,8 +2244,8 @@ fn test_div() {
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 0xFFFFFFFE;
                 g.gpr[10] = 3;
-                g.lo = 0xFFFFFFFF; // -2 / 3 = -1
-                g.hi = 0xFFFFFFFF; // -2 % 3 = -1
+                g.lo = 0xFFFFFFFF;
+                g.hi = 0xFFFFFFFF;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2255,15 +2255,15 @@ fn test_div() {
             asm: "div $t1, $t2",
             setup: |ee| {
                 ee.write_register32(9, 42);
-                ee.write_register32(10, 0xFFFFFFFB); // -5
+                ee.write_register32(10, 0xFFFFFFFB);
             },
             golden: {
                 let mut g = GoldenState::default();
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 42;
                 g.gpr[10] = 0xFFFFFFFB;
-                g.lo = 0xFFFFFFF8; // 42 / -5 = -8
-                g.hi = 2; // 42 % -5 = 2
+                g.lo = 0xFFFFFFF8;
+                g.hi = 2;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2272,16 +2272,16 @@ fn test_div() {
             name: "div_both_negative",
             asm: "div $t1, $t2",
             setup: |ee| {
-                ee.write_register32(9, 0xFFFFFFFE); // -2
-                ee.write_register32(10, 0xFFFFFFFB); // -5
+                ee.write_register32(9, 0xFFFFFFFE);
+                ee.write_register32(10, 0xFFFFFFFB);
             },
             golden: {
                 let mut g = GoldenState::default();
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 0xFFFFFFFE;
                 g.gpr[10] = 0xFFFFFFFB;
-                g.lo = 0; // -2 / -5 = 0
-                g.hi = 0xFFFFFFFE; // -2 % -5 = -2
+                g.lo = 0;
+                g.hi = 0xFFFFFFFE;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2290,16 +2290,16 @@ fn test_div() {
             name: "div_special_case",
             asm: "div $t1, $t2",
             setup: |ee| {
-                ee.write_register32(9, 0x80000000); // -2147483648
-                ee.write_register32(10, 0xFFFFFFFF); // -1
+                ee.write_register32(9, 0x80000000);
+                ee.write_register32(10, 0xFFFFFFFF);
             },
             golden: {
                 let mut g = GoldenState::default();
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 0x80000000;
                 g.gpr[10] = 0xFFFFFFFF;
-                g.lo = 0x80000000; // -2147483648 / -1 = -2147483648
-                g.hi = 0; // -2147483648 % -1 = 0
+                g.lo = 0x80000000;
+                g.hi = 0;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2316,8 +2316,8 @@ fn test_div() {
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 42;
                 g.gpr[10] = 0;
-                g.lo = 0; // Undefined, return 0
-                g.hi = 0; // Undefined, return 0
+                g.lo = 0;
+                g.hi = 0;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2336,17 +2336,17 @@ fn test_mfhi() {
             name: "mfhi_after_mult",
             asm: "mult $t1, $t2\nmfhi $t0",
             setup: |ee| {
-                ee.write_register32(9, 0x10000); // 65536
-                ee.write_register32(10, 0x10000); // 65536
+                ee.write_register32(9, 0x10000);
+                ee.write_register32(10, 0x10000);
             },
             golden: {
                 let mut g = GoldenState::default();
-                g.pc = 0xBFC00008; // After mult and mfhi
-                g.gpr[8] = 1; // HI from 65536 * 65536 = 0x00000001_00000000
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 1;
                 g.gpr[9] = 0x10000;
                 g.gpr[10] = 0x10000;
-                g.lo = 0; // LO from mult
-                g.hi = 1; // HI from mult
+                g.lo = 0;
+                g.hi = 1;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2360,12 +2360,12 @@ fn test_mfhi() {
             },
             golden: {
                 let mut g = GoldenState::default();
-                g.pc = 0xBFC00008; // After div and mfhi
-                g.gpr[8] = 2; // HI from 42 / 5 = 2 (remainder)
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 2;
                 g.gpr[9] = 42;
                 g.gpr[10] = 5;
-                g.lo = 8; // LO from div
-                g.hi = 2; // HI from div
+                g.lo = 8;
+                g.hi = 2;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2379,12 +2379,12 @@ fn test_mfhi() {
             },
             golden: {
                 let mut g = GoldenState::default();
-                g.pc = 0xBFC00008; // After mult and mfhi
-                g.gpr[8] = 0; // HI from 0 * 42 = 0
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 0;
                 g.gpr[9] = 0;
                 g.gpr[10] = 42;
-                g.lo = 0; // LO from mult
-                g.hi = 0; // HI from mult
+                g.lo = 0;
+                g.hi = 0;
                 g.cop0[15] = 0x59;
                 Some(g)
             },

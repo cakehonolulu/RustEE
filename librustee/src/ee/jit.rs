@@ -582,6 +582,9 @@ impl<'a> JIT<'a> {
                     0x00 => {
                         self.sll(builder, opcode, current_pc)
                     }
+                    0x02 => {
+                        self.srl(builder, opcode, current_pc)
+                    }
                     0x03 => {
                         self.sra(builder, opcode, current_pc)
                     }
@@ -590,6 +593,9 @@ impl<'a> JIT<'a> {
                     }
                     0x09 => {
                         self.jalr(builder, opcode, current_pc)
+                    }
+                    0x0B => {
+                        self.movn(builder, opcode, current_pc)
                     }
                     0x0D => {
                         self.break_(builder, opcode, current_pc)
@@ -615,8 +621,20 @@ impl<'a> JIT<'a> {
                     0x21 => {
                         self.addu(builder, opcode, current_pc)
                     }
+                    0x23 => {
+                        self.subu(builder, opcode, current_pc)
+                    }
+                    0x24 => {
+                        self.and(builder, opcode, current_pc)
+                    }
                     0x25 => {
                         self.or(builder, opcode, current_pc)
+                    }
+                    0x2A => {
+                        self.slt(builder, opcode, current_pc)
+                    }
+                    0x2B => {
+                        self.sltu(builder, opcode, current_pc)
                     }
                     0x2D => {
                         self.daddu(builder, opcode, current_pc)
@@ -641,6 +659,12 @@ impl<'a> JIT<'a> {
             }
             0x05 => {
                 self.bne(builder, opcode, current_pc)
+            }
+            0x06 => {
+                self.blez(builder, opcode, current_pc)
+            }
+            0x07 => {
+                self.bgtz(builder, opcode, current_pc)
             }
             0x09 => {
                 self.addiu(builder, opcode, current_pc)
@@ -1535,6 +1559,193 @@ impl<'a> JIT<'a> {
         let hi_val = builder.ins().load(types::I128, MemFlags::new(), hi_ptr_val, 0);
         let hi_val_64 = builder.ins().ireduce(types::I64, hi_val);
         builder.ins().store(MemFlags::new(), hi_val_64, rd_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn sltu(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_a = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_a, 0);
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_a, 0);
+
+        let cmp = builder.ins().icmp(IntCC::UnsignedLessThan, rs_val, rt_val);
+
+        let one  = builder.ins().iconst(types::I64, 1);
+        let zero = builder.ins().iconst(types::I64, 0);
+
+        let result = builder.ins().select(cmp, one, zero);
+
+        builder.ins().store(MemFlags::new(), result, rd_a, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn blez(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs  = ((opcode >> 21) & 0x1F) as i64;
+        let imm = (opcode as u16) as i16 as i32;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+
+        let zero = builder.ins().iconst(types::I32, 0);
+        let cond = builder.ins().icmp(IntCC::SignedLessThanOrEqual, rs_val, zero);
+
+        let next_pc = current_pc.wrapping_add(4);
+        let target  = next_pc.wrapping_add((imm << 2) as u32);
+
+        *current_pc = next_pc;
+
+        Some(BranchInfo::Conditional {
+            cond,
+            target: BranchTarget::Const(target),
+        })
+    }
+
+    fn subu(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_a = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let a32 = builder.ins().load(types::I32, MemFlags::new(), rs_a, 0);
+        let b32 = builder.ins().load(types::I32, MemFlags::new(), rt_a, 0);
+
+        let diff32 = builder.ins().isub(a32, b32);
+
+        let result = builder.ins().sextend(types::I64, diff32);
+
+        builder.ins().store(MemFlags::new(), result, rd_a, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn bgtz(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs  = ((opcode >> 21) & 0x1F) as i64;
+        let imm = (opcode as u16) as i16 as i32;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+
+        let zero = builder.ins().iconst(types::I32, 0);
+        let cond = builder.ins().icmp(IntCC::SignedGreaterThan, rs_val, zero);
+
+        let next_pc = current_pc.wrapping_add(4);
+        let target  = next_pc.wrapping_add((imm << 2) as u32);
+
+        *current_pc = next_pc;
+
+        Some(BranchInfo::Conditional {
+            cond,
+            target: BranchTarget::Const(target),
+        })
+    }
+
+    fn movn(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_a = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_a, 0);
+        let zero  = builder.ins().iconst(types::I64, 0);
+        let cond  = builder.ins().icmp(IntCC::NotEqual, rt_val, zero);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_a, 0);
+        let rd_old = builder.ins().load(types::I64, MemFlags::new(), rd_a, 0);
+
+        let new_rd = builder.ins().select(cond, rs_val, rd_old);
+
+        builder.ins().store(MemFlags::new(), new_rd, rd_a, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn slt(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_a = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_a, 0);
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_a, 0);
+
+        let cmp = builder.ins().icmp(IntCC::SignedLessThan, rs_val, rt_val);
+
+        let one  = builder.ins().iconst(types::I64, 1);
+        let zero = builder.ins().iconst(types::I64, 0);
+        let result = builder.ins().select(cmp, one, zero);
+
+        builder.ins().store(MemFlags::new(), result, rd_a, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn and(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_a = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_a = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let a = builder.ins().load(types::I64, MemFlags::new(), rs_a, 0);
+        let b = builder.ins().load(types::I64, MemFlags::new(), rt_a, 0);
+
+        let res = builder.ins().band(a, b);
+
+        builder.ins().store(MemFlags::new(), res, rd_a, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn srl(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+        let sa = ((opcode >> 6) & 0x1F) as i64;
+
+        let rt_a = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_a = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let v32 = builder.ins().load(types::I32, MemFlags::new(), rt_a, 0);
+        let shifted = builder.ins().ushr_imm(v32, sa as i64);
+        let res = builder.ins().sextend(types::I64, shifted);
+
+        builder.ins().store(MemFlags::new(), res, rd_a, 0);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
