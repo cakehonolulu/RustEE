@@ -621,6 +621,9 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x01 => {
+                self.bgez(builder, opcode, current_pc)
+            }
             0x02 => {
                 self.j(builder, opcode, current_pc)
             }
@@ -1470,6 +1473,24 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
+    }
+
+    fn bgez(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let imm = (opcode as u16) as i16 as i32;
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+
+        let zero = builder.ins().iconst(types::I32, 0);
+        let cond = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, rs_val, zero);
+
+        let target = current_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+        *current_pc = current_pc.wrapping_add(4);
+
+        Some(BranchInfo::Conditional {
+            cond,
+            target: BranchTarget::Const(target),
+        })
     }
 }
 

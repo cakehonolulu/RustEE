@@ -2158,3 +2158,55 @@ fn test_addu() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_bgez() {
+    let tests = vec![
+        TestCase {
+            name: "bgez_positive",
+            asm: "bgez $t1, 4",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00014;
+                g.gpr[9] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgez_zero",
+            asm: "bgez $t1, 4",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00014;
+                g.gpr[9] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgez_negative",
+            asm: "bgez $t1, 4",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

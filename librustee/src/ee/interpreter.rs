@@ -141,6 +141,9 @@ impl Interpreter {
                     }
                 }
             }
+            0x01 => {
+                self.bgez(opcode);
+            }
             0x02 => {
                 self.j(opcode);
             }
@@ -758,6 +761,18 @@ impl Interpreter {
 
         self.cpu.write_register32(rd, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn bgez(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let taken = rs_val >= 0;
+
+        let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
+        self.do_branch(branch_pc, taken, target, false);
     }
 }
 
