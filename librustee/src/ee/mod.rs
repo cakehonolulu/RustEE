@@ -101,6 +101,10 @@ impl CPU for EE {
         self.lo
     }
 
+    fn read_register8(&self, index: usize) -> u8 {
+        self.registers[index] as u8
+    }
+
     fn read_register32(&self, index: usize) -> u32 {
         self.registers[index] as u32
     }

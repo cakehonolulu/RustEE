@@ -204,6 +204,9 @@ impl Interpreter {
             0x24 => {
                 self.lbu(opcode);
             }
+            0x28 => {
+                self.sb(opcode);
+            }
             0x2B => {
                 self.sw(opcode);
             }
@@ -275,7 +278,8 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs) as i32;
         let rt_val = self.cpu.read_register32(rt) as i32;
         let taken = rs_val != rt_val;
-        let target = branch_pc.wrapping_add(((imm << 2) + 4).try_into().unwrap()); // Adjusted target calculation
+        let offset = (imm << 2).wrapping_add(4) as u32;
+        let target = branch_pc.wrapping_add(offset);
     
         self.do_branch(branch_pc, taken, target, false);
     }
@@ -306,6 +310,11 @@ impl Interpreter {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rs_val = self.cpu.read_register32(rs);
         let target = rs_val & 0xFFFFFFFC;
+
+        let delay_pc = self.cpu.pc().wrapping_add(4);
+        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        self.cpu.set_pc(delay_pc);
+        self.decode_execute(slot_opcode);
 
         self.cpu.set_pc(target);
     }
@@ -716,6 +725,23 @@ impl Interpreter {
         self.decode_execute(slot_opcode);
 
         self.cpu.set_pc(jump_addr);
+    }
+
+    fn sb(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let rt_val = self.cpu.read_register32(rt);
+
+        let address = rs_val.wrapping_add(imm as u32);
+
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write8)(&mut *bus, address, rt_val as u8);
+        }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 

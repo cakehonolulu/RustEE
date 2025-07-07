@@ -33,6 +33,7 @@ pub struct JIT<'a> {
     pc_ptr: *mut u32,
     cycles: usize,
     break_func: FuncId,
+    bus_write8_func: FuncId,
     bus_write32_func: FuncId,
     bus_write64_func: FuncId,
     bus_read8_func: FuncId,
@@ -85,6 +86,13 @@ pub extern "C" fn __write_cop0(cpu_ptr: *mut EE, index: u32, value: u32) {
     unsafe {
         let cpu = &mut *cpu_ptr;
         cpu.write_cop0_register(index as usize, value)
+    }
+}
+
+pub extern "C" fn __bus_write8(bus_ptr: *mut Bus, addr: u32, value: u8) {
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.write8)(bus, addr, value);
     }
 }
 
@@ -189,6 +197,11 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
+            "__bus_write8",
+            __bus_write8 as *const u8,
+        );
+
+        builder.symbol(
             "__bus_write32",
             __bus_write32 as *const u8,
         );
@@ -228,6 +241,14 @@ impl<'a> JIT<'a> {
         let hi_ptr = &mut cpu.hi as *mut u128;
         let lo_ptr = &mut cpu.lo as *mut u128;
         let pc_ptr = &mut cpu.pc as *mut u32;
+
+        let mut store8_sig = module.make_signature();
+        store8_sig.params.push(AbiParam::new(types::I64)); // bus_ptr
+        store8_sig.params.push(AbiParam::new(types::I32)); // addr
+        store8_sig.params.push(AbiParam::new(types::I8));  // value
+        let bus_write8_func = module
+            .declare_function("__bus_write8", Linkage::Import, &store8_sig)
+            .expect("Failed to declare __bus_write8");
 
         let mut store32_sig = module.make_signature();
         store32_sig.params.push(AbiParam::new(types::I64));
@@ -312,6 +333,7 @@ impl<'a> JIT<'a> {
             pc_ptr,
             cycles: 0,
             break_func,
+            bus_write8_func,
             bus_write32_func,
             bus_write64_func,
             bus_read8_func,
@@ -659,6 +681,9 @@ impl<'a> JIT<'a> {
             0x24 => {
                 self.lbu(builder, opcode, current_pc)
             }
+            0x28 => {
+                self.sb(builder, opcode, current_pc)
+            }
             0x2B => {
                 self.sw(builder, opcode, current_pc)
             }
@@ -689,6 +714,11 @@ impl<'a> JIT<'a> {
         let scale_val = builder.ins().iconst(types::I64, scale);
         let offset = builder.ins().imul(idx_val, scale_val);
         builder.ins().iadd(base_val, offset)
+    }
+
+    #[inline(always)]
+    fn load8(builder: &mut FunctionBuilder, addr: Value) -> Value {
+        builder.ins().load(types::I8, MemFlags::new(), addr, 0)
     }
 
     #[inline(always)]
@@ -1393,6 +1423,31 @@ impl<'a> JIT<'a> {
         Some(BranchInfo::Unconditional {
             target: BranchTarget::Const(target),
         })
+    }
+
+    fn sb(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let base = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as i16) as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val = Self::load32(builder, base_addr);
+
+        let addr = builder.ins().iadd_imm(base_val, imm);
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let store_val = Self::load8(builder, rt_addr);
+
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+
+        let callee = self.module.declare_func_in_func(self.bus_write8_func, builder.func);
+        builder.ins().call(callee, &[bus_value, addr, store_val]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
     }
 }
 

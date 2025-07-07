@@ -164,6 +164,17 @@ impl Bus {
         (entry_hi & 0xFF) as u8
     }
 
+    pub fn io_write8(&mut self, addr: u32, value: u8) {
+        match addr {
+            0xB000F180 => {
+                self.sio.write(addr, value);
+            }
+            _ => {
+                panic!("Invalid IO write8: addr=0x{:08X}, value=0x{:02X}", addr, value);
+            }
+        }
+    }
+
     pub fn io_write32(&mut self, addr: u32, value: u32) {
         match addr {
             0xB000F100 | 0xB000F110 | 0xB000F120 | 0xB000F130 |
