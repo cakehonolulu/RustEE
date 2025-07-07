@@ -847,6 +847,48 @@ fn test_sw() {
 }
 
 #[test]
+fn test_lw() {
+    let tests = vec![
+        TestCase {
+            name: "lw_aligned",
+            asm: "lw $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write32(0x1000, 0x12345678);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12345678;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lw_signed_bit",
+            asm: "lw $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write32(0x1000, 0x80000000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x80000000;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for tc in tests {
+        run_test(&tc);
+    }
+}
+
+#[test]
 fn test_jalr() {
     let tests = vec![
         TestCase {
@@ -1899,6 +1941,51 @@ fn test_ld() {
                 g.pc = 0xBFC00004;
                 g.gpr[8] = 0xAABBCCDDEEFF0011;
                 g.gpr[9] = 0x2000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_j() {
+    let tests = vec![
+        TestCase {
+            name: "j_basic",
+            asm: "j 0xBFC00010",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "j_zero",
+            asm: "j 0x0",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                // (0xBFC00000 + 4) & 0xF0000000 = 0xB0000000
+                g.pc = 0xB0000000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "j_max",
+            asm: "j 0x3FFFFFFC",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                let imm26 = (0x3FFFFFFC >> 2) & 0x03FFFFFF;
+                g.pc = ((0xBFC00000 + 4) & 0xF0000000) | (imm26 << 2);
                 g.cop0[15] = 0x59;
                 Some(g)
             },

@@ -21,6 +21,7 @@ pub trait CPU {
     fn write_cop0_register(&mut self, index: usize, value: u32);
 
     fn write8(&mut self, addr: u32, value: u8);
+    fn write32(&mut self, addr: u32, value: u32);
     fn write64(&mut self, addr: u32, value: u64);
     fn read8(&mut self, addr: u32) -> u8;
     fn read32(&mut self, addr: u32) -> u32;

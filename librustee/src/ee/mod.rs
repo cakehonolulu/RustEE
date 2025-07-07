@@ -143,6 +143,11 @@ impl CPU for EE {
         (bus.write8)(&mut *bus, addr, value)
     }
 
+    fn write32(&mut self, addr: u32, value: u32) {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.write32)(&mut *bus, addr, value)
+    }
+
     fn write64(&mut self, addr: u32, value: u64) {
         let mut bus = self.bus.lock().unwrap();
         (bus.write64)(&mut *bus, addr, value)
