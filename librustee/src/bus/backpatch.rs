@@ -2,9 +2,9 @@ use std::sync::atomic::AtomicBool;
 
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
-use tracing::trace;
+use tracing::{error, trace};
 
-use super::{Bus, BUS_PTR};
+use super::{Bus};
 
 pub struct Context {
     pub bus: *mut Bus,
@@ -31,17 +31,37 @@ pub trait ArchHandler {
     fn get_call_instruction() -> &'static str;
 }
 
+pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
+    unsafe {
+        if bus.is_null() {
+            error!("Null bus pointer in io_write8_stub: addr=0x{:08X}, value=0x{:02X}", addr, value);
+            panic!("Null bus pointer in io_write8_stub");
+        }
+        let bus = &mut *bus;
+        trace!("io_write8_stub: bus={:p}, addr=0x{:08X}, value=0x{:02X}", bus, addr, value);
+        bus.io_write8(addr, value);
+    }
+}
+
 pub extern "C" fn io_write32_stub(bus: *mut Bus, addr: u32, value: u32) {
     unsafe {
-        let bus = &mut *BUS_PTR;
-        (*bus).io_write32(addr, value);
+        if bus.is_null() {
+            error!("Null bus pointer in io_write32_stub: addr=0x{:08X}, value=0x{:08X}", addr, value);
+            panic!("Null bus pointer in io_write32_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_write32(addr, value);
     }
 }
 
 pub extern "C" fn io_read32_stub(bus: *mut Bus, addr: u32) -> u32 {
     unsafe {
-        let bus = &mut *BUS_PTR;
-        (*bus).io_read32(addr)
+        if bus.is_null() {
+            error!("Null bus pointer in io_read32_stub: addr=0x{:08X}", addr);
+            panic!("Null bus pointer in io_read32_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_read32(addr)
     }
 }
 
@@ -108,6 +128,7 @@ pub mod x86_64_impl {
 
     pub fn get_helper_pattern_impl() -> &'static [&'static str] {
         &[
+            "librustee::ee::jit::__bus_write8",
             "librustee::ee::jit::__bus_write32",
             "librustee::ee::jit::__bus_read32",
         ]

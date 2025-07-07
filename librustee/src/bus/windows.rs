@@ -90,15 +90,18 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
             if let Some(name) = symbol.name() {
                 let demangled = format!("{}", name);
                 trace!("  Symbol: {}", demangled);
-                if demangled.contains("__bus_write32") || demangled.contains("__bus_read32") {
+                if demangled.contains("__bus_write8") ||demangled.contains("__bus_write32") || demangled.contains("__bus_read32") {
                     is_jit = true;
                     trace!("  Found JIT access");
                 } else if demangled.contains("hw_write32") {
-                    access_type = Some("write");
+                    access_type = Some("write32");
                     trace!("  Found write access");
                 } else if demangled.contains("hw_read32") {
-                    access_type = Some("read");
+                    access_type = Some("read32");
                     trace!("  Found read access");
+                } else if demangled.contains("hw_write8") {
+                    access_type = Some("write8");
+                    trace!("  Found write8 access");
                 }
             }
         });
@@ -144,6 +147,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         }
 
         let stub_addr: u64 = match matched_pattern.unwrap() {
+            pattern if pattern.contains("__bus_write8") => io_write8_stub as *const () as u64,
             pattern if pattern.contains("__bus_write32") => io_write32_stub as *const () as u64,
             pattern if pattern.contains("__bus_read32") => io_read32_stub as *const () as u64,
             other => {
@@ -202,14 +206,26 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         let addr = (*ctx).Rdx as u32;
         let fault_rip = (*ctx).Rip as i64;
 
-        if access == "write" {
-            let value = (*ctx).R8 as u32;
-            io_write32_stub(bus_ptr, addr, value);
-            trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
-        } else {
-            let value = io_read32_stub(bus_ptr, addr);
-            (*ctx).Rax = value as u64;
-            trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+        match access {
+            "write8" => {
+                let value = (*ctx).R8 as u8;
+                io_write8_stub(bus_ptr, addr, value);
+                trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+            }
+            "write32" => {
+                let value = (*ctx).R8 as u32;
+                io_write32_stub(bus_ptr, addr, value);
+                trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+            }
+            "read32" => {
+                let value = io_read32_stub(bus_ptr, addr);
+                (*ctx).Rax = value as u64;
+                trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+            }
+            _ => {
+                error!("Unknown access type: {}", access);
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
         }
 
         if let Err(e) = H::advance_instruction_pointer(ctx, &cs, fault_rip) {
