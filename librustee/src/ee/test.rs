@@ -845,6 +845,84 @@ fn test_jalr() {
 }
 
 #[test]
+fn test_sd() {
+    let tests = vec![
+        TestCase {
+            name: "sd_basic",
+            asm: "sd $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register(8, 0x1122334455667788);
+                ee.write_register(9, 0x1000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1122334455667788;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0x55667788), (0x1004, 0x11223344)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sd_zero",
+            asm: "sd $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register(8, 0);
+                ee.write_register(9, 0x1000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0), (0x1004, 0)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sd_max",
+            asm: "sd $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register(8, 0xFFFFFFFFFFFFFFFF);
+                ee.write_register(9, 0x1008);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0x1008;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1008, 0xFFFFFFFF), (0x100C, 0xFFFFFFFF)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sd_offset",
+            asm: "sd $t0, 8($t1)",
+            setup: |ee| {
+                ee.write_register(8, 0xAABBCCDDEEFF0011);
+                ee.write_register(9, 0x2000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xAABBCCDDEEFF0011;
+                g.gpr[9] = 0x2000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x2008, 0xEEFF0011), (0x200C, 0xAABBCCDD)];
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
 fn test_daddu() {
     let tests = vec![
         TestCase {
