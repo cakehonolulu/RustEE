@@ -150,6 +150,9 @@ impl Interpreter {
             0x0A => {
                 self.slti(opcode);
             }
+            0x0B => {
+                self.sltiu(opcode);
+            }
             0x0C => {
                 self.andi(opcode);
             }
@@ -566,6 +569,19 @@ impl Interpreter {
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let lo_val = self.cpu.read_lo();
         self.cpu.write_register64(rd, lo_val as u64);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sltiu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i64;
+
+        let rs_val = self.cpu.read_register64(rs);
+        let imm_val = imm as u64;
+
+        let result = if rs_val < imm_val { 1u64 } else { 0u64 };
+        self.cpu.write_register64(rt, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
