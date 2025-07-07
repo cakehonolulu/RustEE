@@ -27,6 +27,7 @@ pub struct JIT<'a> {
     blocks: LruCache<u32, Block>,
     max_blocks: usize,
     gpr_ptr: *mut u128,
+    fpr_ptr: *mut u32,
     hi_ptr: *mut u128,
     lo_ptr: *mut u128,
     pc_ptr: *mut u32,
@@ -210,6 +211,7 @@ impl<'a> JIT<'a> {
 
         let mut module = JITModule::new(builder);
         let gpr_ptr = cpu.registers.as_mut_ptr();
+        let fpr_ptr = cpu.fpu_registers.as_mut_ptr();
         let hi_ptr = &mut cpu.hi as *mut u128;
         let lo_ptr = &mut cpu.lo as *mut u128;
         let pc_ptr = &mut cpu.pc as *mut u32;
@@ -283,6 +285,7 @@ impl<'a> JIT<'a> {
             blocks: LruCache::new(MAX_BLOCKS),
             max_blocks: MAX_BLOCKS.into(),
             gpr_ptr,
+            fpr_ptr,
             hi_ptr,
             lo_ptr,
             pc_ptr,
@@ -627,6 +630,9 @@ impl<'a> JIT<'a> {
             }
             0x2B => {
                 self.sw(builder, opcode, current_pc)
+            }
+            0x39 => {
+                self.swc1(builder, opcode, current_pc)
             }
             0x3F => {
                 self.sd(builder, opcode, current_pc)
@@ -1243,6 +1249,32 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn swc1(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let base = ((opcode >> 21) & 0x1F) as i64;
+        let ft = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as i16) as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val = Self::load32(builder, base_addr);
+
+        let addr = builder.ins().iadd_imm(base_val, imm);
+
+        let ft_addr = Self::ptr_add(builder, self.fpr_ptr as i64, ft, 4);
+        let fpu_val = Self::load32(builder, ft_addr);
+
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+
+        let callee = self.module.declare_func_in_func(self.bus_write32_func, builder.func);
+        builder.ins().call(callee, &[bus_value, addr, fpu_val]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
         None
     }
 }

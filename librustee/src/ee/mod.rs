@@ -26,6 +26,7 @@ pub struct EE {
     pub lo: u128,
     pub hi: u128,
     breakpoints: HashSet<u32>,
+    pub fpu_registers: [u32; 32],
 }
 impl Clone for EE {
     fn clone(&self) -> EE {
@@ -37,6 +38,7 @@ impl Clone for EE {
             lo: self.lo,
             hi: self.hi,
             breakpoints: self.breakpoints.clone(),
+            fpu_registers: self.fpu_registers.clone(),
         }
     }
 }
@@ -53,9 +55,29 @@ impl EE {
             hi: 0,
             bus,
             breakpoints: HashSet::new(),
+            fpu_registers: [0; 32],
         };
 
         ee
+    }
+
+    pub fn read_fpu_register_as_u32(&self, index: usize) -> u32 {
+        self.fpu_registers[index]
+    }
+
+    // Read an FPU register as a floating-point value (f32)
+    pub fn read_fpu_register_as_f32(&self, index: usize) -> f32 {
+        f32::from_bits(self.fpu_registers[index])
+    }
+
+    // Write an FPU register using a 32-bit unsigned integer
+    pub fn write_fpu_register_from_u32(&mut self, index: usize, value: u32) {
+        self.fpu_registers[index] = value;
+    }
+
+    // Write an FPU register using a floating-point value (f32)
+    pub fn write_fpu_register_from_f32(&mut self, index: usize, value: f32) {
+        self.fpu_registers[index] = value.to_bits();
     }
 }
 

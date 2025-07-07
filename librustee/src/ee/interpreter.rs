@@ -198,6 +198,9 @@ impl Interpreter {
             0x2B => {
                 self.sw(opcode);
             }
+            0x39 => {
+                self.swc1(opcode);
+            }
             0x3F => {
                 self.sd(opcode);
             }
@@ -620,6 +623,24 @@ impl Interpreter {
 
         let result = loaded_byte as i8 as i64 as u64;
         self.cpu.write_register64(rt, result);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn swc1(&mut self, opcode: u32) {
+        let base = ((opcode >> 21) & 0x1F) as usize;
+        let ft = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let base_val = self.cpu.read_register32(base);
+        let address = base_val.wrapping_add(imm as u32);
+
+        let fpu_val = self.cpu.read_fpu_register_as_u32(ft);
+
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write32)(bus.deref_mut(), address, fpu_val);
+        }
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }

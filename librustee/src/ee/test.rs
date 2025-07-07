@@ -11,6 +11,7 @@ use crate::cpu::{CPU, EmulationBackend};
 struct GoldenState {
     pc:   u32,
     gpr:  [u128; 32],
+    fpr:  [u32; 32],
     cop0: [u32; 32],
     lo:   u128,
     hi:   u128,
@@ -73,6 +74,15 @@ fn compare_states(
             ee_jit.read_cop0_register(i),
             "COP0[{}] mismatch: interp=0x{:X}, jit=0x{:X}",
             i, ee_interpreter.read_cop0_register(i), ee_jit.read_cop0_register(i),
+        );
+    }
+
+    for i in 0..32 {
+        assert_eq!(
+            ee_interpreter.read_fpu_register_as_u32(i),
+            ee_jit.read_fpu_register_as_u32(i),
+            "FPR ${} mismatch: interp=0x{:X}, jit=0x{:X}",
+            names[i], ee_interpreter.read_fpu_register_as_u32(i), ee_jit.read_fpu_register_as_u32(i),
         );
     }
 
@@ -1605,5 +1615,79 @@ fn test_lb() {
 
     for tc in tests {
         run_test(&tc);
+    }
+}
+
+#[test]
+fn test_swc1() {
+    let tests = vec![
+        TestCase {
+            name: "swc1_basic",
+            asm: "swc1 $f0, 0($t0)",
+            setup: |ee| {
+                ee.write_register32(8, 0x1000);
+                ee.write_fpu_register_from_u32(0, f32::to_bits(42.0));
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0x42280000)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "swc1_zero",
+            asm: "swc1 $f0, 0($t0)",
+            setup: |ee| {
+                ee.write_register32(8, 0x1000);
+                ee.write_fpu_register_from_u32(0, f32::to_bits(0.0));
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0x00000000)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "swc1_negative",
+            asm: "swc1 $f0, 0($t0)",
+            setup: |ee| {
+                ee.write_register32(8, 0x1004);
+                ee.write_fpu_register_from_u32(0, f32::to_bits(-1.0));
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1004;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1004, 0xBF800000)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "swc1_offset",
+            asm: "swc1 $f0, 4($t0)",
+            setup: |ee| {
+                ee.write_register32(8, 0x1000);
+                ee.write_fpu_register_from_u32(0, f32::to_bits(42.0));
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1004, 0x42280000)];
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
     }
 }
