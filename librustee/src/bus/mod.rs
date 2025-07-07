@@ -180,6 +180,13 @@ impl Bus {
     }
 
     pub fn io_read32(&mut self, addr: u32) -> u32 {
-        panic!("Invalid IO read32: addr=0x{:08X}", addr);
+        match addr {
+            0xB000F130 => {
+                self.sio.read(addr)
+            }
+            _ => {
+                panic!("Invalid IO read32: addr=0x{:08X}", addr);
+            }
+        }
     }
 }

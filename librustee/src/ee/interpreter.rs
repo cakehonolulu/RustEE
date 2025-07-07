@@ -138,6 +138,9 @@ impl Interpreter {
                     }
                 }
             }
+            0x02 => {
+                self.j(opcode);
+            }
             0x03 => {
                 self.jal(opcode);
             }
@@ -700,6 +703,19 @@ impl Interpreter {
 
         self.cpu.write_register64(rt, loaded_value);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn j(&mut self, opcode: u32) {
+        let pc = self.cpu.pc();
+        let target = pc.wrapping_add(4) & 0xF000_0000;
+        let jump_addr = target | ((opcode & 0x03FFFFFF) << 2);
+        
+        let delay_pc = self.cpu.pc().wrapping_add(4);
+        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        self.cpu.set_pc(delay_pc);
+        self.decode_execute(slot_opcode);
+
+        self.cpu.set_pc(jump_addr);
     }
 }
 

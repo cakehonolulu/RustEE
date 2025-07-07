@@ -596,6 +596,9 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x02 => {
+                self.j(builder, opcode, current_pc)
+            }
             0x03 => {
                 self.jal(builder, opcode, current_pc)
             }
@@ -901,12 +904,12 @@ impl<'a> JIT<'a> {
 
         let addr = builder.ins().iadd_imm(base_val, imm_i64);
 
-        let bus_ptr_const = builder
-            .ins()
-            .iconst(types::I64, &self.cpu.bus as *const _ as i64);
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let bus_read_callee =
             self.module.declare_func_in_func(self.bus_read32_func, builder.func);
-        let call_inst = builder.ins().call(bus_read_callee, &[bus_ptr_const, addr]);
+        let call_inst = builder.ins().call(bus_read_callee, &[bus_value, addr]);
         let load_val = builder.inst_results(call_inst)[0];
 
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
@@ -1379,6 +1382,17 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
+    }
+
+    fn j(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let instr_index = opcode & 0x03FFFFFF;
+        let target = (*current_pc).wrapping_add(4) & 0xF0000000 | (instr_index << 2);
+
+        *current_pc = current_pc.wrapping_add(4);
+        
+        Some(BranchInfo::Unconditional {
+            target: BranchTarget::Const(target),
+        })
     }
 }
 
