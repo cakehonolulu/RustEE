@@ -111,6 +111,9 @@ impl Interpreter {
                     0x18 => {
                         self.mult(opcode);
                     }
+                    0x1B => {
+                        self.divu(opcode);
+                    }
                     0x25 => {
                         self.or(opcode);
                     }
@@ -514,6 +517,22 @@ impl Interpreter {
         if rd != 0 {
             self.cpu.write_register64(rd, lo32 as u64);
         }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn divu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+
+        let dividend = self.cpu.read_register32(rs) as u64;
+        let divisor  = self.cpu.read_register32(rt) as u64;
+
+        let quot = dividend.wrapping_div(divisor);
+        let rem  = dividend.wrapping_rem(divisor);
+
+        self.cpu.write_lo(quot as u128);
+        self.cpu.write_hi(rem  as u128);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }

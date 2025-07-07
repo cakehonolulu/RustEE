@@ -1275,3 +1275,49 @@ fn test_mult() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_divu() {
+    let tests = vec![
+        TestCase {
+            name: "divu_basic",
+            asm:  "divu $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 100);
+                ee.write_register32(10,  30);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.lo = 3u128;
+                g.hi = 10u128;
+                g.gpr[9]  = 100u128;
+                g.gpr[10] =  30u128;
+                g.cop0[15] = 0x59;
+                Some(g)
+            }
+        },
+        TestCase {
+            name: "divu_small",
+            asm:  "divu $t3, $t4",
+            setup: |ee| {
+                ee.write_register32(11,  5);
+                ee.write_register32(12, 10);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[11] =  5u128;
+                g.gpr[12] = 10u128;
+                g.lo = 0u128;
+                g.hi = 5u128;
+                g.cop0[15] = 0x59;
+                Some(g)
+            }
+        },
+    ];
+
+    for tc in tests {
+        run_test(&tc);
+    }
+}
