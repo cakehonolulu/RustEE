@@ -105,6 +105,9 @@ impl Interpreter {
                     0x09 => {
                         self.jalr(opcode);
                     }
+                    0x0D => {
+                        self.break_();
+                    }
                     0x0F => {
                         self.sync();
                     }
@@ -173,6 +176,9 @@ impl Interpreter {
                         panic!();
                     }
                 }
+            }
+            0x14 => {
+                self.beql(opcode);
             }
             0x23 => {
                 self.lw(opcode);
@@ -535,6 +541,22 @@ impl Interpreter {
         self.cpu.write_hi(rem  as u128);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn beql(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs  = ((opcode >> 21) & 0x1F) as usize;
+        let rt  = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let rt_val = self.cpu.read_register32(rt) as i32;
+        let taken  = rs_val == rt_val;
+        let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+        self.do_branch(branch_pc, taken, target, true);
+    }
+
+    fn break_(&mut self) {
+        panic!("MIPS BREAK instruction executed at 0x{:08X}", self.cpu.pc());
     }
 }
 

@@ -31,6 +31,7 @@ pub struct JIT<'a> {
     lo_ptr: *mut u128,
     pc_ptr: *mut u32,
     cycles: usize,
+    break_func: FuncId,
     bus_write32_func: FuncId,
     bus_write64_func: FuncId,
     bus_read32_func: FuncId,
@@ -59,6 +60,14 @@ enum BranchInfo {
 }
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
+
+#[unsafe(no_mangle)]
+pub extern "C" fn __break(cpu_ptr: *mut EE) {
+    unsafe {
+        let cpu = &mut *cpu_ptr;
+        panic!("MIPS BREAK instruction executed at 0x{:08X}", cpu.pc());
+    }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __read_cop0(cpu_ptr: *mut EE, index: u32) -> u32 {
@@ -158,6 +167,11 @@ impl<'a> JIT<'a> {
         ).expect("Failed to create JITBuilder");
 
         builder.symbol(
+            "__break",
+            __bus_tlbwi as *const u8,
+        );
+
+        builder.symbol(
             "__bus_write32",
             __bus_write32 as *const u8,
         );
@@ -236,6 +250,12 @@ impl<'a> JIT<'a> {
             .declare_function("__write_cop0", Linkage::Import, &write_cop0_sig)
             .expect("Failed to declare __write_cop0");
 
+        let mut break_sig = module.make_signature();
+        break_sig.params.push(AbiParam::new(types::I64)); // cpu_ptr
+        let break_func = module
+            .declare_function("__break", Linkage::Import, &break_sig)
+            .expect("Failed to declare __break");
+
         JIT {
             cpu,
             module,
@@ -246,6 +266,7 @@ impl<'a> JIT<'a> {
             lo_ptr,
             pc_ptr,
             cycles: 0,
+            break_func,
             bus_write32_func,
             bus_write64_func,
             bus_read32_func,
@@ -414,18 +435,20 @@ impl<'a> JIT<'a> {
                         JIT::set_pc_to_target(&mut builder, target, pc_addr);
                     }
                     BranchInfo::ConditionalLikely { cond, target } => {
-                        let branch_blk = builder.create_block();
-                        let fallthrough_blk = builder.create_block();
-                        builder.ins().brif(cond, branch_blk, &[], fallthrough_blk, &[]);
-                        builder.seal_block(branch_blk);
-                        builder.seal_block(fallthrough_blk);
-                        builder.switch_to_block(branch_blk);
-                        let delay_opcode = self.cpu.fetch_at(current_pc);
+                        let delay_pc = current_pc;
+                        current_pc = delay_pc.wrapping_add(4);
+                        let taken_blk = builder.create_block();
+                        let not_taken_blk = builder.create_block();
+                        builder.ins().brif(cond, taken_blk, &[], not_taken_blk, &[]);
+                        builder.seal_block(taken_blk);
+                        builder.switch_to_block(taken_blk);
+                        let delay_opcode = self.cpu.fetch_at(delay_pc);
                         self.decode(&mut builder, delay_opcode, &mut current_pc);
                         JIT::set_pc_to_target(&mut builder, target, pc_addr);
                         builder.ins().return_(&[]);
-                        builder.switch_to_block(fallthrough_blk);
-                        let next_pc = current_pc.wrapping_add(4);
+                        builder.seal_block(not_taken_blk);
+                        builder.switch_to_block(not_taken_blk);
+                        let next_pc = delay_pc.wrapping_add(4);
                         JIT::set_pc_to_const(&mut builder, next_pc, pc_addr);
                     }
                 }
@@ -492,10 +515,13 @@ impl<'a> JIT<'a> {
                     }
                     0x08 => {
                         self.jr(builder, opcode, current_pc)
-                    },
+                    }
                     0x09 => {
                         self.jalr(builder, opcode, current_pc)
-                    },
+                    }
+                    0x0D => {
+                        self.break_(builder, opcode, current_pc)
+                    }
                     0x0F => {
                         self.sync(builder, opcode, current_pc)
                     }
@@ -558,6 +584,9 @@ impl<'a> JIT<'a> {
                         panic!();
                     }
                 }
+            }
+            0x14 => {
+                self.beql(builder, opcode, current_pc)
             }
             0x23 => {
                 self.lw(builder, opcode, current_pc)
@@ -1057,6 +1086,38 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn beql(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as u16) as i16 as i32;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let rs_val = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+        let rt_val = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+
+        let cond = builder.ins().icmp(IntCC::Equal, rs_val, rt_val);
+
+        let target = current_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+        *current_pc = current_pc.wrapping_add(4);
+
+        Some(BranchInfo::ConditionalLikely {
+            cond,
+            target: BranchTarget::Const(target),
+        })
+    }
+
+    fn break_(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
+
+        let callee = self.module.declare_func_in_func(self.break_func, builder.func);
+        builder.ins().call(callee, &[cpu_arg]);
+
         None
     }
 }
