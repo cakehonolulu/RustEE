@@ -9,6 +9,7 @@ use crate::cpu::CPU;
 
 pub mod jit;
 pub mod interpreter;
+pub mod sio;
 
 pub use interpreter::Interpreter;
 pub use jit::JIT as JIT;

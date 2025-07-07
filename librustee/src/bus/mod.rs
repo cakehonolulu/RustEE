@@ -13,8 +13,9 @@ mod sw_fastmem;
 mod hw_fastmem;
 pub mod backpatch;
 
-use tlb::{OperatingMode, Tlb};
+use crate::ee::sio::{SIO};
 
+use tlb::{OperatingMode, Tlb};
 
 #[cfg(unix)]
 use unix::install_handler;
@@ -69,6 +70,8 @@ pub struct Bus {
     pub tlb: RefCell<Tlb>,
     pub(crate) operating_mode: OperatingMode,
 
+    pub sio: SIO,
+
     mode: BusMode,
 
     page_read:  Vec<usize>,
@@ -93,6 +96,7 @@ impl Bus {
             ram: vec![0; 32 * 1024 * 1024],
             page_read:  vec![0; NUM_PAGES],
             page_write: vec![0; NUM_PAGES],
+            sio: SIO::new(),
             mode: mode.clone(),
             read32:  Bus::sw_fmem_read32,
             write32: Bus::sw_fmem_write32,
@@ -147,6 +151,10 @@ impl Bus {
 
     pub fn io_write32(&mut self, addr: u32, value: u32) {
         match addr {
+            0xB000F100 | 0xB000F110 | 0xB000F120 | 0xB000F130 |
+            0xB000F140 | 0xB000F150 | 0xB000F180 | 0xB000F1C0 => {
+                self.sio.write(addr, value);
+            }
             0xB000F500 => {
                 debug!("Memory controller (?) 32-bit write");
             }
