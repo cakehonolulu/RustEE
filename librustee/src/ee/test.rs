@@ -31,6 +31,15 @@ fn create_mock_bios(assembly: &str) -> BIOS {
     BIOS::test_only(binary_u8)
 }
 
+fn count_instructions(assembly: &str) -> usize {
+    // Count non-empty lines that aren't just whitespace or comments
+    assembly
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("//"))
+        .count()
+}
+
 fn compare_states(
     ee_interpreter: &EE,
     ee_jit: &mut EE,
@@ -169,8 +178,12 @@ fn run_test(tc: &TestCase) {
         BusMode::HardwareFastMem,
     ];
 
+    // Count the number of instructions to execute
+    let instruction_count = count_instructions(tc.asm);
+    
     for bus_mode in bus_modes {
-        println!("Running test `{}` for bus mode {:?}", tc.name, bus_mode);
+        println!("Running test `{}` for bus mode {:?} ({} instructions)", 
+                 tc.name, bus_mode, instruction_count);
 
         // Create mock BIOS for both interpreter and JIT
         let bios_i = create_mock_bios(tc.asm);
@@ -191,7 +204,6 @@ fn run_test(tc: &TestCase) {
         let mut ee_i = EE::new(Arc::clone(&bus_i), Arc::clone(&cop0_i));
         let mut ee_j = EE::new(Arc::clone(&bus_j), Arc::clone(&cop0_j));
 
-
         // Test setup
         (tc.setup)(&mut ee_i);
         (tc.setup)(&mut ee_j);
@@ -200,13 +212,17 @@ fn run_test(tc: &TestCase) {
         ee_i.set_pc(0xBFC00000);
         ee_j.set_pc(0xBFC00000);
 
-        // Run the interpreter backend
+        // Run the interpreter backend for the required number of steps
         let mut interp = Interpreter::new(ee_i);
-        interp.step();
+        for _ in 0..instruction_count {
+            interp.step();
+        }
 
-        // Run the JIT backend
+        // Run the JIT backend for the required number of steps
         let mut jit = JIT::new(&mut ee_j);
-        jit.step();
+        for _ in 0..instruction_count {
+            jit.step();
+        }
 
         // Compare CPU states
         compare_states(&interp.cpu, jit.cpu, tc.golden.as_ref());
@@ -214,6 +230,7 @@ fn run_test(tc: &TestCase) {
         println!("Test `{}` passed for bus mode {:?}", tc.name, bus_mode);
     }
 }
+
 
 #[test]
 fn test_mfc0() {
@@ -1314,6 +1331,110 @@ fn test_divu() {
                 g.cop0[15] = 0x59;
                 Some(g)
             }
+        },
+    ];
+
+    for tc in tests {
+        run_test(&tc);
+    }
+}
+
+#[test]
+fn test_beql() {
+    let tests = vec![
+        TestCase {
+            name: "beql_taken",
+            asm: "
+                beql $t1, $t2, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 5
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC0000C;
+                g.gpr[11] = 0;
+                g.gpr[12] = 5;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "beql_not_taken",
+            asm: "
+                beql $t1, $t2, 16
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 7
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 1);
+                ee.write_register32(10, 2);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[11] = 0;
+                g.gpr[12] = 7;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for tc in tests {
+        run_test(&tc);
+    }
+}
+
+#[test]
+fn test_mflo() {
+    let tests = vec![
+        TestCase {
+            name: "mflo_basic",
+            asm: "
+                mult $t1, $t2 
+                mflo $t0
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 5);
+                ee.write_register32(10, 3);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 15u128;
+                g.gpr[9] = 5u128;
+                g.gpr[10] = 3u128;
+                g.lo = 15u128;
+                g.hi = 0u128;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mflo_large",
+            asm: "
+                mult $t1, $t2
+                mflo $t0
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 1000);
+                ee.write_register32(10, 200);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[8] = 200000u128;
+                g.gpr[9] = 1000u128;
+                g.gpr[10] = 200u128;
+                g.lo = 200000u128;
+                g.hi = 0u128;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
         },
     ];
 

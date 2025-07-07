@@ -8,7 +8,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
-use std::num::NonZero;
+use std::num::{NonZero, NonZeroU128};
 use std::sync::{Arc, Mutex};
 use tracing::error;
 
@@ -524,6 +524,9 @@ impl<'a> JIT<'a> {
                     }
                     0x0F => {
                         self.sync(builder, opcode, current_pc)
+                    }
+                    0x12 => {
+                        self.mflo(builder, opcode, current_pc)
                     }
                     0x18 => {
                         self.mult(builder, opcode, current_pc)
@@ -1117,6 +1120,24 @@ impl<'a> JIT<'a> {
 
         let callee = self.module.declare_func_in_func(self.break_func, builder.func);
         builder.ins().call(callee, &[cpu_arg]);
+
+        None
+    }
+
+    fn mflo(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let lo_ptr_val = builder.ins().iconst(types::I64, self.lo_ptr as i64);
+        let lo_val = builder.ins().load(types::I128, MemFlags::new(), lo_ptr_val, 0);
+
+        let lo_val_64 = builder.ins().ireduce(types::I64, lo_val);
+
+        builder.ins().store(MemFlags::new(), lo_val_64, rd_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
 
         None
     }

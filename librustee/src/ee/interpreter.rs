@@ -111,6 +111,9 @@ impl Interpreter {
                     0x0F => {
                         self.sync();
                     }
+                    0x12 => {
+                        self.mflo(opcode);
+                    }
                     0x18 => {
                         self.mult(opcode);
                     }
@@ -557,6 +560,13 @@ impl Interpreter {
 
     fn break_(&mut self) {
         panic!("MIPS BREAK instruction executed at 0x{:08X}", self.cpu.pc());
+    }
+
+    fn mflo(&mut self, opcode: u32) {
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let lo_val = self.cpu.read_lo();
+        self.cpu.write_register64(rd, lo_val as u64);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 
