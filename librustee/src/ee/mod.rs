@@ -73,12 +73,28 @@ impl CPU for EE {
         self.registers[index]
     }
 
+    fn read_hi(&self) -> Self::RegisterType {
+        self.hi
+    }
+
+    fn read_lo(&self) -> Self::RegisterType {
+        self.lo
+    }
+
     fn read_register32(&self, index: usize) -> u32 {
         self.registers[index] as u32
     }
 
     fn read_register64(&self, index: usize) -> u64 {
         self.registers[index] as u64
+    }
+
+    fn write_hi(&mut self, value: Self::RegisterType) {
+        self.hi = value;
+    }
+
+    fn write_lo(&mut self, value: Self::RegisterType) {
+        self.lo = value;
     }
 
     fn write_register(&mut self, index: usize, value: Self::RegisterType) {

@@ -108,6 +108,9 @@ impl Interpreter {
                     0x0F => {
                         self.sync();
                     }
+                    0x18 => {
+                        self.mult(opcode);
+                    }
                     0x25 => {
                         self.or(opcode);
                     }
@@ -436,7 +439,6 @@ impl Interpreter {
     }
 
     fn jal(&mut self, opcode: u32) {
-        println!("opcode: 0x{:08X}", opcode);
         let pc = self.cpu.pc();
         let target = pc.wrapping_add(4) & 0xF000_0000;
         let jump_addr = target | ((opcode & 0x03FFFFFF) << 2);
@@ -488,6 +490,31 @@ impl Interpreter {
         let result = rs_val | rt_val;
 
         self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn mult(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register32(rs) as i32 as i64;
+        let rt_val = self.cpu.read_register32(rt) as i32 as i64;
+        let prod = rs_val.wrapping_mul(rt_val);
+
+        let lo32 = prod as u32;
+        let hi32 = (prod >> 32) as u32;
+
+        let lo_val = lo32 as u128;
+        let hi_val = hi32 as u128;
+
+        self.cpu.write_lo(lo_val);
+        self.cpu.write_hi(hi_val);
+
+        if rd != 0 {
+            self.cpu.write_register64(rd, lo32 as u64);
+        }
+
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

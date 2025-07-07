@@ -27,6 +27,8 @@ pub struct JIT<'a> {
     blocks: LruCache<u32, Block>,
     max_blocks: usize,
     gpr_ptr: *mut u128,
+    hi_ptr: *mut u128,
+    lo_ptr: *mut u128,
     pc_ptr: *mut u32,
     cycles: usize,
     bus_write32_func: FuncId,
@@ -181,6 +183,8 @@ impl<'a> JIT<'a> {
 
         let mut module = JITModule::new(builder);
         let gpr_ptr = cpu.registers.as_mut_ptr();
+        let hi_ptr = &mut cpu.hi as *mut u128;
+        let lo_ptr = &mut cpu.lo as *mut u128;
         let pc_ptr = &mut cpu.pc as *mut u32;
 
         let mut store32_sig = module.make_signature();
@@ -238,6 +242,8 @@ impl<'a> JIT<'a> {
             blocks: LruCache::new(MAX_BLOCKS),
             max_blocks: MAX_BLOCKS.into(),
             gpr_ptr,
+            hi_ptr,
+            lo_ptr,
             pc_ptr,
             cycles: 0,
             bus_write32_func,
@@ -492,6 +498,9 @@ impl<'a> JIT<'a> {
                     },
                     0x0F => {
                         self.sync(builder, opcode, current_pc)
+                    }
+                    0x18 => {
+                        self.mult(builder, opcode, current_pc)
                     }
                     0x25 => {
                         self.or(builder, opcode, current_pc)
@@ -975,6 +984,45 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn mult(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rs_val32 = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+        let rt_val32 = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+        let rs_val64 = builder.ins().sextend(types::I64, rs_val32);
+        let rt_val64 = builder.ins().sextend(types::I64, rt_val32);
+
+        let prod = builder.ins().imul(rs_val64, rt_val64);
+
+        let lo32  = builder.ins().ireduce(types::I32, prod);
+        let lo64  = builder.ins().uextend(types::I64, lo32);
+        let lo128 = builder.ins().uextend(types::I128, lo32);
+
+        let hi_shift = builder.ins().ushr_imm(prod, 32);
+        let hi32     = builder.ins().ireduce(types::I32, hi_shift);
+        let hi128    = builder.ins().uextend(types::I128, hi32);
+
+        let lo_addr = Self::ptr_add(builder, self.lo_ptr as i64, 0, 16);
+        let hi_addr = Self::ptr_add(builder, self.hi_ptr as i64, 0, 16);
+        builder.ins().store(MemFlags::new(), lo128, lo_addr, 0);
+        builder.ins().store(MemFlags::new(), hi128, hi_addr, 0);
+
+        if rd != 0 {
+            builder.ins().store(MemFlags::new(), lo64, rd_addr, 0);
+        }
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
         None
     }
 }

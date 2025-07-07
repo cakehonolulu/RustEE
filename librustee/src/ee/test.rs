@@ -12,6 +12,8 @@ struct GoldenState {
     pc:   u32,
     gpr:  [u128; 32],
     cop0: [u32; 32],
+    lo:   u128,
+    hi:   u128,
     memory_checks: Vec<(u32, u32)>,
 }
 
@@ -108,6 +110,37 @@ fn compare_states(
                 i, jit_c, expected,
             );
         }
+
+        let interp_hi = ee_interpreter.read_hi();
+        let interp_lo = ee_interpreter.read_lo();
+        let jit_hi    = ee_jit.read_hi();
+        let jit_lo    = ee_jit.read_lo();
+        let expected_hi = g.hi;
+        let expected_lo = g.lo;
+
+        assert_eq!(
+            interp_hi, expected_hi,
+            "Interp HI != golden (0x{:X} != 0x{:X})",
+            interp_hi, expected_hi,
+        );
+
+        assert_eq!(
+            interp_lo, expected_lo,
+            "Interp LO != golden (0x{:X} != 0x{:X})",
+            interp_lo, expected_lo,
+        );
+
+        assert_eq!(
+            jit_hi, expected_hi,
+            "JIT HI != golden (0x{:X} != 0x{:X})",
+            jit_hi, expected_hi,
+        );
+
+        assert_eq!(
+            jit_lo, expected_lo,
+            "JIT LO != golden (0x{:X} != 0x{:X})",
+            jit_lo, expected_lo,
+        );
 
         for (addr, expected) in golden.unwrap().memory_checks.iter() {
             let interp_val = ee_jit.read32(*addr);
@@ -1088,6 +1121,72 @@ fn test_or() {
                 g.pc = 0xBFC00004;
                 g.gpr[8] = 0xDEADBEEF;
                 g.gpr[9] = 0xDEADBEEF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_mult() {
+    let tests = vec![
+        TestCase {
+            name: "mult_basic",
+            asm: "mult $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 6);
+                ee.write_register32(10, -7i32 as u32);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                let prod = (6i32 as i64).wrapping_mul(-7i32 as i64);
+                g.pc = 0xBFC00004;
+                g.gpr[8] = (prod as u32 as u64) as u128;
+                g.gpr[9] = 6 as u128;
+                g.gpr[10] = (-7i32 as u32 as u64) as u128;
+                g.lo = (prod as u32 as u64) as u128;
+                g.hi = ((prod >> 32) as u32 as u64) as u128;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mult_zero",
+            asm: "mult $t0, $zero",
+            setup: |ee| {
+                ee.write_register32(10, 1234);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[10] = 1234 as u128;
+                g.lo = 0;
+                g.hi = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "mult_rd_zero",
+            asm: "mult $zero, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 2);
+                ee.write_register32(10, 3);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                let prod = (2i32 as i64).wrapping_mul(3i32 as i64);
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 2 as u128;
+                g.gpr[10] = 3 as u128;
+                g.lo = (prod as u32 as u64) as u128;
+                g.hi = ((prod >> 32) as u32 as u64) as u128;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
