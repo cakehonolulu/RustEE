@@ -1765,3 +1765,73 @@ fn test_lbu() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_sra() {
+    let tests = vec![
+        TestCase {
+            name: "sra_positive",
+            asm: "sra $t0, $t1, 4",
+            setup: |ee| {
+                ee.write_register32(9, 0x7FFF0000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x07FFF000;
+                g.gpr[9] = 0x7FFF0000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sra_negative",
+            asm: "sra $t0, $t1, 4",
+            setup: |ee| {
+                ee.write_register32(9, 0x80000000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFF8000000;
+                g.gpr[9] = 0x80000000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sra_zero_shift",
+            asm: "sra $t0, $t1, 0",
+            setup: |ee| {
+                ee.write_register32(9, 0x12345678);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12345678;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sra_max_shift",
+            asm: "sra $t0, $t1, 31",
+            setup: |ee| {
+                ee.write_register32(9, 0x80000000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0x80000000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

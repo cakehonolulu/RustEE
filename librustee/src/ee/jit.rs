@@ -538,6 +538,9 @@ impl<'a> JIT<'a> {
                     0x00 => {
                         self.sll(builder, opcode, current_pc)
                     }
+                    0x03 => {
+                        self.sra(builder, opcode, current_pc)
+                    }
                     0x08 => {
                         self.jr(builder, opcode, current_pc)
                     }
@@ -1305,6 +1308,25 @@ impl<'a> JIT<'a> {
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn sra(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+        let sa = ((opcode >> 6) & 0x1F) as i64;
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rt_val_32 = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+        let shifted = builder.ins().sshr_imm(rt_val_32, sa);
+        let result = builder.ins().sextend(types::I64, shifted);
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
         None
     }
 }

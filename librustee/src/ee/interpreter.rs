@@ -99,6 +99,9 @@ impl Interpreter {
                     0x00 => {
                         self.sll(opcode);
                     }
+                    0x03 => {
+                        self.sra(opcode);
+                    }
                     0x08 => {
                         self.jr(opcode);
                     }
@@ -663,6 +666,18 @@ impl Interpreter {
 
         let result = loaded_byte as u64;
         self.cpu.write_register64(rt, result);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    pub fn sra(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = (opcode >> 6) & 0x1F;
+
+        let shifted = (self.cpu.read_register32(rt) as i32) >> sa;
+        let result  = (shifted as i64) as u64;
+        self.cpu.write_register64(rd, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
