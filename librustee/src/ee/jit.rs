@@ -603,6 +603,9 @@ impl<'a> JIT<'a> {
                     0x18 => {
                         self.mult(builder, opcode, current_pc)
                     }
+                    0x1A => {
+                        self.div(builder, opcode, current_pc)
+                    }
                     0x1B => {
                         self.divu(builder, opcode, current_pc)
                     }
@@ -1491,6 +1494,34 @@ impl<'a> JIT<'a> {
             cond,
             target: BranchTarget::Const(target),
         })
+    }
+
+    fn div(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let dividend = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
+        let divisor = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+
+        let quot = builder.ins().sdiv(dividend, divisor);
+        let rem = builder.ins().srem(dividend, divisor);
+
+        let quot_128 = builder.ins().sextend(types::I128, quot);
+        let rem_128 = builder.ins().sextend(types::I128, rem);
+
+        let lo_addr = Self::ptr_add(builder, self.lo_ptr as i64, 0, 16);
+        let hi_addr = Self::ptr_add(builder, self.hi_ptr as i64, 0, 16);
+
+        builder.ins().store(MemFlags::new(), quot_128, lo_addr, 0);
+        builder.ins().store(MemFlags::new(), rem_128, hi_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
     }
 }
 

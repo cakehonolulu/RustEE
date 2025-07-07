@@ -120,6 +120,9 @@ impl Interpreter {
                     0x18 => {
                         self.mult(opcode);
                     }
+                    0x1A => {
+                        self.div(opcode);
+                    }
                     0x1B => {
                         self.divu(opcode);
                     }
@@ -773,6 +776,25 @@ impl Interpreter {
 
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
         self.do_branch(branch_pc, taken, target, false);
+    }
+
+    fn div(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+
+        let dividend = self.cpu.read_register32(rs) as i32;
+        let divisor = self.cpu.read_register32(rt) as i32;
+
+        let (quot, rem) = if divisor != 0 {
+            (dividend.wrapping_div(divisor), dividend.wrapping_rem(divisor))
+        } else {
+            (0, 0)
+        };
+
+        self.cpu.write_lo(quot as i32 as i64 as u128);
+        self.cpu.write_hi(rem as i32 as i64 as u128);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 

@@ -2210,3 +2210,121 @@ fn test_bgez() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_div() {
+    let tests = vec![
+        TestCase {
+            name: "div_positive",
+            asm: "div $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 5);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 42;
+                g.gpr[10] = 5;
+                g.lo = 8; // 42 / 5 = 8
+                g.hi = 2; // 42 % 5 = 2
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "div_negative_dividend",
+            asm: "div $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFE); // -2
+                ee.write_register32(10, 3);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 0xFFFFFFFE;
+                g.gpr[10] = 3;
+                g.lo = 0xFFFFFFFF; // -2 / 3 = -1
+                g.hi = 0xFFFFFFFF; // -2 % 3 = -1
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "div_negative_divisor",
+            asm: "div $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 0xFFFFFFFB); // -5
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 42;
+                g.gpr[10] = 0xFFFFFFFB;
+                g.lo = 0xFFFFFFF8; // 42 / -5 = -8
+                g.hi = 2; // 42 % -5 = 2
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "div_both_negative",
+            asm: "div $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFE); // -2
+                ee.write_register32(10, 0xFFFFFFFB); // -5
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 0xFFFFFFFE;
+                g.gpr[10] = 0xFFFFFFFB;
+                g.lo = 0; // -2 / -5 = 0
+                g.hi = 0xFFFFFFFE; // -2 % -5 = -2
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "div_special_case",
+            asm: "div $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0x80000000); // -2147483648
+                ee.write_register32(10, 0xFFFFFFFF); // -1
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 0x80000000;
+                g.gpr[10] = 0xFFFFFFFF;
+                g.lo = 0x80000000; // -2147483648 / -1 = -2147483648
+                g.hi = 0; // -2147483648 % -1 = 0
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "div_by_zero",
+            asm: "div $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[9] = 42;
+                g.gpr[10] = 0;
+                g.lo = 0; // Undefined, return 0
+                g.hi = 0; // Undefined, return 0
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
