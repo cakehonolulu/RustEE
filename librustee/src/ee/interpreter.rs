@@ -186,6 +186,9 @@ impl Interpreter {
             0x14 => {
                 self.beql(opcode);
             }
+            0x15 => {
+                self.bnel(opcode);
+            }
             0x23 => {
                 self.lw(opcode);
             }
@@ -583,6 +586,20 @@ impl Interpreter {
         let result = if rs_val < imm_val { 1u64 } else { 0u64 };
         self.cpu.write_register64(rt, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn bnel(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let rt_val = self.cpu.read_register32(rt) as i32;
+        let taken = rs_val != rt_val;
+        let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
+
+        self.do_branch(branch_pc, taken, target, true);
     }
 }
 

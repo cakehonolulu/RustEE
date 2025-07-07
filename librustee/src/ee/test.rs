@@ -1517,3 +1517,51 @@ fn test_sltiu() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_bnel() {
+    let tests = vec![
+        TestCase {
+            name: "bnel_taken",
+            asm: "
+                bnel $t1, $t2, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 5
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 43);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC0000C;
+                g.gpr[12] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bnel_not_taken",
+            asm: "
+                bnel $t1, $t2, 16
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 7
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 1);
+                ee.write_register32(10, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[12] = 7;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for tc in tests {
+        run_test(&tc);
+    }
+}
