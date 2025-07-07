@@ -85,6 +85,7 @@ pub struct Bus {
 
     // Function pointers for read/write operations
     pub read8: fn(&mut Self, u32) -> u8,
+    pub read16: fn(&mut Self, u32) -> u16,
     pub read32: fn(&mut Self, u32) -> u32,
     pub read64: fn(&mut Self, u32) -> u64,
     pub write8: fn(&mut Self, u32, u8),
@@ -102,6 +103,7 @@ impl Bus {
             sio: SIO::new(),
             mode: mode.clone(),
             read8: Bus::sw_fmem_read8,
+            read16:  Bus::sw_fmem_read16,
             read32:  Bus::sw_fmem_read32,
             read64:  Bus::sw_fmem_read64,
             write8: Bus::sw_fmem_write8,
@@ -121,6 +123,7 @@ impl Bus {
             BusMode::HardwareFastMem => unsafe {
                 hw_fastmem::init_hardware_fastmem(&mut bus);
                 bus.read8 = Bus::hw_read8;
+                bus.read16 = Bus::hw_read16;
                 bus.read32 = Bus::hw_read32;
                 bus.read64 = Bus::hw_read64;
                 bus.write8 = Bus::hw_write8;
@@ -130,6 +133,7 @@ impl Bus {
             BusMode::SoftwareFastMem => {
                 sw_fastmem::init_software_fastmem(&mut bus);
                 bus.read8 = Bus::sw_fmem_read8;
+                bus.read16 = Bus::sw_fmem_read16;
                 bus.read32 = Bus::sw_fmem_read32;
                 bus.read64 = Bus::sw_fmem_read64;
                 bus.write8 = Bus::sw_fmem_write8;
@@ -139,6 +143,7 @@ impl Bus {
             BusMode::Ranged => {
                 ranged::init_ranged_tlb_mappings(&mut bus);
                 bus.read8 = Bus::ranged_read8;
+                bus.read16 = Bus::ranged_read16;
                 bus.read32 = Bus::ranged_read32;
                 bus.read64 = Bus::ranged_read64;
                 bus.write8 = Bus::ranged_write8;
@@ -181,11 +186,28 @@ impl Bus {
             0xB000F140 | 0xB000F150 | 0xB000F180 | 0xB000F1C0 => {
                 self.sio.write(addr, value);
             }
+            0xB000F410 => {
+
+            }
+            0xB000F480 => {
+
+            }
+            0xB000F490 => {
+                
+            }
             0xB000F500 => {
                 debug!("Memory controller (?) 32-bit write");
             }
             _ => {
                 panic!("Invalid IO write32: addr=0x{:08X}, value=0x{:08X}", addr, value);
+            }
+        }
+    }
+
+    pub fn io_read16(&mut self, addr: u32) -> u16 {
+        match addr {
+            _ => {
+                panic!("Invalid IO read16: addr=0x{:08X}", addr);
             }
         }
     }

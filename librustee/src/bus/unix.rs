@@ -2,7 +2,7 @@ use std::io;
 use std::ops::Add;
 use std::os::raw::{c_int, c_void};
 use std::sync::atomic::Ordering;
-use crate::bus::backpatch::io_write8_stub;
+use crate::bus::backpatch::{io_read16_stub, io_write8_stub};
 use crate::bus::unix::libc::ucontext_t;
 use nix::libc;
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
@@ -67,7 +67,7 @@ fn generic_segv_handler<H: ArchHandler>(
         for sym in frame.symbols() {
             if let Some(name) = sym.name() {
                 let name_str = name.to_string();
-                if name_str.contains("__bus_write8") || name_str.contains("__bus_write32") || name_str.contains("__bus_read32") {
+                if name_str.contains("__bus_write8") || name_str.contains("__bus_write32") || name_str.contains("__bus_read16")|| name_str.contains("__bus_read32") {
                     is_jit = true;
                     trace!("  Found JIT access at frame {}", frame_idx);
                 } else if name_str.contains("hw_write8") {
@@ -76,6 +76,9 @@ fn generic_segv_handler<H: ArchHandler>(
                 } else if name_str.contains("hw_write32") {
                     access_type = Some("write32");
                     trace!("  Found write32 access at frame {}", frame_idx);
+                } else if name_str.contains("hw_read16") {
+                    access_type = Some("read16");
+                    trace!("  Found read16 access at frame {}", frame_idx);
                 } else if name_str.contains("hw_read32") {
                     access_type = Some("read32");
                     trace!("  Found read32 access at frame {}", frame_idx);
@@ -128,6 +131,7 @@ fn generic_segv_handler<H: ArchHandler>(
         let stub_addr: u64 = match matched_pattern.unwrap() {
             pattern if pattern.contains("__bus_write8") => io_write8_stub as *const () as u64,
             pattern if pattern.contains("__bus_write32") => io_write32_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read16") => io_read16_stub as *const () as u64,
             pattern if pattern.contains("__bus_read32") => io_read32_stub as *const () as u64,
             other => {
                 error!("Unrecognized helper pattern: {}", other);
@@ -192,6 +196,11 @@ fn generic_segv_handler<H: ArchHandler>(
                 let value = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u32;
                 io_write32_stub(bus_ptr, addr, value);
                 trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+            }
+            "read16" => {
+                let value = io_read16_stub(bus_ptr, addr);
+                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
+                trace!("Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
             }
             "read32" => {
                 let value = io_read32_stub(bus_ptr, addr);

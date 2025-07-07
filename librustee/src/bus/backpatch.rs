@@ -54,6 +54,17 @@ pub extern "C" fn io_write32_stub(bus: *mut Bus, addr: u32, value: u32) {
     }
 }
 
+pub extern "C" fn io_read16_stub(bus: *mut Bus, addr: u32) -> u16 {
+    unsafe {
+        if bus.is_null() {
+            error!("Null bus pointer in io_read16_stub: addr=0x{:08X}", addr);
+            panic!("Null bus pointer in io_read16_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_read16(addr)
+    }
+}
+
 pub extern "C" fn io_read32_stub(bus: *mut Bus, addr: u32) -> u32 {
     unsafe {
         if bus.is_null() {
@@ -130,6 +141,7 @@ pub mod x86_64_impl {
         &[
             "librustee::ee::jit::__bus_write8",
             "librustee::ee::jit::__bus_write32",
+            "librustee::ee::jit::__bus_read16",
             "librustee::ee::jit::__bus_read32",
         ]
     }
