@@ -74,31 +74,31 @@ impl SIO {
         trace!("SIO::write: self={:p}, address=0x{:08X}, value=0x{:08X}", self, address, value.to_u32());
         match address {
             0xB000F100 => {
-                debug!("LCR Write: 0x{:08X}", value.to_u32());
+                trace!("LCR Write: 0x{:08X}", value.to_u32());
                 self.registers.lcr = value.to_u32();
             }
             0xB000F110 => {
-                debug!("LSR Write: 0x{:08X}", value.to_u32());
+                trace!("LSR Write: 0x{:08X}", value.to_u32());
                 self.registers.lsr = value.to_u32();
             }
             0xB000F120 => {
-                debug!("IER Write: 0x{:08X}", value.to_u32());
+                trace!("IER Write: 0x{:08X}", value.to_u32());
                 self.registers.ier = value.to_u32();
             }
             0xB000F130 => {
-                debug!("ISR Write: 0x{:08X}", value.to_u32());
+                trace!("ISR Write: 0x{:08X}", value.to_u32());
                 self.registers.isr = value.to_u32();
             }
             0xB000F140 => {
-                debug!("FCR Write: 0x{:08X}", value.to_u32());
+                trace!("FCR Write: 0x{:08X}", value.to_u32());
                 self.registers.fcr = value.to_u32();
             }
             0xB000F150 => {
-                debug!("BGR Write: 0x{:08X}", value.to_u32());
+                trace!("BGR Write: 0x{:08X}", value.to_u32());
                 self.registers.bgr = value.to_u32();
             }
             0xB000F180 => {
-                debug!("TXFIFO Write: 0x{:08X}", value.to_u32());
+                trace!("TXFIFO Write: 0x{:08X}", value.to_u32());
                 self.registers.txfifo = value.to_u32();
                 if let Some(transmitted_char) = value.to_char() {
                     trace!("Pushing char '{}' to ee_tx_buffer", transmitted_char);
@@ -113,7 +113,7 @@ impl SIO {
                 }
             }
             0xB000F1C0 => {
-                debug!("RXFIFO Write: 0x{:08X}", value.to_u32());
+                trace!("RXFIFO Write: 0x{:08X}", value.to_u32());
                 self.registers.rxfifo = value.to_u32();
             }
             _ => {
@@ -126,35 +126,35 @@ impl SIO {
         trace!("SIO::read: self={:p}, address=0x{:08X}", self, address);
         let value = match address {
             0xB000F100 => {
-                debug!("LCR Read: 0x{:08X}", self.registers.lcr);
+                trace!("LCR Read: 0x{:08X}", self.registers.lcr);
                 self.registers.lcr
             }
             0xB000F110 => {
-                debug!("LSR Read: 0x{:08X}", self.registers.lsr);
+                trace!("LSR Read: 0x{:08X}", self.registers.lsr);
                 self.registers.lsr
             }
             0xB000F120 => {
-                debug!("IER Read: 0x{:08X}", self.registers.ier);
+                trace!("IER Read: 0x{:08X}", self.registers.ier);
                 self.registers.ier
             }
             0xB000F130 => {
-                debug!("ISR Read: 0x{:08X}", self.registers.isr);
+                trace!("ISR Read: 0x{:08X}", self.registers.isr);
                 self.registers.isr
             }
             0xB000F140 => {
-                debug!("FCR Read: 0x{:08X}", self.registers.fcr);
+                trace!("FCR Read: 0x{:08X}", self.registers.fcr);
                 self.registers.fcr
             }
             0xB000F150 => {
-                debug!("BGR Read: 0x{:08X}", self.registers.bgr);
+                trace!("BGR Read: 0x{:08X}", self.registers.bgr);
                 self.registers.bgr
             }
             0xB000F180 => {
-                debug!("TXFIFO Read: 0x{:08X}", self.registers.txfifo);
+                trace!("TXFIFO Read: 0x{:08X}", self.registers.txfifo);
                 self.registers.txfifo
             }
             0xB000F1C0 => {
-                debug!("RXFIFO Read: 0x{:08X}", self.registers.rxfifo);
+                trace!("RXFIFO Read: 0x{:08X}", self.registers.rxfifo);
                 self.registers.rxfifo
             }
             _ => {

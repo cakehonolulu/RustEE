@@ -123,6 +123,9 @@ impl Interpreter {
                     0x1B => {
                         self.divu(opcode);
                     }
+                    0x21 => {
+                        self.addu(opcode);
+                    }
                     0x25 => {
                         self.or(opcode);
                     }
@@ -741,6 +744,19 @@ impl Interpreter {
             let mut bus = self.cpu.bus.lock().unwrap();
             (bus.write8)(&mut *bus, address, rt_val as u8);
         }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn addu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let rt_val = self.cpu.read_register32(rt);
+        let result = rs_val.wrapping_add(rt_val);
+
+        self.cpu.write_register32(rd, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
