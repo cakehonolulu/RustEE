@@ -79,6 +79,17 @@ impl Bus {
         }
     }
 
+    pub fn sw_fmem_read64(&mut self, va: u32) -> u64 {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_read[page];
+        if host != 0 {
+            unsafe { (host as *const u8).add(offset).cast::<u64>().read_unaligned() }
+        } else {
+            self.retry_read(va)
+        }
+    }
+
     pub fn sw_fmem_write8(&mut self, va: u32, value: u8) {
         let page = (va as usize) >> PAGE_BITS;
         let offset = (va as usize) & (PAGE_SIZE - 1);

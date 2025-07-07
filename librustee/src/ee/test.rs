@@ -1835,3 +1835,77 @@ fn test_sra() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_ld() {
+    let tests = vec![
+        TestCase {
+            name: "ld_basic",
+            asm: "ld $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write64(0x1000, 0x1122334455667788);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1122334455667788;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "ld_zero",
+            asm: "ld $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write64(0x1000, 0x0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "ld_max",
+            asm: "ld $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1008);
+                ee.write64(0x1008, 0xFFFFFFFFFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0x1008;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "ld_offset",
+            asm: "ld $t0, 8($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x2000);
+                ee.write64(0x2008, 0xAABBCCDDEEFF0011);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xAABBCCDDEEFF0011;
+                g.gpr[9] = 0x2000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

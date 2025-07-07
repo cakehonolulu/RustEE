@@ -98,6 +98,28 @@ impl Bus {
         }
     }
 
+    pub fn ranged_read64(&mut self, va: u32) -> u64 {
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
+            }
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u64;
+            unsafe { ptr.read_unaligned() }
+        } else if map::IO.contains(pa).is_some() {
+            todo!("IO Read 64");
+        } else if let Some(offset) = map::BIOS.contains(pa) {
+            let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u64;
+            unsafe { ptr.read_unaligned() }
+        } else {
+            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+        }
+    }
+
     pub fn ranged_write8(&mut self, va: u32, val: u8) {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();

@@ -35,8 +35,9 @@ pub struct JIT<'a> {
     break_func: FuncId,
     bus_write32_func: FuncId,
     bus_write64_func: FuncId,
-    bus_read32_func: FuncId,
     bus_read8_func: FuncId,
+    bus_read32_func: FuncId,
+    bus_read64_func: FuncId,
     tlbwi_func: FuncId,
     read_cop0_func: FuncId,
     write_cop0_func: FuncId,
@@ -112,6 +113,13 @@ pub extern "C" fn __bus_read32(bus_ptr: *mut Bus, addr: u32) -> u32 {
     unsafe {
         let bus = &mut *bus_ptr;
         (bus.read32)(bus, addr)
+    }
+}
+
+pub extern "C" fn __bus_read64(bus_ptr: *mut Bus, addr: u32) -> u64 {
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.read64)(bus, addr)
     }
 }
 
@@ -201,6 +209,11 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
+            "__bus_read64",
+            __bus_read64 as *const u8,
+        );
+
+        builder.symbol(
             "__bus_tlbwi",
             __bus_tlbwi as *const u8,
         );
@@ -247,6 +260,14 @@ impl<'a> JIT<'a> {
         let bus_read32_func = module
             .declare_function("__bus_read32", Linkage::Import, &load32_sig)
             .expect("Failed to declare __bus_read32");
+
+        let mut load64_sig = module.make_signature();
+        load64_sig.params.push(AbiParam::new(types::I64));
+        load64_sig.params.push(AbiParam::new(types::I32));
+        load64_sig.returns.push(AbiParam::new(types::I64));
+        let bus_read64_func = module
+            .declare_function("__bus_read64", Linkage::Import, &load64_sig)
+            .expect("Failed to declare __bus_read64");
 
         let mut tlbwi_sig = module.make_signature();
         // Parameter: i64 (raw *mut Bus)
@@ -295,6 +316,7 @@ impl<'a> JIT<'a> {
             bus_write64_func,
             bus_read8_func,
             bus_read32_func,
+            bus_read64_func,
             tlbwi_func,
             read_cop0_func,
             write_cop0_func
@@ -639,6 +661,9 @@ impl<'a> JIT<'a> {
             }
             0x39 => {
                 self.swc1(builder, opcode, current_pc)
+            }
+            0x37 => {
+                self.ld(builder, opcode, current_pc)
             }
             0x3F => {
                 self.sd(builder, opcode, current_pc)
@@ -1327,6 +1352,32 @@ impl<'a> JIT<'a> {
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
 
+        None
+    }
+
+    fn ld(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let base = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as i16) as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val = Self::load32(builder, base_addr);
+
+        let addr = builder.ins().iadd_imm(base_val, imm);
+
+        let bus_lock = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+
+        let bus_read_callee = self.module.declare_func_in_func(self.bus_read64_func, builder.func);
+        let call_inst = builder.ins().call(bus_read_callee, &[bus_value, addr]);
+        let load_val = builder.inst_results(call_inst)[0];
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        builder.ins().store(MemFlags::new(), load_val, rt_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
         None
     }
 }

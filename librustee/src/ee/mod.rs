@@ -65,17 +65,14 @@ impl EE {
         self.fpu_registers[index]
     }
 
-    // Read an FPU register as a floating-point value (f32)
     pub fn read_fpu_register_as_f32(&self, index: usize) -> f32 {
         f32::from_bits(self.fpu_registers[index])
     }
 
-    // Write an FPU register using a 32-bit unsigned integer
     pub fn write_fpu_register_from_u32(&mut self, index: usize, value: u32) {
         self.fpu_registers[index] = value;
     }
 
-    // Write an FPU register using a floating-point value (f32)
     pub fn write_fpu_register_from_f32(&mut self, index: usize, value: f32) {
         self.fpu_registers[index] = value.to_bits();
     }
@@ -146,6 +143,11 @@ impl CPU for EE {
         (bus.write8)(&mut *bus, addr, value)
     }
 
+    fn write64(&mut self, addr: u32, value: u64) {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.write64)(&mut *bus, addr, value)
+    }
+
     fn read8(&mut self, addr: u32) -> u8 {
         let mut bus = self.bus.lock().unwrap();
         (bus.read8)(&mut *bus, addr)
@@ -154,6 +156,11 @@ impl CPU for EE {
     fn read32(&mut self, addr: u32) -> u32 {
         let mut bus = self.bus.lock().unwrap();
         (bus.read32)(&mut *bus, addr)
+    }
+
+    fn read64(&mut self, addr: u32) -> u64 {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.read64)(&mut *bus, addr)
     }
 
     fn read32_raw(&mut self, addr: u32) -> u32 {

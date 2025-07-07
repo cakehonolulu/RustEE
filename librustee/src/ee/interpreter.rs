@@ -207,6 +207,9 @@ impl Interpreter {
             0x39 => {
                 self.swc1(opcode);
             }
+            0x37 => {
+                self.ld(opcode);
+            }
             0x3F => {
                 self.sd(opcode);
             }
@@ -679,6 +682,23 @@ impl Interpreter {
         let result  = (shifted as i64) as u64;
         self.cpu.write_register64(rd, result);
 
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn ld(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let base = (self.cpu.read_register(rs) & 0xFFFF_FFFF) as u32;
+        let addr = base.wrapping_add(imm as u32);
+
+        let loaded_value = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read64)(bus.deref_mut(), addr)
+        };
+
+        self.cpu.write_register64(rt, loaded_value);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
