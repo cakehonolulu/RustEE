@@ -813,20 +813,30 @@ impl<'a> JIT<'a> {
 
         let gpr_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
 
-        // Prepare arguments
         let cpu_ptr = self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
         let rd_arg = builder.ins().iconst(types::I32, rd);
 
-        // Call __read_cop0
-        let callee = self.module.declare_func_in_func(self.read_cop0_func, builder.func);
-        let call = builder.ins().call(callee, &[cpu_arg, rd_arg]);
-        let cop0_val = builder.inst_results(call)[0];
+        let read_cop0 = self.module.declare_func_in_func(self.read_cop0_func, builder.func);
+        let write_cop0 = self.module.declare_func_in_func(self.write_cop0_func, builder.func);
 
+        let call_rd = builder.ins().call(read_cop0, &[cpu_arg, rd_arg]);
+        let cop0_val = builder.inst_results(call_rd)[0];
         builder.ins().store(MemFlags::new(), cop0_val, gpr_addr, 0);
+
+        let idx9 = builder.ins().iconst(types::I32, 9);
+        let call_read9 = builder.ins().call(read_cop0, &[cpu_arg, idx9]);
+        let old9 = builder.inst_results(call_read9)[0];
+
+        let cycles_val = builder.ins().iconst(types::I32, self.cycles as i64);
+
+        let sum = builder.ins().iadd(old9, cycles_val);
+
+        let _ = builder.ins().call(write_cop0, &[cpu_arg, idx9, sum]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+
         None
     }
 
