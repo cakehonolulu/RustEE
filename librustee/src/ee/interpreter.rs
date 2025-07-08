@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 use crate::Bus;
-use tracing::error;
+use tracing::{debug, error};
 use crate::bus::tlb::TlbEntry;
 use crate::cpu::CPU;
 
@@ -979,6 +979,12 @@ impl Interpreter {
 
 impl EmulationBackend<EE> for Interpreter {
     fn step(&mut self) {
+        if self.cpu.has_breakpoint(self.cpu.pc) {
+            debug!("Breakpoint hit at 0x{:08X}", self.cpu.pc);
+            self.cpu.remove_breakpoint(self.cpu.pc);
+            return;
+        }
+
         let opcode = self.cpu.fetch();
 
         self.decode_execute(opcode);
@@ -989,6 +995,12 @@ impl EmulationBackend<EE> for Interpreter {
     fn run(&mut self) {
         loop {
             self.step();
+
+            if self.cpu.has_breakpoint(self.cpu.pc) {
+                debug!("Breakpoint hit at 0x{:08X}", self.cpu.pc);
+                self.cpu.remove_breakpoint(self.cpu.pc);
+                break;
+            }
         }
     }
 
