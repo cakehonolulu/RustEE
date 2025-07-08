@@ -250,6 +250,15 @@ impl Bus {
     }
 
     #[inline]
+    pub fn hw_write16(&mut self, addr: u32, val: u16) {
+        assert!((addr as usize) + 4 <= self.hw_size);
+        unsafe {
+            let host_ptr = self.hw_base.add(addr as usize) as *mut u16;
+            *host_ptr = val;
+        }
+    }
+
+    #[inline]
     pub fn hw_write32(&mut self, addr: u32, val: u32) {
         assert!((addr as usize) + 4 <= self.hw_size);
         unsafe {

@@ -89,6 +89,7 @@ pub struct Bus {
     pub read32: fn(&mut Self, u32) -> u32,
     pub read64: fn(&mut Self, u32) -> u64,
     pub write8: fn(&mut Self, u32, u8),
+    pub write16: fn(&mut Self, u32, u16),
     pub write32: fn(&mut Self, u32, u32),
     pub write64: fn(&mut Self, u32, u64),
 }
@@ -107,6 +108,7 @@ impl Bus {
             read32:  Bus::sw_fmem_read32,
             read64:  Bus::sw_fmem_read64,
             write8: Bus::sw_fmem_write8,
+            write16: Bus::sw_fmem_write16,
             write32: Bus::sw_fmem_write32,
             write64: Bus::sw_fmem_write64,
             hw_base: null_mut(),
@@ -127,6 +129,7 @@ impl Bus {
                 bus.read32 = Bus::hw_read32;
                 bus.read64 = Bus::hw_read64;
                 bus.write8 = Bus::hw_write8;
+                bus.write16 = Bus::hw_write16;
                 bus.write32 = Bus::hw_write32;
                 bus.write64 = Bus::hw_write64;
             },
@@ -137,6 +140,7 @@ impl Bus {
                 bus.read32 = Bus::sw_fmem_read32;
                 bus.read64 = Bus::sw_fmem_read64;
                 bus.write8 = Bus::sw_fmem_write8;
+                bus.write16 = Bus::sw_fmem_write16;
                 bus.write32 = Bus::sw_fmem_write32;
                 bus.write64 = Bus::sw_fmem_write64;
             },
@@ -147,6 +151,7 @@ impl Bus {
                 bus.read32 = Bus::ranged_read32;
                 bus.read64 = Bus::ranged_read64;
                 bus.write8 = Bus::ranged_write8;
+                bus.write16 = Bus::ranged_write16;
                 bus.write32 = Bus::ranged_write32;
                 bus.write64 = Bus::ranged_write64;
             },

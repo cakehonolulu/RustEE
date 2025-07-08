@@ -147,6 +147,11 @@ impl CPU for EE {
         (bus.write8)(&mut *bus, addr, value)
     }
 
+    fn write16(&mut self, addr: u32, value: u16) {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.write16)(&mut *bus, addr, value)
+    }
+
     fn write32(&mut self, addr: u32, value: u32) {
         let mut bus = self.bus.lock().unwrap();
         (bus.write32)(&mut *bus, addr, value)
@@ -160,6 +165,11 @@ impl CPU for EE {
     fn read8(&mut self, addr: u32) -> u8 {
         let mut bus = self.bus.lock().unwrap();
         (bus.read8)(&mut *bus, addr)
+    }
+
+    fn read16(&mut self, addr: u32) -> u16 {
+        let mut bus = self.bus.lock().unwrap();
+        (bus.read16)(&mut *bus, addr)
     }
 
     fn read32(&mut self, addr: u32) -> u32 {
@@ -176,7 +186,7 @@ impl CPU for EE {
         let bus = self.bus.lock().unwrap();
         let pa = match bus.tlb.borrow_mut().translate_address(
             addr,
-            AccessType::Read,
+            AccessType::ReadWord,
             bus.operating_mode,
             bus.read_cop0_asid(),
         ) {

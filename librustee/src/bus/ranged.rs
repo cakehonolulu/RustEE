@@ -57,7 +57,7 @@ impl Bus {
     pub fn ranged_read8(&mut self, va: u32) -> u8 {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::ReadByte, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
             }
@@ -79,7 +79,7 @@ impl Bus {
     pub fn ranged_read16(&mut self, va: u32) -> u16 {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::ReadHalfword, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
             }
@@ -101,7 +101,7 @@ impl Bus {
     pub fn ranged_read32(&mut self, va: u32) -> u32 {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::ReadWord, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
             }
@@ -123,7 +123,7 @@ impl Bus {
     pub fn ranged_read64(&mut self, va: u32) -> u64 {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::ReadDoubleword, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
             }
@@ -145,7 +145,7 @@ impl Bus {
     pub fn ranged_write8(&mut self, va: u32, val: u8) {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::WriteByte, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
             }
@@ -163,10 +163,31 @@ impl Bus {
         }
     }
 
+    pub fn ranged_write16(&mut self, va: u32, val: u16) {
+        let pa = {
+            let mut tlb = self.tlb.borrow_mut();
+            match tlb.translate_address(va, AccessType::WriteHalfword, self.operating_mode, self.read_cop0_asid()) {
+                Ok(pa) => pa,
+                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
+            }
+        };
+
+        if let Some(offset) = map::RAM.contains(pa) {
+            let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u16;
+            unsafe {
+                ptr.write_unaligned(val);
+            }
+        } else if map::IO.contains(pa).is_some() {
+            todo!("IO Write 16");
+        } else {
+            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+        }
+    }
+
     pub fn ranged_write32(&mut self, va: u32, val: u32) {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::WriteWord, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
             }
@@ -187,7 +208,7 @@ impl Bus {
     pub fn ranged_write64(&mut self, va: u32, val: u64) {
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Write, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, AccessType::WriteDoubleword, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
             }

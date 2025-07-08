@@ -112,6 +112,17 @@ impl Bus {
         }
     }
 
+    pub fn sw_fmem_write16(&mut self, va: u32, value: u16) {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_write[page];
+        if host != 0 {
+            unsafe { (host as *mut u8).add(offset).cast::<u16>().write_unaligned(value) }
+        } else {
+            self.retry_write(va, value);
+        }
+    }
+
     pub fn sw_fmem_write32(&mut self, va: u32, value: u32) {
         let page = (va as usize) >> PAGE_BITS;
         let offset = (va as usize) & (PAGE_SIZE - 1);
@@ -139,9 +150,17 @@ impl Bus {
         V: TryFrom<u128>,
         V::Error: std::fmt::Debug,
     {
+        let access_type = match std::mem::size_of::<V>() {
+            1 => AccessType::ReadByte,
+            2 => AccessType::ReadHalfword,
+            4 => AccessType::ReadWord,
+            8 => AccessType::ReadDoubleword,
+            16 => AccessType::ReadDoubleword,
+            _ => unreachable!("Unsupported read size"),
+        };
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
             }
@@ -215,9 +234,17 @@ impl Bus {
         V: TryInto<u128>,
         V::Error: std::fmt::Debug,
     {
+        let access_type = match std::mem::size_of::<V>() {
+            1 => AccessType::WriteByte,
+            2 => AccessType::WriteHalfword,
+            4 => AccessType::WriteWord,
+            8 => AccessType::WriteDoubleword,
+            16 => AccessType::WriteDoubleword,
+            _ => unreachable!("Unsupported write size"),
+        };
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, AccessType::Read, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid()) {
                 Ok(pa) => pa,
                 Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
             }
@@ -232,7 +259,7 @@ impl Bus {
         if let Some(roff) = map::RAM.contains(pa) {
             let host = self.ram.as_ptr() as usize + (roff as usize);
             unsafe {
-                (self.page_read .as_ptr() as *mut usize).add(vpn).write(host);
+                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(host);
                 let ptr = (host as *mut u8).add(offset);
                 match size {
@@ -248,7 +275,7 @@ impl Bus {
         } else if let Some(boff) = map::BIOS.contains(pa) {
             let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
             unsafe {
-                (self.page_read .as_ptr() as *mut usize).add(vpn).write(host);
+                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
                 (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
             }
             panic!("SW-FMEM write to read-only BIOS VA=0x{:08X}", va);

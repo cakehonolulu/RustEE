@@ -28,8 +28,14 @@ pub enum OperatingMode {
 
 #[derive(Clone, Copy, Debug)]
 pub enum AccessType {
-    Read,
-    Write,
+    ReadByte,
+    ReadHalfword,
+    ReadWord,
+    ReadDoubleword,
+    WriteByte,
+    WriteHalfword,
+    WriteWord,
+    WriteDoubleword,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,7 +97,13 @@ impl Tlb {
         current_asid: u8,
     ) -> Result<u32, Exception> {
         // Check address alignment
-        if va & 0x3 != 0 {
+        let alignment = match access_type {
+            AccessType::ReadByte | AccessType::WriteByte => 1, // No alignment required
+            AccessType::ReadHalfword | AccessType::WriteHalfword => 2, // Halfword alignment
+            AccessType::ReadWord | AccessType::WriteWord => 4, // Word alignment
+            AccessType::ReadDoubleword | AccessType::WriteDoubleword => 8, // Doubleword alignment
+        };
+        if va & (alignment - 1) != 0 {
             self.bad_vaddr = va;
             return Err(Exception::AddressError);
         }
@@ -161,7 +173,7 @@ impl Tlb {
                 return Err(Exception::TlbInvalid);
             }
 
-            if let AccessType::Write = access_type {
+            if let AccessType::WriteByte | AccessType::WriteHalfword | AccessType::WriteWord | AccessType::WriteDoubleword = access_type {
                 if !d {
                     self.bad_vaddr = va;
                     self.context = (va & 0xFFFF_E000) | (entry_index as u32);
