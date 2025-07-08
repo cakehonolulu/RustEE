@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicBool;
 
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
-use tracing::{error, trace};
+use tracing::{error, debug, trace};
 
 use super::{Bus};
 
@@ -38,7 +38,6 @@ pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
             panic!("Null bus pointer in io_write8_stub");
         }
         let bus = &mut *bus;
-        trace!("io_write8_stub: bus={:p}, addr=0x{:08X}, value=0x{:02X}", bus, addr, value);
         bus.io_write8(addr, value);
     }
 }
@@ -188,6 +187,7 @@ impl ArchHandler for CurrentArchHandler {
 
         if let Ok(insns) = cs.disasm_all(buf, fault_addr as u64) {
             if let Some(insn) = insns.iter().next() {
+
                 trace!(
                     "Current instruction at 0x{:x}: {} {}",
                     fault_addr,
