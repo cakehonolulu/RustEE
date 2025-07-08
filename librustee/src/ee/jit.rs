@@ -10,7 +10,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
 use std::num::{NonZero, NonZeroU128};
 use std::sync::{Arc, Mutex};
-use tracing::error;
+use tracing::{debug, error};
 
 #[derive(Clone)]
 pub struct Block {
@@ -495,7 +495,9 @@ impl<'a> JIT<'a> {
 
         loop {
             if self.cpu.has_breakpoint(current_pc) {
+                debug!("Breakpoint hit at 0x{:08X}", current_pc);
                 breakpoint = true;
+                self.cpu.remove_breakpoint(current_pc);
                 break;
             }
 
