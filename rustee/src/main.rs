@@ -52,6 +52,7 @@ fn main() {
                 .add_directive("wgpu_hal::vulkan::adapter=error".parse().unwrap())
                 .add_directive("naga::front=error".parse().unwrap())
                 .add_directive("wgpu_hal::gles::egl=error".parse().unwrap())
+                .add_directive("sctk_adwaita::config=off".parse().unwrap())
                 .add_directive("sctk=error".parse().unwrap())
                 .add_directive("cranelift_jit=warn".parse().unwrap()),
         )
