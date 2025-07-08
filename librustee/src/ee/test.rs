@@ -2395,3 +2395,719 @@ fn test_mfhi() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_sltu() {
+    let tests = vec![
+        TestCase {
+            name: "sltu_less",
+            asm: "sltu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 5);
+                ee.write_register32(10, 10);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 5;
+                g.gpr[10] = 10;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sltu_equal",
+            asm: "sltu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 42;
+                g.gpr[10] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sltu_greater",
+            asm: "sltu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 50);
+                ee.write_register32(10, 20);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 50;
+                g.gpr[10] = 20;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sltu_large_values",
+            asm: "sltu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 0x8000000000000000);
+                ee.write_register64(10, 0xFFFFFFFFFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 0x8000000000000000;
+                g.gpr[10] = 0xFFFFFFFFFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sltu_zero",
+            asm: "sltu $t0, $zero, $t2",
+            setup: |ee| {
+                ee.write_register32(10, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[10] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_blez() {
+    let tests = vec![
+        TestCase {
+            name: "blez_zero",
+            asm: "
+                blez $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "blez_negative",
+            asm: "
+                blez $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "blez_positive",
+            asm: "
+                blez $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "blez_large_negative",
+            asm: "
+                blez $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register64(9, 0xFFFFFFFFFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 0xFFFFFFFFFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_subu() {
+    let tests = vec![
+        TestCase {
+            name: "subu_basic",
+            asm: "subu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 50);
+                ee.write_register32(10, 8);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 42;
+                g.gpr[9] = 50;
+                g.gpr[10] = 8;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "subu_zero",
+            asm: "subu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+                ee.write_register32(10, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0;
+                g.gpr[10] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "subu_overflow",
+            asm: "subu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+                ee.write_register32(10, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0;
+                g.gpr[10] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "subu_negative_result",
+            asm: "subu $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 10);
+                ee.write_register32(10, 20);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFF6;
+                g.gpr[9] = 10;
+                g.gpr[10] = 20;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_bgtz() {
+    let tests = vec![
+        TestCase {
+            name: "bgtz_positive",
+            asm: "
+                bgtz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgtz_zero",
+            asm: "
+                bgtz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgtz_negative",
+            asm: "
+                bgtz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgtz_large_positive",
+            asm: "
+                bgtz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register64(9, 0x7FFFFFFFFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 0x7FFFFFFFFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_movn() {
+    let tests = vec![
+        TestCase {
+            name: "movn_not_zero",
+            asm: "movn $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 42;
+                g.gpr[9] = 42;
+                g.gpr[10] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "movn_zero",
+            asm: "movn $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+                ee.write_register32(10, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 42;
+                g.gpr[10] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "movn_negative",
+            asm: "movn $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+                ee.write_register32(10, 0xFFFFFFFE);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFF;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.gpr[10] = 0xFFFFFFFE;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "movn_large_value",
+            asm: "movn $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 0xFFFFFFFFFFFFFFFF);
+                ee.write_register32(10, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[10] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_slt() {
+    let tests = vec![
+        TestCase {
+            name: "slt_less",
+            asm: "slt $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 0xFFFFFFFF_FFFFFFFB);
+                ee.write_register64(10, 10);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 0xFFFFFFFF_FFFFFFFB;
+                g.gpr[10] = 10;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slt_equal",
+            asm: "slt $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 42);
+                ee.write_register64(10, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 42;
+                g.gpr[10] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slt_greater",
+            asm: "slt $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 50);
+                ee.write_register64(10, 20);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 50;
+                g.gpr[10] = 20;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slt_negative_both",
+            asm: "slt $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 0xFFFFFFFF_FFFFFFFE);
+                ee.write_register64(10, 0xFFFFFFFF_FFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 0xFFFFFFFF_FFFFFFFE;
+                g.gpr[10] = 0xFFFFFFFF_FFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "slt_zero",
+            asm: "slt $t0, $zero, $t2",
+            setup: |ee| {
+                ee.write_register64(10, 1);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[10] = 1;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_and() {
+    let tests = vec![
+        TestCase {
+            name: "and_basic",
+            asm: "and $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register32(9, 0xF0F0F0F0);
+                ee.write_register32(10, 0x0F0F0F0F);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0xF0F0F0F0;
+                g.gpr[10] = 0x0F0F0F0F;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "and_same",
+            asm: "and $t0, $t1, $t1",
+            setup: |ee| {
+                ee.write_register32(9, 0x12345678);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12345678;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "and_zero",
+            asm: "and $t0, $t1, $zero",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "and_max",
+            asm: "and $t0, $t1, $t2",
+            setup: |ee| {
+                ee.write_register64(9, 0xFFFFFFFFFFFFFFFF);
+                ee.write_register64(10, 0xFFFFFFFFFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[9] = 0xFFFFFFFFFFFFFFFF;
+                g.gpr[10] = 0xFFFFFFFFFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_srl() {
+    let tests = vec![
+        TestCase {
+            name: "srl_basic",
+            asm: "srl $t0, $t1, 4",
+            setup: |ee| {
+                ee.write_register32(9, 0xF0F0F0F0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x0F0F0F0F;
+                g.gpr[9] = 0xF0F0F0F0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "srl_zero",
+            asm: "srl $t0, $t1, 0",
+            setup: |ee| {
+                ee.write_register32(9, 0x12345678);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x12345678;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "srl_max_shift",
+            asm: "srl $t0, $t1, 31",
+            setup: |ee| {
+                ee.write_register32(9, 0x80000000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 1;
+                g.gpr[9] = 0x80000000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "srl_negative",
+            asm: "srl $t0, $t1, 1",
+            setup: |ee| {
+                ee.write_register32(9, 0x80000000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x40000000;
+                g.gpr[9] = 0x80000000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_lhu() {
+    let tests = vec![
+        TestCase {
+            name: "lhu_basic",
+            asm: "lhu $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write16(0x1000, 0x1234);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0x1234;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lhu_zero",
+            asm: "lhu $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write16(0x1000, 0x0000);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lhu_max",
+            asm: "lhu $t0, 0($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1004);
+                ee.write16(0x1004, 0xFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xFFFF;
+                g.gpr[9] = 0x1004;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "lhu_offset",
+            asm: "lhu $t0, 2($t1)",
+            setup: |ee| {
+                ee.write_register32(9, 0x1000);
+                ee.write16(0x1002, 0xABCD);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00004;
+                g.gpr[8] = 0xABCD;
+                g.gpr[9] = 0x1000;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
