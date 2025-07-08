@@ -85,6 +85,8 @@ pub mod x86_64_impl {
     pub enum X86Register {
         Rax,
         Rcx,
+        Rsi,
+        Rdi,
         R8,
         R9,
         R10,
@@ -99,13 +101,14 @@ pub mod x86_64_impl {
         let mut buf = match reg {
             X86Register::Rax => vec![0x48, 0xB8], // movabs rax, imm64
             X86Register::Rcx => vec![0x48, 0xB9], // movabs rcx, imm64
+            X86Register::Rsi => vec![0x48, 0xBE], // movabs rsi, imm64
+            X86Register::Rdi => vec![0x48, 0xBF], // movabs rdi, imm64
             X86Register::R8 => vec![0x49, 0xB8],  // movabs r8, imm64
             X86Register::R9 => vec![0x49, 0xB9],  // movabs r9, imm64
             X86Register::R10 => vec![0x49, 0xBA], // movabs r10, imm64
             X86Register::R11 => vec![0x49, 0xBB], // movabs r11, imm64
             _ => {
-                error!("Unsupported register for stub call: {}", register_name_impl(reg));
-                return None;
+                panic!("Unsupported register for stub call: {}", register_name_impl(reg))
             }
         };
 
@@ -117,11 +120,13 @@ pub mod x86_64_impl {
         match operand.trim() {
             "rax" => Some(X86Register::Rax),
             "rcx" => Some(X86Register::Rcx),
+            "rsi" => Some(X86Register::Rsi),
+            "rdi" => Some(X86Register::Rdi),
             "r8" => Some(X86Register::R8),
             "r9" => Some(X86Register::R9),
             "r10" => Some(X86Register::R10),
             "r11" => Some(X86Register::R11),
-            _ => None,
+            _ => panic!("Unsupported register: {}", operand),
         }
     }
 
@@ -129,6 +134,8 @@ pub mod x86_64_impl {
         match reg {
             X86Register::Rax => "rax",
             X86Register::Rcx => "rcx",
+            X86Register::Rsi => "rsi",
+            X86Register::Rdi => "rdi",
             X86Register::R8 => "r8",
             X86Register::R9 => "r9",
             X86Register::R10 => "r10",

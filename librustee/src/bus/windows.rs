@@ -15,7 +15,7 @@ use windows_sys::Win32::System::{
     };
 
 use backtrace::resolve;
-
+use crate::bus::backpatch::io_write8_stub;
 use super::{Bus, HW_BASE, HW_LENGTH};
 
 #[cfg(target_arch = "x86_64")]
@@ -79,6 +79,8 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         guest_addr, fault_addr
     );
 
+    trace!("Faulting IP is 0x{:x}", (*ctx).Rip);
+
     let raw_frames = capture_raw_backtrace(0, 20);
     let mut is_jit = false;
     let mut access_type = None;
@@ -95,10 +97,10 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                     trace!("  Found JIT access");
                 } else if demangled.contains("hw_write32") {
                     access_type = Some("write32");
-                    trace!("  Found write access");
+                    trace!("  Found write32 access");
                 } else if demangled.contains("hw_read32") {
                     access_type = Some("read32");
-                    trace!("  Found read access");
+                    trace!("  Found read32 access");
                 } else if demangled.contains("hw_write8") {
                     access_type = Some("write8");
                     trace!("  Found write8 access");
@@ -161,37 +163,74 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
             let ip = raw_frames[target_frame_index] as usize;
             trace!("Processing frame at index {} with IP 0x{:x}", target_frame_index, ip);
 
-            let scan_back = 64usize;
-            let adjusted_ip = ip.add(16);
-            let scan_start = adjusted_ip.saturating_sub(scan_back);
-            let buf: &[u8] = std::slice::from_raw_parts(scan_start as *const u8, scan_back);
-            trace!("Disassembling buffer: start=0x{:x}, size={}", scan_start, scan_back);
+            // load a 14‑byte window ending at IP
+            let buf_size = 14;
+            let buf_start = ip.saturating_sub(buf_size);
+            let buf: [u8; 14] = unsafe { std::ptr::read(buf_start as *const [u8; 14]) };
 
-            if let Ok(insns) = cs.disasm_all(buf, scan_start as u64) {
-                let insn_vec = insns.iter().collect::<Vec<_>>();
-                for i in 0..insn_vec.len().saturating_sub(1) {
-                    let insn = &insn_vec[i];
-                    let mnem = insn.mnemonic().unwrap_or("");
-                    if mnem == "movabs" {
-                        let opstr = insn.op_str().unwrap_or("");
-                        let ops: Vec<&str> = opstr.split(',').map(|s| s.trim()).collect();
-                        if ops.len() >= 2 {
-                            let mov_reg = ops[0];
-                            let next_insn = &insn_vec[i + 1];
-                            let next_mnem = next_insn.mnemonic().unwrap_or("");
-                            if next_mnem == "call" && next_insn.op_str().unwrap_or("").trim() == mov_reg {
-                                let movabs_addr = insn.address();
-                                let reg = H::parse_register_from_operand(mov_reg).unwrap();
-                                let patch_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
-                                patch_instruction(movabs_addr, &patch_bytes).unwrap();
-                                H::advance_instruction_pointer(ctx, &cs, H::get_instruction_pointer(ctx)).unwrap();
-                                fix_return_address::<H>(ctx, movabs_addr, ip);
+            let movabs_opcodes = [
+                ([0x48, 0xB8], "rax"), ([0x48, 0xB9], "rcx"), ([0x48, 0xBA], "rdx"),
+                ([0x48, 0xBB], "rbx"), ([0x48, 0xBC], "rsp"), ([0x48, 0xBD], "rbp"),
+                ([0x48, 0xBE], "rsi"), ([0x48, 0xBF], "rdi"), ([0x49, 0xB8], "r8"),
+                ([0x49, 0xB9], "r9"), ([0x49, 0xBA], "r10"), ([0x49, 0xBB], "r11"),
+            ];
+
+            let call_opcodes_2byte = [
+                ([0xFF, 0xD0], "rax"), ([0xFF, 0xD1], "rcx"), ([0xFF, 0xD2], "rdx"),
+                ([0xFF, 0xD3], "rbx"), ([0xFF, 0xD4], "rsp"), ([0xFF, 0xD5], "rbp"),
+                ([0xFF, 0xD6], "rsi"), ([0xFF, 0xD7], "rdi"),
+            ];
+
+            let call_opcodes_3byte = [
+                ([0x41, 0xFF, 0xD0], "r8"),  ([0x41, 0xFF, 0xD1], "r9"),
+                ([0x41, 0xFF, 0xD2], "r10"), ([0x41, 0xFF, 0xD3], "r11"),
+            ];
+
+            // collect all movabs hits
+            let mut mov_hits = Vec::new();
+            for i in 0..=buf_size-2 {
+                if let Some((_, reg)) = movabs_opcodes.iter()
+                    .find(|(opc, _)| &buf[i..i+2] == opc)
+                {
+                    mov_hits.push((i, *reg));
+                }
+            }
+
+            // collect all call hits
+            let mut call_hits = Vec::new();
+            for i in 0..=buf_size-2 {
+                // 2‑byte calls
+                if let Some((_, reg)) = call_opcodes_2byte.iter()
+                    .find(|(opc, _)| &buf[i..i+2] == opc)
+                {
+                    call_hits.push((i, *reg, 2));
+                }
+                // 3‑byte calls
+                if i + 3 <= buf_size {
+                    if let Some((_, reg)) = call_opcodes_3byte.iter()
+                        .find(|(opc, _)| &buf[i..i+3] == opc)
+                    {
+                        call_hits.push((i, *reg, 3));
+                    }
+                }
+            }
+
+            for &(mov_off, mov_reg) in &mov_hits {
+                for &(_, call_reg, _) in &call_hits {
+                    if mov_reg == call_reg {
+                        let movabs_addr = buf_start + mov_off;
+                        let reg = H::parse_register_from_operand(mov_reg).unwrap();
+                        let stub_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
+                        patch_instruction(movabs_addr as u64, &stub_bytes)
+                            .expect("failed to write stub");
+                        H::advance_instruction_pointer(ctx, &cs, H::get_instruction_pointer(ctx))
+                            .unwrap();
+                        fix_return_address::<H>(ctx, movabs_addr as u64, ip);
+                        trace!("Patched at 0x{:x}", movabs_addr);
                                 return EXCEPTION_CONTINUE_EXECUTION;
                             }
                         }
                     }
-                }
-            }
         } else {
             error!("No frame at target index {} (raw_frames.len() = {})", target_frame_index, raw_frames.len());
         }
@@ -297,7 +336,7 @@ fn fix_return_address<H: ArchHandler<Context = CONTEXT>>(
     ret_addr: usize,
 ) {
     let old_sp = H::get_stack_pointer(ctx) as usize;
-    let target_ret = patch_addr;
+    let target_ret = patch_addr - 12;
 
     trace!(
         "old_sp = 0x{:016x}, original_ret = 0x{:016x}, target_ret = 0x{:016x}",
