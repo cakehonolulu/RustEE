@@ -2244,8 +2244,8 @@ fn test_div() {
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 0xFFFFFFFE;
                 g.gpr[10] = 3;
-                g.lo = 0xFFFFFFFF;
-                g.hi = 0xFFFFFFFF;
+                g.lo = 0;
+                g.hi = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2262,7 +2262,7 @@ fn test_div() {
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 42;
                 g.gpr[10] = 0xFFFFFFFB;
-                g.lo = 0xFFFFFFF8;
+                g.lo = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF8;
                 g.hi = 2;
                 g.cop0[15] = 0x59;
                 Some(g)
@@ -2281,7 +2281,7 @@ fn test_div() {
                 g.gpr[9] = 0xFFFFFFFE;
                 g.gpr[10] = 0xFFFFFFFB;
                 g.lo = 0;
-                g.hi = 0xFFFFFFFE;
+                g.hi = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE;
                 g.cop0[15] = 0x59;
                 Some(g)
             },
@@ -2298,7 +2298,7 @@ fn test_div() {
                 g.pc = 0xBFC00004;
                 g.gpr[9] = 0x80000000;
                 g.gpr[10] = 0xFFFFFFFF;
-                g.lo = 0x80000000;
+                g.lo = (i32::MIN as i128) as u128;
                 g.hi = 0;
                 g.cop0[15] = 0x59;
                 Some(g)

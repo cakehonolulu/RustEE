@@ -3,7 +3,7 @@ use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
 use crate::Bus;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Value};
+use cranelift_codegen::ir::{types, AbiParam, BlockArg, InstBuilder, MemFlags, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -1551,24 +1551,67 @@ impl<'a> JIT<'a> {
     fn div(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
         let rs = ((opcode >> 21) & 0x1F) as i64;
         let rt = ((opcode >> 16) & 0x1F) as i64;
+        let addr_rs  = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let addr_rt  = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let dividend = builder.ins().load(types::I32, MemFlags::new(), addr_rs, 0);
+        let divisor  = builder.ins().load(types::I32, MemFlags::new(), addr_rt, 0);
 
-        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
-        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let zero      = builder.ins().iconst(types::I32, 0);
+        let int_min   = builder.ins().iconst(types::I32, i32::MIN as i64);
+        let minus_one = builder.ins().iconst(types::I32, -1);
 
-        let dividend = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
-        let divisor = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+        let is_div_zero = builder.ins().icmp(IntCC::Equal, divisor, zero);
+        let is_overflow = {
+            let a = builder.ins().icmp(IntCC::Equal, dividend, int_min);
+            let b = builder.ins().icmp(IntCC::Equal, divisor, minus_one);
+            builder.ins().band(a, b)
+        };
 
-        let quot = builder.ins().sdiv(dividend, divisor);
-        let rem = builder.ins().srem(dividend, divisor);
+        let zero_block       = builder.create_block();
+        let special_test     = builder.create_block();
+        let overflow_block   = builder.create_block();
+        let normal_block     = builder.create_block();
+        let exit_block       = builder.create_block();
 
-        let quot_128 = builder.ins().sextend(types::I128, quot);
-        let rem_128 = builder.ins().sextend(types::I128, rem);
+        let quot_val = builder.append_block_param(exit_block, types::I32);
+        let rem_val  = builder.append_block_param(exit_block, types::I32);
 
+        let zero_arg    = BlockArg::Value(zero);
+        let int_min_arg = BlockArg::Value(int_min);
+
+        builder.ins().brif(is_div_zero, zero_block, &[], special_test, &[]);
+
+        builder.switch_to_block(zero_block);
+        builder.ins().jump(exit_block, &[zero_arg, zero_arg]);
+        builder.seal_block(zero_block);
+
+        builder.switch_to_block(special_test);
+        builder.ins().brif(is_overflow, overflow_block, &[], normal_block, &[]);
+        builder.seal_block(special_test);
+
+        builder.switch_to_block(overflow_block);
+        builder.ins().jump(exit_block, &[int_min_arg, zero_arg]);
+        builder.seal_block(overflow_block);
+
+        builder.switch_to_block(normal_block);
+        let qn = builder.ins().sdiv(dividend, divisor);
+        let rn = builder.ins().srem(dividend, divisor);
+        builder.ins().jump(exit_block, &[BlockArg::Value(qn), BlockArg::Value(rn)]);
+        builder.seal_block(normal_block);
+
+        builder.switch_to_block(exit_block);
+        let params = builder.block_params(exit_block);
+        let quot   = params[0];
+        let rem    = params[1];
+
+        let q128    = builder.ins().sextend(types::I128, quot);
+        let r128    = builder.ins().sextend(types::I128, rem);
         let lo_addr = Self::ptr_add(builder, self.lo_ptr as i64, 0, 16);
         let hi_addr = Self::ptr_add(builder, self.hi_ptr as i64, 0, 16);
+        builder.ins().store(MemFlags::new(), q128, lo_addr, 0);
+        builder.ins().store(MemFlags::new(), r128, hi_addr,  0);
 
-        builder.ins().store(MemFlags::new(), quot_128, lo_addr, 0);
-        builder.ins().store(MemFlags::new(), rem_128, hi_addr, 0);
+        builder.seal_block(exit_block);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);

@@ -815,14 +815,19 @@ impl Interpreter {
         let dividend = self.cpu.read_register32(rs) as i32;
         let divisor = self.cpu.read_register32(rt) as i32;
 
-        let (quot, rem) = if divisor != 0 {
-            (dividend.wrapping_div(divisor), dividend.wrapping_rem(divisor))
-        } else {
+        let (quot, rem) = if divisor == 0 {
             (0, 0)
+        } else if dividend == i32::MIN && divisor == -1 {
+            (i32::MIN, 0)
+        } else {
+            (dividend.wrapping_div(divisor), dividend.wrapping_rem(divisor))
         };
 
-        self.cpu.write_lo(quot as i32 as i64 as u128);
-        self.cpu.write_hi(rem as i32 as i64 as u128);
+        let quot_128 = quot as i64 as i128;
+        let rem_128 = rem as i64 as i128;
+
+        self.cpu.write_lo(quot_128 as u128);
+        self.cpu.write_hi(rem_128 as u128);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
