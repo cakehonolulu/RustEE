@@ -19,7 +19,7 @@ use crate::bus::tlb::AccessType;
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
 pub struct EE {
-    bus: Arc<Mutex<Bus>>,
+    bus: Arc<Mutex<Box<Bus>>>,
     pub pc: u32,
     pub registers: [u128; 32],
     pub cop0_registers: Arc<RwLock<[u32; 32]>>,
@@ -44,7 +44,7 @@ impl Clone for EE {
 }
 
 impl EE {
-    pub fn new(bus: Arc<Mutex<Bus>>, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Self {
+    pub fn new(bus: Arc<Mutex<Box<Bus>>>, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Self {
         cop0_registers.write().unwrap()[15] = 0x59;
 
         let ee = EE {

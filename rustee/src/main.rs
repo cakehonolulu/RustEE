@@ -94,7 +94,7 @@ fn main() {
     }
 }
 
-async fn run(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Bus>>, backend: String) {
+async fn run(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String) {
     let event_loop = EventLoop::new().unwrap();
 
     event_loop.set_control_flow(ControlFlow::Poll);

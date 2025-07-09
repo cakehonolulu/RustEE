@@ -449,7 +449,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
 
         let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus as *const Bus as *mut Bus;
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let mut tlb_refmut = bus.tlb.borrow_mut();
         tlb_refmut.write_tlb_entry(bus_ptr, index, new_entry);
     }

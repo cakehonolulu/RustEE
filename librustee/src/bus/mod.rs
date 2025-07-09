@@ -12,6 +12,7 @@ mod ranged;
 mod sw_fastmem;
 mod hw_fastmem;
 pub mod backpatch;
+mod rdram;
 
 use crate::ee::sio::{SIO};
 
@@ -21,13 +22,14 @@ use tlb::{OperatingMode, Tlb};
 use unix::install_handler;
 #[cfg(windows)]
 use windows::install_handler;
+use crate::bus::rdram::RDRAM;
 
 #[cfg(unix)]
 pub mod unix;
 #[cfg(windows)]
 mod windows;
 
-static mut BUS_PTR: *mut Bus = null_mut();
+static mut BUS_PTR: *mut Bus = std::ptr::null_mut();
 
 static HW_BASE:   AtomicUsize = AtomicUsize::new(0);
 static HW_LENGTH: AtomicUsize = AtomicUsize::new(0);
@@ -71,6 +73,7 @@ pub struct Bus {
     pub(crate) operating_mode: OperatingMode,
 
     pub sio: SIO,
+    rdram: RDRAM,
 
     mode: BusMode,
 
@@ -95,18 +98,19 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Bus {
-        let mut bus = Bus {
+    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Box<Bus> {
+        let mut bus = Box::new(Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
-            page_read:  vec![0; NUM_PAGES],
+            page_read: vec![0; NUM_PAGES],
             page_write: vec![0; NUM_PAGES],
             sio: SIO::new(),
+            rdram: RDRAM::new(),
             mode: mode.clone(),
             read8: Bus::sw_fmem_read8,
-            read16:  Bus::sw_fmem_read16,
-            read32:  Bus::sw_fmem_read32,
-            read64:  Bus::sw_fmem_read64,
+            read16: Bus::sw_fmem_read16,
+            read32: Bus::sw_fmem_read32,
+            read64: Bus::sw_fmem_read64,
             write8: Bus::sw_fmem_write8,
             write16: Bus::sw_fmem_write16,
             write32: Bus::sw_fmem_write32,
@@ -117,9 +121,7 @@ impl Bus {
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers: Arc::clone(&cop0_registers),
-        };
-
-        unsafe { BUS_PTR = &mut bus; }
+        });
 
         match mode {
             BusMode::HardwareFastMem => unsafe {
@@ -153,8 +155,12 @@ impl Bus {
                 bus.write8 = Bus::ranged_write8;
                 bus.write16 = Bus::ranged_write16;
                 bus.write32 = Bus::ranged_write32;
-                bus.write64 = Bus::ranged_write64;
+                bus.write64 = Bus::sw_fmem_write64;
             },
+        }
+
+        unsafe {
+            BUS_PTR = &mut *bus as *mut Bus;
         }
 
         info!("Bus initialized with mode: {:?}", mode);
@@ -221,6 +227,9 @@ impl Bus {
         match addr {
             0xB000F130 => {
                 self.sio.read(addr)
+            }
+            0xB000F430 => {
+                self.rdram.read(addr)
             }
             _ => {
                 panic!("Invalid IO read32: addr=0x{:08X}", addr);

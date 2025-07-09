@@ -966,8 +966,8 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         let store_val = Self::load32(builder, rt_addr);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let addr_arg = addr;
         let val_arg  = store_val;
@@ -981,8 +981,8 @@ impl<'a> JIT<'a> {
     }
 
     fn tlbwi(&mut self, builder: &mut FunctionBuilder, current_pc: &mut u32) -> Option<BranchInfo> {
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let local_callee = self.module.declare_func_in_func(self.tlbwi_func, builder.func);
@@ -1007,8 +1007,8 @@ impl<'a> JIT<'a> {
 
         let addr = builder.ins().iadd_imm(base_val, imm_i64);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let bus_read_callee =
             self.module.declare_func_in_func(self.bus_read32_func, builder.func);
@@ -1088,8 +1088,8 @@ impl<'a> JIT<'a> {
         let rt_addr   = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         let store_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1372,8 +1372,8 @@ impl<'a> JIT<'a> {
 
         let addr = builder.ins().iadd_imm(base_val, imm_i64);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let bus_read_callee = self.module.declare_func_in_func(self.bus_read8_func, builder.func);
         let call_inst = builder.ins().call(bus_read_callee, &[bus_value, addr]);
@@ -1402,8 +1402,8 @@ impl<'a> JIT<'a> {
         let ft_addr = Self::ptr_add(builder, self.fpr_ptr as i64, ft, 4);
         let fpu_val = Self::load32(builder, ft_addr);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self.module.declare_func_in_func(self.bus_write32_func, builder.func);
@@ -1425,8 +1425,8 @@ impl<'a> JIT<'a> {
 
         let addr = builder.ins().iadd_imm(base_val, imm);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let bus_read_callee = self.module.declare_func_in_func(self.bus_read8_func, builder.func);
         let call_inst = builder.ins().call(bus_read_callee, &[bus_value, addr]);
@@ -1471,8 +1471,8 @@ impl<'a> JIT<'a> {
 
         let addr = builder.ins().iadd_imm(base_val, imm);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let bus_read_callee = self.module.declare_func_in_func(self.bus_read64_func, builder.func);
@@ -1511,8 +1511,8 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         let store_val = Self::load8(builder, rt_addr);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self.module.declare_func_in_func(self.bus_write8_func, builder.func);
@@ -1843,8 +1843,8 @@ impl<'a> JIT<'a> {
 
         let addr = builder.ins().iadd_imm(base_val, imm);
 
-        let bus_lock = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &*bus_lock as *const Bus as *mut Bus;
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
         let bus_read_callee = self.module.declare_func_in_func(self.bus_read16_func, builder.func);
         let call_inst = builder.ins().call(bus_read_callee, &[bus_value, addr]);

@@ -142,7 +142,7 @@ pub struct App {
     window: Option<Arc<Window>>,
     ee_backend: Box<dyn EmulationBackend<EE>>,
     ee: Arc<Mutex<EE>>,
-    bus: Arc<Mutex<Bus>>,
+    bus: Arc<Mutex<Box<Bus>>>,
     last_frame_time: Instant,
     selected_ee_tab: usize,
     prev_ee_registers: HashMap<usize, u128>,
@@ -158,7 +158,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Bus>>, backend: String) -> Self {
+    pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String) -> Self {
         let ee_backend: Box<dyn EmulationBackend<EE>> = match backend.as_str() {
             "interpreter" => {
                 let cloned_ee = ee.lock().unwrap().clone();

@@ -16,7 +16,7 @@ use windows_sys::Win32::System::{
 
 use backtrace::resolve;
 use crate::bus::backpatch::io_write8_stub;
-use super::{Bus, HW_BASE, HW_LENGTH};
+use super::{Bus, BUS_PTR, HW_BASE, HW_LENGTH};
 
 #[cfg(target_arch = "x86_64")]
 use super::backpatch::{ArchHandler, HANDLER_INSTALLED, io_write32_stub, io_read32_stub, CurrentArchHandler};
@@ -241,7 +241,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         trace!("Detected interpreter fastmem access, redirecting to I/O...");
 
         // Windows x64 calling convention: RCX, RDX, R8, R9
-        let bus_ptr = (*ctx).Rcx as *mut Bus;
+        let bus_ptr = BUS_PTR as *mut Bus;
         let addr = (*ctx).Rdx as u32;
         let fault_rip = (*ctx).Rip as i64;
 
@@ -282,7 +282,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     let mut system_info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
     unsafe { GetSystemInfo(&mut system_info) };
     let page_size = system_info.dwPageSize as usize;
-    
+
     let page_start = (addr as usize) & !(page_size - 1);
 
     trace!(
@@ -291,7 +291,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     );
 
     let mut old_protect = 0u32;
-    
+
     // Change protection to writable
     let result = unsafe {
         VirtualProtect(
@@ -301,7 +301,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
             &mut old_protect,
         )
     };
-    
+
     if result == 0 {
         return Err("VirtualProtect to READWRITE failed".to_string());
     }
@@ -321,7 +321,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
             &mut old_protect,
         )
     };
-    
+
     if result == 0 {
         return Err("VirtualProtect to EXECUTE_READ failed".to_string());
     }
