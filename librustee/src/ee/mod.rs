@@ -113,8 +113,18 @@ impl CPU for EE {
         self.registers[index] as u64
     }
 
+    fn write_hi0(&mut self, low: u64) {
+        let high_mask = !((1u128 << 64) - 1);
+        self.hi = (self.hi & high_mask) | (low as u128);
+    }
+
     fn write_hi(&mut self, value: Self::RegisterType) {
         self.hi = value;
+    }
+
+    fn write_lo0(&mut self, low: u64) {
+        let high_mask = !((1u128 << 64) - 1);
+        self.lo = (self.lo & high_mask) | (low as u128);
     }
 
     fn write_lo(&mut self, value: Self::RegisterType) {

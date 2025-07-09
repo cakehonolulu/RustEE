@@ -640,11 +640,13 @@ impl Interpreter {
         let dividend = self.cpu.read_register32(rs) as u64;
         let divisor  = self.cpu.read_register32(rt) as u64;
 
-        let quot = dividend.wrapping_div(divisor);
-        let rem  = dividend.wrapping_rem(divisor);
+        if divisor != 0 {
+            let quot32 = dividend / divisor;
+            let rem32  = dividend % divisor;
 
-        self.cpu.write_lo(quot as u128);
-        self.cpu.write_hi(rem  as u128);
+            self.cpu.write_lo0(quot32 as u64);
+            self.cpu.write_hi0(rem32  as u64);
+        }
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -1100,7 +1102,7 @@ impl Interpreter {
     }
 
     fn mflo1(&mut self, opcode: u32) {
-        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rt = ((opcode >> 11) & 0x1F) as usize;
 
         let lo_u64 = (self.cpu.read_lo() >> 64) as u64;
         let word = (lo_u64 as u32) as u64;

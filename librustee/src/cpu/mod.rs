@@ -12,7 +12,9 @@ pub trait CPU {
     fn read_register8(&self, index: usize) -> u8;
     fn read_register32(&self, index: usize) -> u32;
     fn read_register64(&self, index: usize) -> u64;
+    fn write_hi0(&mut self, value: u64);
     fn write_hi(&mut self, value: Self::RegisterType);
+    fn write_lo0(&mut self, value: u64);
     fn write_lo(&mut self, value: Self::RegisterType);
     fn write_register(&mut self, index: usize, value: Self::RegisterType);
     fn write_register32(&mut self, index: usize, value: u32);

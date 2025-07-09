@@ -1293,30 +1293,27 @@ impl<'a> JIT<'a> {
         let rs = ((opcode >> 21) & 0x1F) as i64;
         let rt = ((opcode >> 16) & 0x1F) as i64;
 
-        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
-        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let addr_rs = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let addr_rt = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
 
-        let dividend32 = builder.ins().load(types::I32, MemFlags::new(), rs_addr, 0);
-        let divisor32  = builder.ins().load(types::I32, MemFlags::new(), rt_addr, 0);
+        let dividend = builder.ins().load(types::I32, MemFlags::new(), addr_rs, 0);
+        let divisor  = builder.ins().load(types::I32, MemFlags::new(), addr_rt, 0);
 
-        let dividend = builder.ins().uextend(types::I64, dividend32);
-        let divisor  = builder.ins().uextend(types::I64, divisor32);
+        let quot = builder.ins().udiv(dividend, divisor);
+        let rem  = builder.ins().urem(dividend, divisor);
 
-        let quot64 = builder.ins().udiv(dividend, divisor);
-        let rem64  = builder.ins().urem(dividend, divisor);
-
-        let quot32 = builder.ins().ireduce(types::I32, quot64);
-        let rem32  = builder.ins().ireduce(types::I32, rem64);
-        let lo128  = builder.ins().uextend(types::I128, quot32);
-        let hi128  = builder.ins().uextend(types::I128, rem32);
+        let quot128 = builder.ins().sextend(types::I64, quot);
+        let rem128  = builder.ins().sextend(types::I64, rem);
 
         let lo_addr = Self::ptr_add(builder, self.lo_ptr as i64, 0, 16);
         let hi_addr = Self::ptr_add(builder, self.hi_ptr as i64, 0, 16);
-        builder.ins().store(MemFlags::new(), lo128, lo_addr, 0);
-        builder.ins().store(MemFlags::new(), hi128, hi_addr, 0);
+
+        builder.ins().store(MemFlags::new(), quot128, lo_addr, 0);
+        builder.ins().store(MemFlags::new(), rem128, hi_addr, 0);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
+
         None
     }
 
@@ -2068,7 +2065,7 @@ impl<'a> JIT<'a> {
     }
 
     fn mflo1(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
-        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rt = ((opcode >> 11) & 0x1F) as i64;
 
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
 
