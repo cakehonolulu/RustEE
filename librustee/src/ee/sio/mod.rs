@@ -102,7 +102,7 @@ impl SIO {
                 self.registers.txfifo = value.to_u32();
                 if let Some(transmitted_char) = value.to_char() {
                     trace!("Pushing char '{}' to ee_tx_buffer", transmitted_char);
-                    if transmitted_char == '\r' {
+                    if transmitted_char == '\n' {
                         debug!("{}", self.ee_tx_buffer);
                         self.ee_tx_buffer.clear();
                     } else {

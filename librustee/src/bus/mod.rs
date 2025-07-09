@@ -231,7 +231,7 @@ impl Bus {
             0xB000F130 => {
                 self.sio.read(addr)
             }
-            0xB000F430 => {
+            0xB000F430 | 0xB000F440 => {
                 self.rdram.read(addr)
             }
             _ => {

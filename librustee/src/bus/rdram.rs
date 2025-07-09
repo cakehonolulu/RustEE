@@ -81,17 +81,11 @@ impl RDRAM {
 
     /// Read from RDRAM controller
     pub fn read(&self, address: u32) -> u32 {
-        let name = match address {
-            Self::MCH_RICM => "MCH_RICM",
-            Self::MCH_DRD => "MCH_DRD",
-            _ => {
-                error!("Invalid RDRAM register read at address 0x{:08X}", address);
-                panic!("Invalid RDRAM read");
-            }
-        };
         if address == Self::MCH_RICM {
+            info!("RDRAM register read from MCH_RICM");
             self.mch_ricm
         } else {
+            info!("RDRAM register read from MCH_DRD");
             self.mch_drd
         }
     }
@@ -101,22 +95,21 @@ impl RDRAM {
         // set busy bit
         self.mch_ricm |= 1 << 31;
 
-        let name = match address {
+        match address {
             Self::MCH_RICM => {
                 self.mch_ricm = value;
                 self.cmd();
-                "MCH_RICM"
+                info!("RDRAM register write to MCH_RICM with value 0x{:08X}", value);
             }
             Self::MCH_DRD => {
+                info!("RDRAM register write to MCH_DRD with value 0x{:08X}", value);
                 self.mch_drd = value;
-                "MCH_DRD"
             }
             _ => {
                 error!("Invalid RDRAM register write at address 0x{:08X}", address);
-                panic!("Invalid RDRAM write");
             }
         };
-        info!("RDRAM register write to {} with value 0x{:08X}", name, value);
+        self.mch_ricm &= !(1 << 31);
     }
 
     /// Command dispatch

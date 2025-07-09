@@ -3323,3 +3323,89 @@ fn test_bgezl() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_sh() {
+    let tests = vec![
+        TestCase {
+            name: "sh_basic",
+            asm: "
+                lui $t0, 0x0000
+                ori $t0, $t0, 0x1000
+                li $t1, 0x12345678
+                sh $t1, 0($t0)
+            ",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[8] = 0x1000;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0x5678)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sh_zero",
+            asm: "
+                lui $t0, 0x0000
+                ori $t0, $t0, 0x1000
+                li $t1, 0x00000000
+                sh $t1, 0($t0)
+            ",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[8] = 0x1000;
+                g.gpr[9] = 0x00000000;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1000, 0x0000)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sh_max",
+            asm: "
+                lui $t0, 0x0000
+                ori $t0, $t0, 0x1004
+                li $t1, 0xFFFFFFFF
+                sh $t1, 0($t0)
+            ",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[8] = 0x1004;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1004, 0xFFFF)];
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "sh_offset",
+            asm: "
+                lui $t0, 0x0000
+                ori $t0, $t0, 0x1000
+                li $t1, 0x12345678
+                sh $t1, 4($t0)
+            ",
+            setup: |_| {},
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[8] = 0x1000;
+                g.gpr[9] = 0x12345678;
+                g.cop0[15] = 0x59;
+                g.memory_checks = vec![(0x1004, 0x5678)];
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}

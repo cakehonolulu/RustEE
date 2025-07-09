@@ -244,6 +244,21 @@ impl Interpreter {
             0x15 => {
                 self.bnel(opcode);
             }
+            0x1C => {
+                let subfunction = opcode & 0x3F;
+
+                match subfunction {
+                    0x12 => {
+                        self.mflo1(opcode);
+                    }
+                    0x1B => {
+                        self.divu1(opcode);
+                    }
+                    _ => {
+                        panic!("Unimplemented MMI instruction with funct: 0x{:02X}", subfunction);
+                    }
+                }
+            }
             0x20 => {
                 self.lb(opcode);
             }
@@ -258,6 +273,9 @@ impl Interpreter {
             }
             0x28 => {
                 self.sb(opcode);
+            }
+            0x29 => {
+                self.sh(opcode);
             }
             0x2B => {
                 self.sw(opcode);
@@ -1023,6 +1041,72 @@ impl Interpreter {
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
 
         self.do_branch(branch_pc, taken, target, true);
+    }
+
+    fn sh(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let rt_val = self.cpu.read_register32(rt);
+        let address = rs_val.wrapping_add(imm as u32);
+
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write16)(&mut *bus, address, rt_val as u16);
+        }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn divu1(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register32(rs) as i64;
+        let rt_val = self.cpu.read_register32(rt) as i64;
+
+        let rs_valid = rs_val == ((rs_val as i32) as i64);
+        let rt_valid = rt_val == ((rt_val as i32) as i64);
+
+        if !rs_valid || !rt_valid || rt_val == 0 {
+            self.cpu.write_lo(0);
+            self.cpu.write_hi(0);
+        } else {
+            let dividend = rs_val as u32 as u64;
+            let divisor = rt_val as u32 as u64;
+
+            let quotient = dividend.wrapping_div(divisor);
+            let remainder = dividend.wrapping_rem(divisor);
+
+            let lo = (self.cpu.read_lo() & 0xFFFFFFFFFFFFFFFF) | ((quotient as u128) << 64);
+            let hi = (self.cpu.read_hi() & 0xFFFFFFFFFFFFFFFF) | ((remainder as u128) << 64);
+            self.cpu.write_lo(lo);
+            self.cpu.write_hi(hi);
+        }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn mtlo1(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register32(rs) as i64 as u64;
+        let lo_current = self.cpu.read_lo();
+        let lo_new = (lo_current & 0xFFFFFFFFFFFFFFFF) | ((rs_val as u128) << 64);
+
+        self.cpu.write_lo(lo_new);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn mflo1(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+
+        let lo_u64 = (self.cpu.read_lo() >> 64) as u64;
+        let word = (lo_u64 as u32) as u64;
+
+        self.cpu.write_register(rt, word.into());
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 

@@ -10,6 +10,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use lru::LruCache;
 use std::num::{NonZero, NonZeroU128};
 use std::sync::{Arc, Mutex};
+use std::thread::current;
 use tracing::{debug, error};
 
 #[derive(Clone)]
@@ -34,6 +35,7 @@ pub struct JIT<'a> {
     cycles: usize,
     break_func: FuncId,
     bus_write8_func: FuncId,
+    bus_write16_func: FuncId,
     bus_write32_func: FuncId,
     bus_write64_func: FuncId,
     bus_read8_func: FuncId,
@@ -94,6 +96,13 @@ pub extern "C" fn __bus_write8(bus_ptr: *mut Bus, addr: u32, value: u8) {
     unsafe {
         let bus = &mut *bus_ptr;
         (bus.write8)(bus, addr, value);
+    }
+}
+
+pub extern "C" fn __bus_write16(bus_ptr: *mut Bus, addr: u32, value: u16) {
+    unsafe {
+        let bus = &mut *bus_ptr;
+        (bus.write16)(bus, addr, value);
     }
 }
 
@@ -210,6 +219,11 @@ impl<'a> JIT<'a> {
         );
 
         builder.symbol(
+            "__bus_write16",
+            __bus_write16 as *const u8,
+        );
+
+        builder.symbol(
             "__bus_write32",
             __bus_write32 as *const u8,
         );
@@ -262,6 +276,14 @@ impl<'a> JIT<'a> {
         let bus_write8_func = module
             .declare_function("__bus_write8", Linkage::Import, &store8_sig)
             .expect("Failed to declare __bus_write8");
+
+        let mut store16_sig = module.make_signature();
+        store16_sig.params.push(AbiParam::new(types::I64));
+        store16_sig.params.push(AbiParam::new(types::I32));
+        store16_sig.params.push(AbiParam::new(types::I16));
+        let bus_write16_func: FuncId = module
+            .declare_function("__bus_write16", Linkage::Import, &store16_sig)
+            .expect("Failed to declare __bus_write16 function!");
 
         let mut store32_sig = module.make_signature();
         store32_sig.params.push(AbiParam::new(types::I64));
@@ -355,6 +377,7 @@ impl<'a> JIT<'a> {
             cycles: 0,
             break_func,
             bus_write8_func,
+            bus_write16_func,
             bus_write32_func,
             bus_write64_func,
             bus_read8_func,
@@ -745,6 +768,21 @@ impl<'a> JIT<'a> {
             0x15 => {
                 self.bnel(builder, opcode, current_pc)
             }
+            0x1C => {
+                let subfunction = opcode & 0x3F;
+
+                match subfunction {
+                    0x12 => {
+                        self.mflo1(builder, opcode, current_pc)
+                    }
+                    0x1B => {
+                        self.divu1(builder, opcode, current_pc)
+                    }
+                    _ => {
+                        panic!("Unimplemented MMI instruction with funct: 0x{:02X}", subfunction);
+                    }
+                }
+            }
             0x20 => {
                 self.lb(builder, opcode, current_pc)
             }
@@ -759,6 +797,9 @@ impl<'a> JIT<'a> {
             }
             0x28 => {
                 self.sb(builder, opcode, current_pc)
+            }
+            0x29 => {
+                self.sh(builder, opcode, current_pc)
             }
             0x2B => {
                 self.sw(builder, opcode, current_pc)
@@ -1928,6 +1969,122 @@ impl<'a> JIT<'a> {
             cond,
             target: BranchTarget::Const(target),
         })
+    }
+
+    fn sh(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let base = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let imm = (opcode as i16) as i64;
+
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base, 16);
+        let base_val = Self::load32(builder, base_addr);
+        let addr = builder.ins().iadd_imm(base_val, imm);
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let store_val = Self::load32(builder, rt_addr);
+        let store_val_16 = builder.ins().ireduce(types::I16, store_val);
+
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+
+        let callee = self.module.declare_func_in_func(self.bus_write16_func, builder.func);
+        builder.ins().call(callee, &[bus_value, addr, store_val_16]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn divu1(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rs_val  = builder.ins().load(types::I32, MemFlags::trusted(), rs_addr, 0);
+        let rt_val  = builder.ins().load(types::I32, MemFlags::trusted(), rt_addr, 0);
+
+        let rs64 = builder.ins().uextend(types::I64, rs_val);
+        let rt64 = builder.ins().uextend(types::I64, rt_val);
+
+        let rt_zero = builder.ins().icmp_imm(IntCC::Equal, rt64, 0);
+
+        let quot64 = builder.ins().udiv(rs64, rt64);
+        let rem64  = builder.ins().urem(rs64, rt64);
+
+        let lo_addr = Self::ptr_add(builder, self.lo_ptr as i64,  1,  4);
+        let hi_addr = Self::ptr_add(builder, self.hi_ptr as i64,  1,  4);
+
+        let lo_old = builder.ins().load(types::I64, MemFlags::trusted(), lo_addr, 0);
+        let hi_old = builder.ins().load(types::I64, MemFlags::trusted(), hi_addr, 0);
+
+        let low_mask  = builder.ins().iconst(types::I64, 0xFFFF_FFFF);
+        let shift32   = builder.ins().iconst(types::I64, 32);
+
+        let quot_shifted = builder.ins().ishl(quot64, shift32);
+        let rem_shifted  = builder.ins().ishl(rem64,  shift32);
+
+        let lo_masked = builder.ins().band(lo_old, low_mask);
+        let hi_masked = builder.ins().band(hi_old, low_mask);
+
+        let lo_new = builder.ins().bor(lo_masked, quot_shifted);
+        let hi_new = builder.ins().bor(hi_masked, rem_shifted);
+
+        let zero64 = builder.ins().iconst(types::I64, 0);
+
+        let lo_result = builder.ins().select(rt_zero, zero64, lo_new);
+        let hi_result = builder.ins().select(rt_zero, zero64, hi_new);
+
+        builder.ins().store(MemFlags::trusted(), lo_result, lo_addr, 0);
+        builder.ins().store(MemFlags::trusted(), hi_result, hi_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn mtlo1(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rs_val  = builder.ins().load(types::I32,  MemFlags::trusted(), rs_addr, 0);
+        let rs_ext  = builder.ins().sextend(types::I64, rs_val);
+
+        let lo_addr = Self::ptr_add(builder, self.lo_ptr as i64, 0, 16);
+
+        let lo_low = builder.ins().load(types::I64, MemFlags::trusted(), lo_addr, 0);
+        builder.ins().store(MemFlags::trusted(), lo_low, lo_addr, 0);
+
+        builder
+            .ins()
+            .store(MemFlags::trusted(), rs_ext, lo_addr, 8);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn mflo1(&mut self, builder: &mut FunctionBuilder, opcode: u32, current_pc: &mut u32) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        let lo1_addr = Self::ptr_add(builder, self.lo_ptr as i64 + 8, 1, 8);
+
+        let val32 = builder.ins().load(types::I32, MemFlags::trusted(), lo1_addr, 0);
+
+        let val64 = builder.ins().uextend(types::I64, val32);
+
+        builder.ins().store(MemFlags::trusted(), val64, rt_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+
     }
 }
 
