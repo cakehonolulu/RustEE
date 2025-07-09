@@ -166,7 +166,20 @@ impl Interpreter {
                 }
             }
             0x01 => {
-                self.bgez(opcode);
+                let rt = (opcode >> 16) & 0x1F;
+                match rt {
+                    0x00 => self.bltz(opcode),
+                    0x01 => self.bgez(opcode),
+                    0x02 => self.bltzl(opcode),
+                    0x03 => self.bgezl(opcode),
+                    _ => {
+                        error!(
+                            "Unhandled REGIMM instruction with rt=0x{:02X} at PC=0x{:08X}",
+                            rt, self.cpu.pc()
+                        );
+                        panic!();
+                    }
+                }
             }
             0x02 => {
                 self.j(opcode);
@@ -974,6 +987,42 @@ impl Interpreter {
         self.cpu.write_register64(rt, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn bltz(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let taken = rs_val < 0;
+        let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
+
+        self.do_branch(branch_pc, taken, target, false);
+    }
+
+    fn bltzl(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let taken = rs_val < 0;
+        let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
+
+        self.do_branch(branch_pc, taken, target, true);
+    }
+
+    fn bgezl(&mut self, opcode: u32) {
+        let branch_pc = self.cpu.pc();
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let taken = rs_val >= 0;
+        let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
+
+        self.do_branch(branch_pc, taken, target, true);
     }
 }
 

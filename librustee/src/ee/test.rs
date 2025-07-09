@@ -3111,3 +3111,215 @@ fn test_lhu() {
         run_test(&test);
     }
 }
+
+#[test]
+fn test_bltz() {
+    let tests = vec![
+        TestCase {
+            name: "bltz_negative",
+            asm: "
+                bltz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bltz_zero",
+            asm: "
+                bltz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bltz_positive",
+            asm: "
+                bltz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 42;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bltz_large_negative",
+            asm: "
+                bltz $t1, 4
+                nop
+            ",
+            setup: |ee| {
+                ee.write_register64(9, 0xFFFFFFFFFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00010;
+                g.gpr[9] = 0xFFFFFFFFFFFFFFFF;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_bltzl() {
+    let tests = vec![
+        TestCase {
+            name: "bltzl_taken",
+            asm: "
+                bltzl $t1, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 5
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC0000C;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.gpr[12] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bltzl_not_taken",
+            asm: "
+                bltzl $t1, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 7
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 0;
+                g.gpr[12] = 7;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bltzl_positive",
+            asm: "
+                bltzl $t1, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 7
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 42;
+                g.gpr[12] = 7;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
+
+#[test]
+fn test_bgezl() {
+    let tests = vec![
+        TestCase {
+            name: "bgezl_positive",
+            asm: "
+                bgezl $t1, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 5
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 42);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC0000C;
+                g.gpr[9] = 42;
+                g.gpr[12] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgezl_zero",
+            asm: "
+                bgezl $t1, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 7
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC0000C;
+                g.gpr[9] = 0;
+                g.gpr[12] = 0;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+        TestCase {
+            name: "bgezl_negative",
+            asm: "
+                bgezl $t1, 8
+                sll $zero, $zero, 0
+                addiu $t4, $zero, 7
+            ",
+            setup: |ee| {
+                ee.write_register32(9, 0xFFFFFFFF);
+            },
+            golden: {
+                let mut g = GoldenState::default();
+                g.pc = 0xBFC00008;
+                g.gpr[9] = 0xFFFFFFFF;
+                g.gpr[12] = 7;
+                g.cop0[15] = 0x59;
+                Some(g)
+            },
+        },
+    ];
+
+    for test in tests {
+        run_test(&test);
+    }
+}
