@@ -1,6 +1,6 @@
-use tracing::debug;
-use super::{map, tlb::mask_to_page_size, Bus, PAGE_BITS, PAGE_SIZE};
+use super::{Bus, PAGE_BITS, PAGE_SIZE, map, tlb::mask_to_page_size};
 use crate::bus::tlb::{AccessType, TlbEntry};
+use tracing::debug;
 
 pub fn init_software_fastmem(bus: &mut Bus) {
     debug!("Initializing Software Fast Memory...");
@@ -62,7 +62,12 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_read[page];
         if host != 0 {
-            unsafe { (host as *const u8).add(offset).cast::<u8>().read_unaligned() }
+            unsafe {
+                (host as *const u8)
+                    .add(offset)
+                    .cast::<u8>()
+                    .read_unaligned()
+            }
         } else {
             self.retry_read(va)
         }
@@ -73,7 +78,12 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_read[page];
         if host != 0 {
-            unsafe { (host as *const u8).add(offset).cast::<u16>().read_unaligned() }
+            unsafe {
+                (host as *const u8)
+                    .add(offset)
+                    .cast::<u16>()
+                    .read_unaligned()
+            }
         } else {
             self.retry_read(va)
         }
@@ -84,7 +94,12 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_read[page];
         if host != 0 {
-            unsafe { (host as *const u8).add(offset).cast::<u32>().read_unaligned() }
+            unsafe {
+                (host as *const u8)
+                    .add(offset)
+                    .cast::<u32>()
+                    .read_unaligned()
+            }
         } else {
             self.retry_read(va)
         }
@@ -95,7 +110,28 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_read[page];
         if host != 0 {
-            unsafe { (host as *const u8).add(offset).cast::<u64>().read_unaligned() }
+            unsafe {
+                (host as *const u8)
+                    .add(offset)
+                    .cast::<u64>()
+                    .read_unaligned()
+            }
+        } else {
+            self.retry_read(va)
+        }
+    }
+
+    pub fn sw_fmem_read128(&mut self, va: u32) -> u128 {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_read[page];
+        if host != 0 {
+            unsafe {
+                (host as *const u8)
+                    .add(offset)
+                    .cast::<u128>()
+                    .read_unaligned()
+            }
         } else {
             self.retry_read(va)
         }
@@ -106,7 +142,12 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_write[page];
         if host != 0 {
-            unsafe { (host as *mut u8).add(offset).cast::<u8>().write_unaligned(value) }
+            unsafe {
+                (host as *mut u8)
+                    .add(offset)
+                    .cast::<u8>()
+                    .write_unaligned(value)
+            }
         } else {
             self.retry_write(va, value);
         }
@@ -117,7 +158,12 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_write[page];
         if host != 0 {
-            unsafe { (host as *mut u8).add(offset).cast::<u16>().write_unaligned(value) }
+            unsafe {
+                (host as *mut u8)
+                    .add(offset)
+                    .cast::<u16>()
+                    .write_unaligned(value)
+            }
         } else {
             self.retry_write(va, value);
         }
@@ -128,7 +174,12 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_write[page];
         if host != 0 {
-            unsafe { (host as *mut u8).add(offset).cast::<u32>().write_unaligned(value) }
+            unsafe {
+                (host as *mut u8)
+                    .add(offset)
+                    .cast::<u32>()
+                    .write_unaligned(value)
+            }
         } else {
             self.retry_write(va, value);
         }
@@ -139,7 +190,28 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_write[page];
         if host != 0 {
-            unsafe { (host as *mut u8).add(offset).cast::<u64>().write_unaligned(value) }
+            unsafe {
+                (host as *mut u8)
+                    .add(offset)
+                    .cast::<u64>()
+                    .write_unaligned(value)
+            }
+        } else {
+            self.retry_write(va, value);
+        }
+    }
+
+    pub fn sw_fmem_write128(&mut self, va: u32, value: u128) {
+        let page = (va as usize) >> PAGE_BITS;
+        let offset = (va as usize) & (PAGE_SIZE - 1);
+        let host = self.page_write[page];
+        if host != 0 {
+            unsafe {
+                (host as *mut u8)
+                    .add(offset)
+                    .cast::<u128>()
+                    .write_unaligned(value)
+            }
         } else {
             self.retry_write(va, value);
         }
@@ -160,7 +232,8 @@ impl Bus {
         };
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
+            {
                 Ok(pa) => pa,
                 Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
             }
@@ -173,7 +246,9 @@ impl Bus {
             let host = self.ram.as_ptr() as usize + (roff as usize);
             unsafe {
                 (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
-                (self.page_write.as_ptr() as *mut usize).add(vpn).write(host);
+                (self.page_write.as_ptr() as *mut usize)
+                    .add(vpn)
+                    .write(host);
                 let data_ptr = (host as *const u8).add(offset);
                 let data = match std::mem::size_of::<V>() {
                     1 => data_ptr.cast::<u8>().read_unaligned() as u128,
@@ -244,7 +319,8 @@ impl Bus {
         };
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid()) {
+            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
+            {
                 Ok(pa) => pa,
                 Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
             }
@@ -260,7 +336,9 @@ impl Bus {
             let host = self.ram.as_ptr() as usize + (roff as usize);
             unsafe {
                 (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
-                (self.page_write.as_ptr() as *mut usize).add(vpn).write(host);
+                (self.page_write.as_ptr() as *mut usize)
+                    .add(vpn)
+                    .write(host);
                 let ptr = (host as *mut u8).add(offset);
                 match size {
                     1 => ptr.cast::<u8>().write_unaligned(val128 as u8),
@@ -327,7 +405,7 @@ impl Tlb {
         // even page
         if entry.v0 {
             let start_vpn = (start_va >> 12) as usize;
-            let end_vpn   = ((start_va + page_size) >> 12) as usize;
+            let end_vpn = ((start_va + page_size) >> 12) as usize;
             for vpn in start_vpn..end_vpn {
                 let offset = ((vpn as u64 * 4096) - start_va) & (page_size - 1);
                 let pa = (pfn0 << 12) + offset;
@@ -364,8 +442,8 @@ impl Tlb {
         // odd page
         if entry.v1 {
             let start_va_odd = start_va + page_size;
-            let start_vpn    = (start_va_odd >> 12) as usize;
-            let end_vpn      = ((start_va_odd + page_size) >> 12) as usize;
+            let start_vpn = (start_va_odd >> 12) as usize;
+            let end_vpn = ((start_va_odd + page_size) >> 12) as usize;
             for vpn in start_vpn..end_vpn {
                 let offset = ((vpn as u64 * 4096) - start_va_odd) & (page_size - 1);
                 let pa = (pfn1 << 12) + offset;

@@ -1,11 +1,11 @@
-use std::ops::DerefMut;
-use std::sync::{Arc, Mutex};
-use crate::cpu::EmulationBackend;
-use crate::ee::EE;
 use crate::Bus;
-use tracing::{debug, error};
 use crate::bus::tlb::TlbEntry;
 use crate::cpu::CPU;
+use crate::cpu::EmulationBackend;
+use crate::ee::EE;
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
+use tracing::{debug, error};
 
 pub struct Interpreter {
     pub cpu: EE,
@@ -111,6 +111,9 @@ impl Interpreter {
                     0x09 => {
                         self.jalr(opcode);
                     }
+                    0x0A => {
+                        self.movz(opcode);
+                    }
                     0x0B => {
                         self.movn(opcode);
                     }
@@ -125,6 +128,12 @@ impl Interpreter {
                     }
                     0x12 => {
                         self.mflo(opcode);
+                    }
+                    0x14 => {
+                        self.dsllv(opcode);
+                    }
+                    0x17 => {
+                        self.dsrav(opcode);
                     }
                     0x18 => {
                         self.mult(opcode);
@@ -147,19 +156,23 @@ impl Interpreter {
                     0x25 => {
                         self.or(opcode);
                     }
-                    0x2A => {
-                        self.slt(opcode)
-                    }
-                    0x2B => {
-                        self.sltu(opcode)
-                    }
+                    0x2A => self.slt(opcode),
+                    0x2B => self.sltu(opcode),
                     0x2D => {
                         self.daddu(opcode);
+                    }
+                    0x3C => {
+                        self.dsll32(opcode);
+                    }
+                    0x3F => {
+                        self.dsra32(opcode);
                     }
                     _ => {
                         error!(
                             "Unhandled EE Interpreter function SPECIAL opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
-                            opcode, subfunction, self.cpu.pc()
+                            opcode,
+                            subfunction,
+                            self.cpu.pc()
                         );
                         panic!();
                     }
@@ -175,7 +188,8 @@ impl Interpreter {
                     _ => {
                         error!(
                             "Unhandled REGIMM instruction with rt=0x{:02X} at PC=0x{:08X}",
-                            rt, self.cpu.pc()
+                            rt,
+                            self.cpu.pc()
                         );
                         panic!();
                     }
@@ -214,6 +228,9 @@ impl Interpreter {
             0x0D => {
                 self.ori(opcode);
             }
+            0x0E => {
+                self.xori(opcode);
+            }
             0x0F => {
                 self.lui(opcode);
             }
@@ -232,7 +249,9 @@ impl Interpreter {
                     _ => {
                         error!(
                             "Unhandled EE Interpreter COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
-                            opcode, subfunction, self.cpu.pc()
+                            opcode,
+                            subfunction,
+                            self.cpu.pc()
                         );
                         panic!();
                     }
@@ -244,6 +263,9 @@ impl Interpreter {
             0x15 => {
                 self.bnel(opcode);
             }
+            0x19 => {
+                self.daddiu(opcode);
+            }
             0x1C => {
                 let subfunction = opcode & 0x3F;
 
@@ -251,16 +273,45 @@ impl Interpreter {
                     0x12 => {
                         self.mflo1(opcode);
                     }
+                    0x18 => {
+                        self.mult1(opcode);
+                    }
                     0x1B => {
                         self.divu1(opcode);
                     }
+                    0x29 => {
+                        let mmi3_function = (opcode >> 6) & 0x1F;
+
+                        match mmi3_function {
+                            0x12 => self.or(opcode),
+                            _ => {
+                                panic!(
+                                    "Unimplemented MMI3 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
+                                    mmi3_function,
+                                    self.cpu.pc()
+                                );
+                            }
+                        }
+                    }
                     _ => {
-                        panic!("Unimplemented MMI instruction with funct: 0x{:02X}", subfunction);
+                        panic!(
+                            "Unimplemented MMI instruction with funct: 0x{:02X}",
+                            subfunction
+                        );
                     }
                 }
             }
+            0x1E => {
+                self.lq(opcode);
+            }
+            0x1F => {
+                self.sq(opcode);
+            }
             0x20 => {
                 self.lb(opcode);
+            }
+            0x21 => {
+                self.lh(opcode);
             }
             0x23 => {
                 self.lw(opcode);
@@ -280,6 +331,9 @@ impl Interpreter {
             0x2B => {
                 self.sw(opcode);
             }
+            0x2F => {
+                self.cache();
+            }
             0x39 => {
                 self.swc1(opcode);
             }
@@ -292,7 +346,9 @@ impl Interpreter {
             _ => {
                 error!(
                     "Unhandled EE Interpreter opcode: 0x{:08X} (Function 0x{:02X}), PC: 0x{:08X}",
-                    opcode, function, self.cpu.pc()
+                    opcode,
+                    function,
+                    self.cpu.pc()
                 );
                 panic!();
             }
@@ -307,7 +363,8 @@ impl Interpreter {
         self.cpu.write_register32(rt, cop0_val);
 
         let count = self.cpu.read_cop0_register(9);
-        self.cpu.write_cop0_register(9, count.wrapping_add(self.cycles as u32));
+        self.cpu
+            .write_cop0_register(9, count.wrapping_add(self.cycles as u32));
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -344,13 +401,13 @@ impl Interpreter {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
-    
+
         let rs_val = self.cpu.read_register32(rs) as i32;
         let rt_val = self.cpu.read_register32(rt) as i32;
         let taken = rs_val != rt_val;
         let offset = (imm << 2).wrapping_add(4) as u32;
         let target = branch_pc.wrapping_add(offset);
-    
+
         self.do_branch(branch_pc, taken, target, false);
     }
 
@@ -436,7 +493,7 @@ impl Interpreter {
     fn tlbwi(&mut self) {
         let index = (self.cpu.read_cop0_register(0) & 0x3F) as usize;
 
-        let entry_hi  = self.cpu.read_cop0_register(10);
+        let entry_hi = self.cpu.read_cop0_register(10);
         let entry_lo0 = self.cpu.read_cop0_register(2);
         let entry_lo1 = self.cpu.read_cop0_register(3);
         let page_mask = self.cpu.read_cop0_register(5);
@@ -444,19 +501,19 @@ impl Interpreter {
         let vpn2 = entry_hi >> 13;
         let asid = (entry_hi & 0xFF) as u8;
 
-        let s0   = ((entry_lo0 >> 31) & 0x1) != 0;
+        let s0 = ((entry_lo0 >> 31) & 0x1) != 0;
         let pfn0 = (entry_lo0 >> 6) & 0x000F_FFFF;
-        let c0   = ((entry_lo0 >> 3) & 0x7) as u8;
-        let d0   = ((entry_lo0 >> 2) & 0x1) != 0;
-        let v0   = ((entry_lo0 >> 1) & 0x1) != 0;
-        let g0   =  (entry_lo0 & 0x1) != 0;
+        let c0 = ((entry_lo0 >> 3) & 0x7) as u8;
+        let d0 = ((entry_lo0 >> 2) & 0x1) != 0;
+        let v0 = ((entry_lo0 >> 1) & 0x1) != 0;
+        let g0 = (entry_lo0 & 0x1) != 0;
 
-        let s1   = ((entry_lo1 >> 31) & 0x1) != 0;
+        let s1 = ((entry_lo1 >> 31) & 0x1) != 0;
         let pfn1 = (entry_lo1 >> 6) & 0x000F_FFFF;
-        let c1   = ((entry_lo1 >> 3) & 0x7) as u8;
-        let d1   = ((entry_lo1 >> 2) & 0x1) != 0;
-        let v1   = ((entry_lo1 >> 1) & 0x1) != 0;
-        let g1   =  (entry_lo1 & 0x1) != 0;
+        let c1 = ((entry_lo1 >> 3) & 0x7) as u8;
+        let d1 = ((entry_lo1 >> 2) & 0x1) != 0;
+        let v1 = ((entry_lo1 >> 1) & 0x1) != 0;
+        let g1 = (entry_lo1 & 0x1) != 0;
 
         let g = g0 | g1;
 
@@ -638,14 +695,14 @@ impl Interpreter {
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
         let dividend = self.cpu.read_register32(rs) as u64;
-        let divisor  = self.cpu.read_register32(rt) as u64;
+        let divisor = self.cpu.read_register32(rt) as u64;
 
         if divisor != 0 {
             let quot32 = dividend / divisor;
-            let rem32  = dividend % divisor;
+            let rem32 = dividend % divisor;
 
             self.cpu.write_lo0(quot32 as u64);
-            self.cpu.write_hi0(rem32  as u64);
+            self.cpu.write_hi0(rem32 as u64);
         }
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
@@ -653,12 +710,12 @@ impl Interpreter {
 
     fn beql(&mut self, opcode: u32) {
         let branch_pc = self.cpu.pc();
-        let rs  = ((opcode >> 21) & 0x1F) as usize;
-        let rt  = ((opcode >> 16) & 0x1F) as usize;
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
         let rs_val = self.cpu.read_register32(rs) as i32;
         let rt_val = self.cpu.read_register32(rt) as i32;
-        let taken  = rs_val == rt_val;
+        let taken = rs_val == rt_val;
         let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
         self.do_branch(branch_pc, taken, target, true);
     }
@@ -763,7 +820,7 @@ impl Interpreter {
         let sa = (opcode >> 6) & 0x1F;
 
         let shifted = (self.cpu.read_register32(rt) as i32) >> sa;
-        let result  = (shifted as i64) as u64;
+        let result = (shifted as i64) as u64;
         self.cpu.write_register64(rd, result);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
@@ -790,7 +847,7 @@ impl Interpreter {
         let pc = self.cpu.pc();
         let target = pc.wrapping_add(4) & 0xF000_0000;
         let jump_addr = target | ((opcode & 0x03FFFFFF) << 2);
-        
+
         let delay_pc = self.cpu.pc().wrapping_add(4);
         let slot_opcode = self.cpu.fetch_at(delay_pc);
         self.cpu.set_pc(delay_pc);
@@ -853,7 +910,10 @@ impl Interpreter {
         } else if dividend == i32::MIN && divisor == -1 {
             (i32::MIN, 0)
         } else {
-            (dividend.wrapping_div(divisor), dividend.wrapping_rem(divisor))
+            (
+                dividend.wrapping_div(divisor),
+                dividend.wrapping_rem(divisor),
+            )
         };
 
         let quot_128 = quot as i64 as i128;
@@ -897,9 +957,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs) as i32;
         let taken = rs_val <= 0;
 
-        let target = branch_pc
-            .wrapping_add(4)
-            .wrapping_add((imm << 2) as u32);
+        let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
 
         self.do_branch(branch_pc, taken, target, false);
     }
@@ -927,9 +985,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs) as i32;
         let taken = rs_val > 0;
 
-        let target = branch_pc
-            .wrapping_add(4)
-            .wrapping_add((imm << 2) as u32);
+        let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
 
         self.do_branch(branch_pc, taken, target, false);
     }
@@ -1108,6 +1164,200 @@ impl Interpreter {
         let word = (lo_u64 as u32) as u64;
 
         self.cpu.write_register(rt, word.into());
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsrav(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let s = self.cpu.read_register64(rs) & 0x3F;
+        let rt_val = self.cpu.read_register64(rt) as i64;
+        let result = (rt_val >> s) as u64;
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsll32(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = (opcode >> 6) & 0x1F;
+
+        let s = sa + 32;
+        let rt_val = self.cpu.read_register64(rt);
+        let result = rt_val << s;
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsra32(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = (opcode >> 6) & 0x1F;
+
+        let s = sa + 32;
+        let rt_val = self.cpu.read_register64(rt) as i64;
+        let result = (rt_val >> s) as u64;
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn xori(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode & 0xFFFF) as u64;
+
+        let rs_val = self.cpu.read_register64(rs);
+        let result = rs_val ^ imm;
+
+        self.cpu.write_register64(rt, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn mult1(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register32(rs) as i64;
+        let rt_val = self.cpu.read_register32(rt) as i64;
+
+        let rs_valid = rs_val == ((rs_val as i32) as i64);
+        let rt_valid = rt_val == ((rt_val as i32) as i64);
+
+        if !rs_valid || !rt_valid {
+            self.cpu.write_lo(0);
+            self.cpu.write_hi(0);
+            if rd != 0 {
+                self.cpu.write_register64(rd, 0);
+            }
+        } else {
+            let prod = (rs_val as i32 as i64) * (rt_val as i32 as i64);
+            let lo32 = prod as u32;
+            let hi32 = (prod >> 32) as u32;
+
+            let lo = (self.cpu.read_lo() & 0xFFFFFFFFFFFFFFFF) | ((lo32 as u128) << 64);
+            let hi = (self.cpu.read_hi() & 0xFFFFFFFFFFFFFFFF) | ((hi32 as u128) << 64);
+
+            self.cpu.write_lo(lo);
+            self.cpu.write_hi(hi);
+            if rd != 0 {
+                self.cpu.write_register64(rd, lo32 as u64);
+            }
+        }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn movz(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rt_val = self.cpu.read_register64(rt);
+        if rt_val == 0 {
+            let rs_val = self.cpu.read_register64(rs);
+            self.cpu.write_register64(rd, rs_val);
+        }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsrl(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = ((opcode >> 6) & 0x1F) as u32;
+
+        let value = self.cpu.read_register64(rt);
+        let result = value >> sa;
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn daddiu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i64;
+
+        let rs_val = self.cpu.read_register64(rs) as i64;
+        let result = rs_val.wrapping_add(imm);
+        self.cpu.write_register64(rt, result as u64);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsllv(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let sa = self.cpu.read_register64(rs) & 0x3F;
+        let value = self.cpu.read_register64(rt);
+        let result = value << sa;
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn lq(&mut self, opcode: u32) {
+        let base = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let offset = (opcode as i16) as i32;
+
+        let base_val = self.cpu.read_register32(base) as u32;
+        let vaddr = base_val.wrapping_add(offset as u32);
+        let aligned_addr = vaddr & !0xF;
+
+        let value = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read128)(bus.deref_mut(), aligned_addr)
+        };
+
+        self.cpu.write_register(rt, value.into());
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sq(&mut self, opcode: u32) {
+        let base = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let offset = (opcode as i16) as i32;
+
+        let base_val = self.cpu.read_register32(base) as u32;
+        let vaddr = base_val.wrapping_add(offset as u32);
+        let aligned_addr = vaddr & !0xF;
+
+        let value = self.cpu.read_register(rt);
+
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write128)(bus.deref_mut(), aligned_addr, value);
+        }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn lh(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let address = rs_val.wrapping_add(imm as u32);
+
+        let loaded_halfword = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read16)(bus.deref_mut(), address)
+        };
+
+        let result = loaded_halfword as i16 as i64 as u64;
+        self.cpu.write_register64(rt, result);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn cache(&mut self) {
+        // TODO: Implement CACHE instruction properly
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

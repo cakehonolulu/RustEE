@@ -1,22 +1,23 @@
+use tracing::{debug, trace};
 
 use super::{Bus, BusMode};
 
 #[derive(Clone, Copy, Debug)]
 pub struct TlbEntry {
-    pub vpn2: u32,        // Virtual Page Number / 2
-    pub asid: u8,         // Address Space Identifier
-    pub g: bool,          // Global bit
-    pub pfn0: u32,        // Page Frame Number (even page)
-    pub pfn1: u32,        // Page Frame Number (odd page)
-    pub c0: u8,           // Cache mode (even page)
-    pub c1: u8,           // Cache mode (odd page)
-    pub d0: bool,         // Dirty bit (write permission, even)
-    pub d1: bool,         // Dirty bit (write permission, odd)
-    pub v0: bool,         // Valid bit (even)
-    pub v1: bool,         // Valid bit (odd)
-    pub s0: bool,         // Scratchpad RAM flag (even)
-    pub s1: bool,         // Scratchpad RAM flag (odd)
-    pub mask: u32,        // Page size mask
+    pub vpn2: u32, // Virtual Page Number / 2
+    pub asid: u8,  // Address Space Identifier
+    pub g: bool,   // Global bit
+    pub pfn0: u32, // Page Frame Number (even page)
+    pub pfn1: u32, // Page Frame Number (odd page)
+    pub c0: u8,    // Cache mode (even page)
+    pub c1: u8,    // Cache mode (odd page)
+    pub d0: bool,  // Dirty bit (write permission, even)
+    pub d1: bool,  // Dirty bit (write permission, odd)
+    pub v0: bool,  // Valid bit (even)
+    pub v1: bool,  // Valid bit (odd)
+    pub s0: bool,  // Scratchpad RAM flag (even)
+    pub s1: bool,  // Scratchpad RAM flag (odd)
+    pub mask: u32, // Page size mask
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -46,7 +47,6 @@ pub enum Exception {
     AddressError,
 }
 
-
 pub struct Tlb {
     pub entries: [Option<TlbEntry>; 48],
     pub index: u32,
@@ -62,14 +62,14 @@ pub struct Tlb {
 
 pub fn mask_to_page_size(mask: u32) -> u32 {
     match mask {
-        0x0000_0000 => 4 * 1024,        // 4 KB
-        0x0000_6000 => 16 * 1024,       // 16 KB
-        0x0001_E000 => 64 * 1024,       // 64 KB
-        0x0007_E000 => 256 * 1024,      // 256 KB
-        0x001F_E000 => 1024 * 1024,     // 1 MB
-        0x007F_E000 => 4 * 1024 * 1024, // 4 MB
-        0x01FF_E000 => 16 * 1024 * 1024,// 16 MB
-        _ => 4 * 1024,                  // Default to 4 KB
+        0x0000_0000 => 4 * 1024,         // 4 KB
+        0x0000_6000 => 16 * 1024,        // 16 KB
+        0x0001_E000 => 64 * 1024,        // 64 KB
+        0x0007_E000 => 256 * 1024,       // 256 KB
+        0x001F_E000 => 1024 * 1024,      // 1 MB
+        0x007F_E000 => 4 * 1024 * 1024,  // 4 MB
+        0x01FF_E000 => 16 * 1024 * 1024, // 16 MB
+        _ => 4 * 1024,                   // Default to 4 KB
     }
 }
 
@@ -173,7 +173,11 @@ impl Tlb {
                 return Err(Exception::TlbInvalid);
             }
 
-            if let AccessType::WriteByte | AccessType::WriteHalfword | AccessType::WriteWord | AccessType::WriteDoubleword = access_type {
+            if let AccessType::WriteByte
+            | AccessType::WriteHalfword
+            | AccessType::WriteWord
+            | AccessType::WriteDoubleword = access_type
+            {
                 if !d {
                     self.bad_vaddr = va;
                     self.context = (va & 0xFFFF_E000) | (entry_index as u32);
@@ -195,11 +199,21 @@ impl Tlb {
     pub fn write_tlb_entry(&mut self, bus_ptr: *mut Bus, index: usize, entry: TlbEntry) {
         let bus = unsafe { &mut *bus_ptr };
 
+        // Validate index
+        if index >= self.entries.len() {
+            panic!("TLB index out of bounds: {}", index);
+        }
+
+        // TODO: Figure out if a CPU bug is making this happen
+        if entry.vpn2 == 0 && (!entry.v0 || !entry.v1) {
+            trace!("Skipping invalid TLB entry for 0x00000000: {:?}", entry);
+            return;
+        }
+
         if let Some(old_entry) = self.entries[index] {
             if bus.mode == BusMode::HardwareFastMem {
                 self.clear_hw_fastmem_mapping(bus, &old_entry);
-            }
-            else if bus.mode == BusMode::SoftwareFastMem {
+            } else if bus.mode == BusMode::SoftwareFastMem {
                 self.clear_sw_fastmem_mapping(bus, &old_entry);
             }
         }

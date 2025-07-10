@@ -25,7 +25,7 @@ tracing-subscriber = "0.3.19"
 windows-sys = { version = "0.59.0", features = ["Win32_System_Kernel", "Win32_System_SystemInformation"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30.0", features = ["signal"] }
+nix = { version = "0.30.0", features = ["signal", "mman", "fs"] }
 
 [dev-dependencies]
 criterion = "0.5.1"
