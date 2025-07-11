@@ -1,53 +1,53 @@
 #[repr(u8)]
 enum RDRAMCommand {
-    SRD     = 0b0000,
-    SWR     = 0b0001,
-    SETR    = 0b0010,
-    SETF    = 0b0100,
-    CLRR    = 0b1011,
+    SRD = 0b0000,
+    SWR = 0b0001,
+    SETR = 0b0010,
+    SETF = 0b0100,
+    CLRR = 0b1011,
 }
 
 #[repr(u16)]
 enum RDRAMRegister {
-    INIT    = 0x021,
-    TEST34  = 0x022,
-    NAPX    = 0x045,
-    DEVID   = 0x040,
-    CCA     = 0x043,
-    CCB     = 0x044,
-    PDNXA   = 0x046,
-    PDNX    = 0x047,
-    TPARM   = 0x048,
-    TFRM    = 0x049,
-    TCDLY1  = 0x04A,
-    SKIP    = 0x04B,
-    TCYCLE  = 0x04C,
-    TEST77  = 0x04D,
-    TEST78  = 0x04E,
+    INIT = 0x021,
+    TEST34 = 0x022,
+    NAPX = 0x045,
+    DEVID = 0x040,
+    CCA = 0x043,
+    CCB = 0x044,
+    PDNXA = 0x046,
+    PDNX = 0x047,
+    TPARM = 0x048,
+    TFRM = 0x049,
+    TCDLY1 = 0x04A,
+    SKIP = 0x04B,
+    TCYCLE = 0x04C,
+    TEST77 = 0x04D,
+    TEST78 = 0x04E,
 }
 
 #[derive(Clone, Copy)]
 struct RDRAM_IC {
-    init: u16,    // 14-bit register, using u16
-    test34: u16,  // 16-bit register
-    cnfga: u16,   // 16-bit register
-    cnfgb: u16,   // 16-bit register
-    devid: u8,    // 5-bit register
-    refb: u8,     // 5-bit register
-    refr: u16,    // 9-bit register
-    cca: u8,      // 8-bit register
-    ccb: u8,      // 8-bit register
-    napx: u16,    // 11-bit register
-    pdnxa: u8,    // 6-bit register
-    pdnx: u16,    // 3-bit register, using u16 as in C++
-    tparm: u8,    // 7-bit register
-    tfrm: u8,     // 4-bit register
-    tcdly1: u8,   // 2-bit register
-    tcycle: u8,   // 6-bit register
-    skip: u8,     // 3-bit register
-    test77: u16,  // 16-bit register
-    test78: u16,  // 16-bit register
-    test79: u16,  // 16-bit register
+    init: u16,   // 14-bit register, using u16
+    test34: u16, // 16-bit register
+    cnfga: u16,  // 16-bit register
+    cnfgb: u16,  // 16-bit register
+    devid: u8,   // 5-bit register
+    refb: u8,    // 5-bit register
+    refr: u16,   // 9-bit register
+    cca: u8,     // 8-bit register
+    ccb: u8,     // 8-bit register
+    napx: u16,   // 11-bit register
+    pdnxa: u8,   // 6-bit register
+    pdnx: u16,   // 3-bit register, using u16 as in C++
+    tparm: u8,   // 7-bit register
+    tfrm: u8,    // 4-bit register
+    tcdly1: u8,  // 2-bit register
+    tcycle: u8,  // 6-bit register
+    skip: u8,    // 3-bit register
+    test77: u16, // 16-bit register
+    test78: u16, // 16-bit register
+    test79: u16, // 16-bit register
 }
 
 pub struct RDRAM {
@@ -57,8 +57,8 @@ pub struct RDRAM {
 }
 
 impl RDRAM {
-    const MCH_RICM: u32 = 0xB000F430;
-    const MCH_DRD: u32 = 0xB000F440;
+    const MCH_RICM: u32 = 0x1000F430;
+    const MCH_DRD: u32 = 0x1000F440;
 
     pub fn new() -> Self {
         RDRAM {
@@ -114,12 +114,12 @@ impl RDRAM {
     fn cmd(&mut self) {
         let sop = (self.mch_ricm_ >> 6) & 0xF;
         match sop {
-            0b0000 => self.srd(),    // SRD
-            0b0001 => self.swr(),    // SWR
-            0b0010 => self.setr(),   // SETR
-            0b0100 => {},            // SETF (unimplemented)
-            0b1011 => {},            // CLRR (unimplemented)
-            0b1110 => {},            // RSRV (unimplemented)
+            0b0000 => self.srd(),  // SRD
+            0b0001 => self.swr(),  // SWR
+            0b0010 => self.setr(), // SETR
+            0b0100 => {}           // SETF (unimplemented)
+            0b1011 => {}           // CLRR (unimplemented)
+            0b1110 => {}           // RSRV (unimplemented)
             _ => panic!("Unhandled RDRAM controller command: 0b{:04b}", sop),
         }
         self.mch_ricm_ &= !(1 << 31); // Clear busy bit
@@ -129,7 +129,8 @@ impl RDRAM {
         let reg = (self.mch_ricm_ >> 16) & 0xFFF;
         let sdevid = (((self.mch_ricm_ >> 10) & 1) << 5) | (self.mch_ricm_ & 0x1F);
         match reg {
-            0x021 => { // INIT
+            0x021 => {
+                // INIT
                 self.mch_drd_ = 0;
                 for ic in &self.rdram_ic {
                     if (ic.init & 0x3F) as u32 == sdevid {
@@ -138,7 +139,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x040 => { // DEVID
+            0x040 => {
+                // DEVID
                 self.mch_drd_ = 0;
                 for ic in &self.rdram_ic {
                     if (ic.init & 0x3F) as u32 == sdevid {
@@ -156,7 +158,8 @@ impl RDRAM {
         let sdevid = (((self.mch_ricm_ >> 10) & 1) << 5) | (self.mch_ricm_ & 0x1F);
         let sbc = (self.mch_ricm_ & (1 << 5)) != 0;
         match reg {
-            0x021 => { // INIT
+            0x021 => {
+                // INIT
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.init = (self.mch_drd_ & 0x3FFF) as u16;
@@ -170,7 +173,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x022 => { // TEST34
+            0x022 => {
+                // TEST34
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.test34 = (self.mch_drd_ & 0xFFFF) as u16;
@@ -184,7 +188,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x045 => { // NAPX
+            0x045 => {
+                // NAPX
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.napx = (self.mch_drd_ & 0x7FF) as u16;
@@ -198,7 +203,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x040 => { // DEVID
+            0x040 => {
+                // DEVID
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.devid = (self.mch_drd_ & 0x1F) as u8;
@@ -212,7 +218,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x043 => { // CCA
+            0x043 => {
+                // CCA
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.cca = (self.mch_drd_ & 0xFF) as u8;
@@ -226,7 +233,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x044 => { // CCB
+            0x044 => {
+                // CCB
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.ccb = (self.mch_drd_ & 0xFF) as u8;
@@ -240,7 +248,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x046 => { // PDNXA
+            0x046 => {
+                // PDNXA
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.pdnxa = (self.mch_drd_ & 0x3F) as u8;
@@ -254,7 +263,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x047 => { // PDNX
+            0x047 => {
+                // PDNX
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.pdnx = (self.mch_drd_ & 0x7) as u16;
@@ -268,7 +278,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x048 => { // TPARM
+            0x048 => {
+                // TPARM
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.tparm = (self.mch_drd_ & 0x7F) as u8;
@@ -282,7 +293,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x049 => { // TFRM
+            0x049 => {
+                // TFRM
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.tfrm = (self.mch_drd_ & 0xF) as u8;
@@ -296,7 +308,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x04A => { // TCDLY1
+            0x04A => {
+                // TCDLY1
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.tcdly1 = (self.mch_drd_ & 0x3) as u8;
@@ -310,7 +323,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x04B => { // SKIP
+            0x04B => {
+                // SKIP
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.skip = (self.mch_drd_ & 0x7) as u8;
@@ -324,7 +338,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x04C => { // TCYCLE
+            0x04C => {
+                // TCYCLE
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.tcycle = (self.mch_drd_ & 0x3F) as u8;
@@ -338,7 +353,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x04D => { // TEST77
+            0x04D => {
+                // TEST77
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.test77 = (self.mch_drd_ & 0xFFFF) as u16;
@@ -352,7 +368,8 @@ impl RDRAM {
                     }
                 }
             }
-            0x04E => { // TEST78
+            0x04E => {
+                // TEST78
                 if sbc {
                     for ic in &mut self.rdram_ic {
                         ic.test78 = (self.mch_drd_ & 0xFFFF) as u16;

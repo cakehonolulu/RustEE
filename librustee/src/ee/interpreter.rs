@@ -105,6 +105,15 @@ impl Interpreter {
                     0x03 => {
                         self.sra(opcode);
                     }
+                    0x04 => {
+                        self.sllv(opcode);
+                    }
+                    0x06 => {
+                        self.srlv(opcode);
+                    }
+                    0x07 => {
+                        self.srav(opcode);
+                    }
                     0x08 => {
                         self.jr(opcode);
                     }
@@ -156,13 +165,25 @@ impl Interpreter {
                     0x25 => {
                         self.or(opcode);
                     }
+                    0x27 => {
+                        self.nor(opcode);
+                    }
                     0x2A => self.slt(opcode),
                     0x2B => self.sltu(opcode),
                     0x2D => {
                         self.daddu(opcode);
                     }
+                    0x38 => {
+                        self.dsll(opcode);
+                    }
+                    0x3A => {
+                        self.dsrl(opcode);
+                    }
                     0x3C => {
                         self.dsll32(opcode);
+                    }
+                    0x3E => {
+                        self.dsrl32(opcode);
                     }
                     0x3F => {
                         self.dsra32(opcode);
@@ -257,6 +278,29 @@ impl Interpreter {
                     }
                 }
             }
+            0x11 => {
+                // COP1
+                self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+            }
+            0x12 => {
+                let subfunction = (opcode >> 21) & 0x1F;
+                match subfunction {
+                    0x02 => {
+                        self.cfc2(opcode);
+                    }
+                    0x06 => {
+                        self.ctc2(opcode);
+                    }
+                    0x18 => {
+                        // TODO: viswr.x
+                        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+                    }
+                    _ => {
+                        //
+                        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+                    }
+                }
+            }
             0x14 => {
                 self.beql(opcode);
             }
@@ -265,6 +309,12 @@ impl Interpreter {
             }
             0x19 => {
                 self.daddiu(opcode);
+            }
+            0x1A => {
+                self.ldl(opcode);
+            }
+            0x1B => {
+                self.ldr(opcode);
             }
             0x1C => {
                 let subfunction = opcode & 0x3F;
@@ -322,6 +372,9 @@ impl Interpreter {
             0x25 => {
                 self.lhu(opcode);
             }
+            0x27 => {
+                self.lwu(opcode);
+            }
             0x28 => {
                 self.sb(opcode);
             }
@@ -330,6 +383,12 @@ impl Interpreter {
             }
             0x2B => {
                 self.sw(opcode);
+            }
+            0x2C => {
+                self.sdl(opcode);
+            }
+            0x2D => {
+                self.sdr(opcode);
             }
             0x2F => {
                 self.cache();
@@ -1358,6 +1417,238 @@ impl Interpreter {
 
     fn cache(&mut self) {
         // TODO: Implement CACHE instruction properly
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sllv(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let sa = (self.cpu.read_register64(rs) & 0x1F) as u32;
+        let value = self.cpu.read_register64(rt) as u32;
+        let result = (value << sa) as i64;
+        self.cpu.write_register64(rd, result.try_into().unwrap());
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsll(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa = (opcode >> 6) & 0x1F;
+
+        let rt_val = self.cpu.read_register64(rt);
+        let result = rt_val << sa;
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn srav(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let s = (self.cpu.read_register64(rs) & 0x1F) as u32;
+        let rt_val = self.cpu.read_register64(rt) as i32;
+        let result = (rt_val >> s) as i64;
+
+        self.cpu.write_register64(rd, result.try_into().unwrap());
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn nor(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register64(rs);
+        let rt_val = self.cpu.read_register64(rt);
+        let result = !(rs_val | rt_val);
+
+        self.cpu.write_register64(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn cfc2(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let vi = ((opcode >> 11) & 0x1F) as usize;
+
+        let vi_val = if vi == 0 || vi > 15 {
+            0 // VI[0] is read-only (returns 0), and out-of-range VI indices return 0
+        } else {
+            self.cpu.vu0.vi[vi]
+        };
+        let result = vi_val as i16 as i64 as u64; // Sign-extend to 64-bit
+        self.cpu.write_register64(rt, result);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn ctc2(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let vi = ((opcode >> 11) & 0x1F) as usize;
+
+        if vi != 0 && vi <= 15 {
+            // VI[0] is read-only, and ignore out-of-range VI indices
+            let rt_val = self.cpu.read_register64(rt);
+            self.cpu.vu0.vi[vi] = rt_val as u16;
+        }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn lwu(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let address = rs_val.wrapping_add(imm as u32);
+
+        let loaded_word = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read32)(bus.deref_mut(), address)
+        };
+
+        let result = loaded_word as u64;
+        self.cpu.write_register64(rt, result);
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn ldl(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let v_addr = rs_val.wrapping_add(imm as u32);
+        let byte = v_addr & 0x7; // 0..7
+        let p_addr = v_addr & !0x7;
+
+        let mem_quad = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read64)(bus.deref_mut(), p_addr)
+        };
+
+        let rt_val = self.cpu.read_register64(rt);
+        let shift = (7 - byte) * 8; // max (7-0)*8 = 56
+        let mask = !0u64 >> (byte * 8);
+        let mem_bytes = mem_quad << shift;
+        let result = (rt_val & mask) | mem_bytes;
+
+        self.cpu.write_register64(rt, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn ldr(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let v_addr = rs_val.wrapping_add(imm as u32);
+        let byte = v_addr & 0x7; // 0..7
+        let p_addr = v_addr & !0x7;
+
+        let mem_quad = {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.read64)(bus.deref_mut(), p_addr)
+        };
+
+        let rt_val = self.cpu.read_register64(rt);
+        let shift = byte * 8; // max 56
+        let mem_bytes = mem_quad >> shift;
+
+        // **Guard the 64‑bit shift** here:
+        let mask_shift = (8 - byte) * 8;
+        let mask = if mask_shift < 64 {
+            !0u64 << mask_shift
+        } else {
+            0
+        };
+
+        let result = (rt_val & mask) | mem_bytes;
+
+        self.cpu.write_register64(rt, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sdl(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let v_addr = rs_val.wrapping_add(imm as u32);
+        let byte = v_addr & 0x7; // 0..7
+        let p_addr = v_addr & !0x7;
+
+        let rt_val = self.cpu.read_register64(rt);
+        let shift = (7 - byte) * 8; // max 56
+        let data_quad = rt_val >> shift;
+
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write64)(bus.deref_mut(), p_addr, data_quad);
+        }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn sdr(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let imm = (opcode as i16) as i32;
+
+        let rs_val = self.cpu.read_register32(rs);
+        let v_addr = rs_val.wrapping_add(imm as u32);
+        let byte = v_addr & 0x7; // 0..7
+        let p_addr = v_addr & !0x7;
+
+        let rt_val = self.cpu.read_register64(rt);
+        let shift = byte * 8; // max 56
+        let data_quad = rt_val << shift;
+
+        {
+            let mut bus = self.cpu.bus.lock().unwrap();
+            (bus.write64)(bus.deref_mut(), p_addr, data_quad);
+        }
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn srlv(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize; // shift‐amount register
+        let rt = ((opcode >> 16) & 0x1F) as usize; // value register
+        let rd = ((opcode >> 11) & 0x1F) as usize; // destination
+
+        let val64 = self.cpu.read_register64(rt);
+        let word = val64 as u32; // take low 32 bits
+        let shamt = (self.cpu.read_register64(rs) & 0x1F) as u32;
+
+        let shifted32 = word >> shamt; // logical right on 32‐bit
+        // sign‑extend the 32‑bit result back to 64:
+        let result64 = (shifted32 as i32) as i64 as u64;
+
+        self.cpu.write_register64(rd, result64);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn dsrl32(&mut self, opcode: u32) {
+        // decode fields
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+        let sa5 = ((opcode >> 6) & 0x1F) as u32;
+
+        // compute full shift = sa5 + 32
+        let shift = sa5 + 32;
+
+        // read, shift, write
+        let val = self.cpu.read_register64(rt);
+        let result = val >> shift;
+        self.cpu.write_register64(rd, result);
+
+        // advance PC
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }

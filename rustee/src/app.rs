@@ -1,24 +1,24 @@
-use std::collections::HashMap;
 use crate::egui_tools::EguiRenderer;
-use egui_wgpu::wgpu::SurfaceError;
-use egui_wgpu::{wgpu, ScreenDescriptor};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use capstone::arch::BuildsCapstone;
+use capstone::arch::BuildsCapstoneEndian;
+use capstone::arch::mips::ArchMode::Mips64;
 use capstone::{Capstone, Endian};
 use egui::{Color32, FontId, Grid, RichText, ScrollArea, TextStyle};
 use egui_extras::{Column, TableBuilder};
+use egui_wgpu::wgpu::SurfaceError;
+use egui_wgpu::{ScreenDescriptor, wgpu};
+use librustee::Bus;
+use librustee::cpu::CPU;
+use librustee::cpu::EmulationBackend;
+use librustee::ee::{EE, Interpreter, JIT};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
-use librustee::Bus;
-use librustee::ee::{EE, Interpreter, JIT};
-use librustee::cpu::EmulationBackend;
-use capstone::arch::BuildsCapstone;
-use capstone::arch::BuildsCapstoneEndian;
-use capstone::arch::mips::ArchMode::Mips64;
-use librustee::cpu::CPU;
 
 pub struct AppState {
     pub device: wgpu::Device,
@@ -118,7 +118,11 @@ impl Disassembler {
         Ok(Self { cs })
     }
 
-    pub fn disassemble(&self, bytes: &[u8], base_addr: u64) -> Result<Vec<String>, capstone::Error> {
+    pub fn disassemble(
+        &self,
+        bytes: &[u8],
+        base_addr: u64,
+    ) -> Result<Vec<String>, capstone::Error> {
         let insns = self.cs.disasm_all(bytes, base_addr)?;
 
         let mut results = Vec::new();
@@ -213,7 +217,7 @@ impl App {
             initial_width,
             initial_width,
         )
-            .await;
+        .await;
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
@@ -243,7 +247,8 @@ impl App {
 
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [state.surface_config.width, state.surface_config.height],
-            pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32 * state.scale_factor,
+            pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32
+                * state.scale_factor,
         };
 
         let surface_texture = state.surface.get_current_texture();
@@ -304,7 +309,8 @@ impl App {
                     for timer in self.cop0_change_ee_timers.values_mut() {
                         *timer -= delta;
                     }
-                    self.cop0_change_ee_timers.retain(|_, &mut timer| timer > 0.0);
+                    self.cop0_change_ee_timers
+                        .retain(|_, &mut timer| timer > 0.0);
 
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut self.selected_ee_tab, 0, "GP Registers");
@@ -323,8 +329,12 @@ impl App {
                                         .column(Column::auto().resizable(true))
                                         .column(Column::remainder())
                                         .header(20.0, |mut header| {
-                                            header.col(|ui| { ui.label("Name"); });
-                                            header.col(|ui| { ui.label("Value"); });
+                                            header.col(|ui| {
+                                                ui.label("Name");
+                                            });
+                                            header.col(|ui| {
+                                                ui.label("Value");
+                                            });
                                         })
                                         .body(|mut body| {
                                             for (i, &value) in ee.registers.iter().enumerate() {
@@ -333,7 +343,9 @@ impl App {
                                                     "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
                                                     "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
                                                     "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
-                                                ].get(i).unwrap_or(&"UNK");
+                                                ]
+                                                .get(i)
+                                                .unwrap_or(&"UNK");
 
                                                 let animation_progress = self
                                                     .change_ee_timers
@@ -346,13 +358,17 @@ impl App {
                                                     let r = 255.0;
                                                     let g = 255.0 * (1.0 - t);
                                                     let b = 255.0 * (1.0 - t);
-                                                    egui::Color32::from_rgb(r as u8, g as u8, b as u8)
+                                                    egui::Color32::from_rgb(
+                                                        r as u8, g as u8, b as u8,
+                                                    )
                                                 } else {
                                                     egui::Color32::WHITE
                                                 };
 
                                                 body.row(18.0, |mut row| {
-                                                    row.col(|ui| { ui.label(*name); });
+                                                    row.col(|ui| {
+                                                        ui.label(*name);
+                                                    });
                                                     row.col(|ui| {
                                                         ui.colored_label(
                                                             text_color,
@@ -363,20 +379,43 @@ impl App {
                                             }
 
                                             body.row(1.0, |mut row| {
-                                                row.col(|ui| { ui.separator(); });
+                                                row.col(|ui| {
+                                                    ui.separator();
+                                                });
                                             });
 
                                             body.row(18.0, |mut row| {
-                                                row.col(|ui| { ui.label("hi"); });
-                                                row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#034X}", ee.hi)); });
+                                                row.col(|ui| {
+                                                    ui.label("hi");
+                                                });
+                                                row.col(|ui| {
+                                                    ui.colored_label(
+                                                        egui::Color32::WHITE,
+                                                        format!("{:#034X}", ee.hi),
+                                                    );
+                                                });
                                             });
                                             body.row(18.0, |mut row| {
-                                                row.col(|ui| { ui.label("lo"); });
-                                                row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#034X}", ee.lo)); });
+                                                row.col(|ui| {
+                                                    ui.label("lo");
+                                                });
+                                                row.col(|ui| {
+                                                    ui.colored_label(
+                                                        egui::Color32::WHITE,
+                                                        format!("{:#034X}", ee.lo),
+                                                    );
+                                                });
                                             });
                                             body.row(18.0, |mut row| {
-                                                row.col(|ui| { ui.label("pc"); });
-                                                row.col(|ui| { ui.colored_label(egui::Color32::WHITE, format!("{:#010X}", ee.pc)); });
+                                                row.col(|ui| {
+                                                    ui.label("pc");
+                                                });
+                                                row.col(|ui| {
+                                                    ui.colored_label(
+                                                        egui::Color32::WHITE,
+                                                        format!("{:#010X}", ee.pc),
+                                                    );
+                                                });
                                             });
                                         });
                                 });
@@ -391,21 +430,30 @@ impl App {
                                         .column(Column::auto().resizable(true))
                                         .column(Column::remainder())
                                         .header(20.0, |mut header| {
-                                            header.col(|ui| { ui.label("Register"); });
-                                            header.col(|ui| { ui.label("Value"); });
+                                            header.col(|ui| {
+                                                ui.label("Register");
+                                            });
+                                            header.col(|ui| {
+                                                ui.label("Value");
+                                            });
                                         })
                                         .body(|mut body| {
                                             let cop0 = ee.cop0_registers.read().unwrap();
                                             for (i, &value) in cop0.iter().enumerate() {
                                                 let name = [
-                                                    "Index", "Random", "EntryLo0", "EntryLo1", "Context",
-                                                    "PageMask", "Wired", "", "BadVAddr", "Count", "EntryHi",
-                                                    "Compare", "Status", "Cause", "EPC", "PRId", "Config",
-                                                    "", "", "", "", "", "", "BadPAddr", "Debug", "Perf",
-                                                    "", "", "TagLo", "TagHi", "ErrorEPC", ""
-                                                ].get(i).unwrap_or(&"UNK");
+                                                    "Index", "Random", "EntryLo0", "EntryLo1",
+                                                    "Context", "PageMask", "Wired", "", "BadVAddr",
+                                                    "Count", "EntryHi", "Compare", "Status",
+                                                    "Cause", "EPC", "PRId", "Config", "", "", "",
+                                                    "", "", "", "BadPAddr", "Debug", "Perf", "",
+                                                    "", "TagLo", "TagHi", "ErrorEPC", "",
+                                                ]
+                                                .get(i)
+                                                .unwrap_or(&"UNK");
 
-                                                if name.is_empty() { continue; }
+                                                if name.is_empty() {
+                                                    continue;
+                                                }
 
                                                 let animation_progress = self
                                                     .cop0_change_ee_timers
@@ -418,13 +466,17 @@ impl App {
                                                     let r = 255.0;
                                                     let g = 255.0 * (1.0 - t);
                                                     let b = 255.0 * (1.0 - t);
-                                                    egui::Color32::from_rgb(r as u8, g as u8, b as u8)
+                                                    egui::Color32::from_rgb(
+                                                        r as u8, g as u8, b as u8,
+                                                    )
                                                 } else {
                                                     egui::Color32::WHITE
                                                 };
 
                                                 body.row(18.0, |mut row| {
-                                                    row.col(|ui| { ui.label(*name); });
+                                                    row.col(|ui| {
+                                                        ui.label(*name);
+                                                    });
                                                     row.col(|ui| {
                                                         ui.colored_label(
                                                             text_color,
@@ -480,14 +532,17 @@ impl App {
                     let mut bytes = Vec::new();
                     for offset in 0..num_instructions {
                         let addr = pc.wrapping_add(offset * 4);
-                        let word = ee.read32_raw(addr);
+                        let word = ee.read32(addr);
                         bytes.extend_from_slice(&word.to_le_bytes());
                     }
 
-                    let disasm = self.disassembler.disassemble(&bytes, pc as u64).unwrap_or_else(|err| {
-                        eprintln!("Error during disassembly: {}", err);
-                        vec!["Disassembly error".to_string()]
-                    });
+                    let disasm = self
+                        .disassembler
+                        .disassemble(&bytes, pc as u64)
+                        .unwrap_or_else(|err| {
+                            eprintln!("Error during disassembly: {}", err);
+                            vec!["Disassembly error".to_string()]
+                        });
 
                     egui::Window::new("Disassembly")
                         .resizable(true)
@@ -498,7 +553,8 @@ impl App {
                                 .show(ui, |ui| {
                                     let current_pc = ee.pc as u64;
                                     let style = ui.style();
-                                    let mono_font: FontId = style.text_styles[&TextStyle::Monospace].clone();
+                                    let mono_font: FontId =
+                                        style.text_styles[&TextStyle::Monospace].clone();
                                     let available_width = ui.available_width();
                                     ui.set_min_width(available_width);
 
@@ -507,18 +563,32 @@ impl App {
                                         .min_col_width(0f32)
                                         .show(ui, |ui| {
                                             for line in &disasm {
-                                                if let Some((addr_str, rest)) = line.split_once(':') {
-                                                    let address = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16)
-                                                        .unwrap_or(0);
-                                                    let addr_text = RichText::new(format!("0x{:08x}:", address))
-                                                        .font(mono_font.clone())
-                                                        .color(if address == current_pc { Color32::LIGHT_BLUE } else { Color32::GRAY });
-
-                                                    let (mnemonic, operands) = if let Some((m, ops)) = rest.trim().split_once('\t') {
-                                                        (m, ops)
+                                                if let Some((addr_str, rest)) = line.split_once(':')
+                                                {
+                                                    let address = u64::from_str_radix(
+                                                        addr_str.trim_start_matches("0x"),
+                                                        16,
+                                                    )
+                                                    .unwrap_or(0);
+                                                    let addr_text = RichText::new(format!(
+                                                        "0x{:08x}:",
+                                                        address
+                                                    ))
+                                                    .font(mono_font.clone())
+                                                    .color(if address == current_pc {
+                                                        Color32::LIGHT_BLUE
                                                     } else {
-                                                        (rest.trim(), "")
-                                                    };
+                                                        Color32::GRAY
+                                                    });
+
+                                                    let (mnemonic, operands) =
+                                                        if let Some((m, ops)) =
+                                                            rest.trim().split_once('\t')
+                                                        {
+                                                            (m, ops)
+                                                        } else {
+                                                            (rest.trim(), "")
+                                                        };
 
                                                     let mnemonic_text = RichText::new(mnemonic)
                                                         .font(mono_font.clone())
@@ -537,8 +607,6 @@ impl App {
                                         });
                                 });
                         });
-
-
                 }
             }
 
@@ -555,7 +623,6 @@ impl App {
         state.queue.submit(Some(encoder.finish()));
         surface_texture.present();
     }
-
 }
 
 impl ApplicationHandler for App {

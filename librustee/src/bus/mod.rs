@@ -14,7 +14,10 @@ mod rdram;
 mod sw_fastmem;
 pub mod tlb;
 
+use crate::ee::dmac::EE_Dmac;
+use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
+use crate::ee::timer::Timers;
 
 use tlb::{OperatingMode, Tlb};
 
@@ -76,6 +79,9 @@ pub struct Bus {
 
     pub sio: SIO,
     rdram: RDRAM,
+    ee_intc: INTC,
+    ee_timer: Timers,
+    ee_dmac: EE_Dmac,
 
     mode: BusMode,
 
@@ -87,6 +93,8 @@ pub struct Bus {
     arena: Option<region::Allocation>,
 
     pub cop0_registers: Arc<RwLock<[u32; 32]>>,
+
+    dev9_delay3: u32,
 
     // Function pointers for read/write operations
     pub read8: fn(&mut Self, u32) -> u8,
@@ -101,6 +109,8 @@ pub struct Bus {
     pub write128: fn(&mut Self, u32, u128),
 }
 
+unsafe impl Send for Bus {}
+
 impl Bus {
     pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Box<Bus> {
         let mut bus = Box::new(Bus {
@@ -111,7 +121,11 @@ impl Bus {
             page_write: vec![0; NUM_PAGES],
             sio: SIO::new(),
             rdram: RDRAM::new(),
+            ee_intc: INTC::new(),
+            ee_timer: Timers::new(),
+            ee_dmac: EE_Dmac::new(),
             mode: mode.clone(),
+            dev9_delay3: 0,
             read8: Bus::sw_fmem_read8,
             read16: Bus::sw_fmem_read16,
             read32: Bus::sw_fmem_read32,
@@ -193,9 +207,10 @@ impl Bus {
         (entry_hi & 0xFF) as u8
     }
 
-    pub fn io_write8(&mut self, addr: u32, value: u8) {
+    pub fn io_write8(&mut self, mut addr: u32, value: u8) {
+        addr &= 0x1FFFFFFF;
         match addr {
-            0xB000F180 => {
+            0x1000F180 => {
                 self.sio.write(addr, value);
             }
             _ => {
@@ -207,22 +222,53 @@ impl Bus {
         }
     }
 
-    pub fn io_write32(&mut self, addr: u32, value: u32) {
+    pub fn io_write16(&mut self, mut addr: u32, value: u16) {
+        addr &= 0x1FFFFFFF;
         match addr {
-            0xB000F100 | 0xB000F110 | 0xB000F120 | 0xB000F130 | 0xB000F140 | 0xB000F150
-            | 0xB000F180 | 0xB000F1C0 => {
+            0x1F801470 | 0x1F801472 => {}
+            0x1A000006 | 0x1A000008 => {}
+            _ => {
+                panic!(
+                    "Invalid IO write16: addr=0x{:08X}, value=0x{:08X}",
+                    addr, value
+                );
+            }
+        }
+    }
+
+    pub fn io_write32(&mut self, mut addr: u32, value: u32) {
+        addr &= 0x1FFFFFFF;
+        match addr {
+            0x10000000..=0x10001830 => {
+                self.ee_timer.write32(addr, value);
+            }
+            0x10008000..=0x1000D4FF => {
+                self.ee_dmac.write_register(addr, value);
+            }
+            0x1000E000..=0x1000E050 => {
+                self.ee_dmac.write_register(addr, value);
+            }
+            0x1000F000 | 0x1000F010 => {
+                self.ee_intc.write32(addr, value);
+            }
+            0x1000F100 | 0x1000F110 | 0x1000F120 | 0x1000F130 | 0x1000F140 | 0x1000F150
+            | 0x1000F180 | 0x1000F1C0 => {
                 self.sio.write(addr, value);
             }
-            0xB000F400 | 0xB000F410 | 0xB000F420 => {}
-            0xB000F430 | 0xB000F440 => {
+            0x1000F400 | 0x1000F410 | 0x1000F420 => {}
+            0x1000F430 | 0x1000F440 => {
                 self.rdram.write(addr, value);
             }
-            0xB000F450 | 0xB000F460 => {}
-            0xB000F480 => {}
-            0xB000F490 => {}
-            0xB000F500 => {
+            0x1000F450 | 0x1000F460 => {}
+            0x1000F480 => {}
+            0x1000F490 => {}
+            0x1000F500 => {
                 debug!("Memory controller (?) 32-bit write");
             }
+            0x1000F510..=0x1000F590 => {
+                self.ee_dmac.write_register(addr, value);
+            }
+            0x1F80141C => self.dev9_delay3 = value,
             _ => {
                 panic!(
                     "Invalid IO write32: addr=0x{:08X}, value=0x{:08X}",
@@ -232,19 +278,28 @@ impl Bus {
         }
     }
 
-    pub fn io_read16(&mut self, addr: u32) -> u16 {
+    pub fn io_read16(&mut self, mut addr: u32) -> u16 {
+        addr &= 0x1FFFFFFF;
         match addr {
+            0x1F803800 => 0,
             _ => {
                 panic!("Invalid IO read16: addr=0x{:08X}", addr);
             }
         }
     }
 
-    pub fn io_read32(&mut self, addr: u32) -> u32 {
+    pub fn io_read32(&mut self, mut addr: u32) -> u32 {
+        addr &= 0x1FFFFFFF;
         match addr {
-            0xB000F130 => self.sio.read(addr),
-            0xB000F400 | 0xB000F410 => 0,
-            0xB000F430 | 0xB000F440 => self.rdram.read(addr),
+            0x10008000..=0x1000D4FF => self.ee_dmac.read_register(addr),
+            0x1000E000..=0x1000E050 => self.ee_dmac.read_register(addr),
+            0x1000F000 | 0x1000F010 => self.ee_intc.read32(addr),
+            0x1000F130 => self.sio.read(addr),
+            0x1000F400 | 0x1000F410 => 0,
+            0x1000F430 | 0x1000F440 => self.rdram.read(addr),
+            0x1000F510..=0x1000F590 => self.ee_dmac.read_register(addr),
+            0x1C0003C0 => 0,
+            0x1F80141C => self.dev9_delay3,
             _ => {
                 panic!("Invalid IO read32: addr=0x{:08X}", addr);
             }

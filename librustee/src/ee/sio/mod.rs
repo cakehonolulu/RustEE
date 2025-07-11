@@ -73,31 +73,31 @@ impl SIO {
     pub fn write<V: SIOValue>(&mut self, address: u32, value: V) {
         trace!("SIO::write: self={:p}, address=0x{:08X}, value=0x{:08X}", self, address, value.to_u32());
         match address {
-            0xB000F100 => {
+            0x1000F100 => {
                 trace!("LCR Write: 0x{:08X}", value.to_u32());
                 self.registers.lcr = value.to_u32();
             }
-            0xB000F110 => {
+            0x1000F110 => {
                 trace!("LSR Write: 0x{:08X}", value.to_u32());
                 self.registers.lsr = value.to_u32();
             }
-            0xB000F120 => {
+            0x1000F120 => {
                 trace!("IER Write: 0x{:08X}", value.to_u32());
                 self.registers.ier = value.to_u32();
             }
-            0xB000F130 => {
+            0x1000F130 => {
                 trace!("ISR Write: 0x{:08X}", value.to_u32());
                 self.registers.isr = value.to_u32();
             }
-            0xB000F140 => {
+            0x1000F140 => {
                 trace!("FCR Write: 0x{:08X}", value.to_u32());
                 self.registers.fcr = value.to_u32();
             }
-            0xB000F150 => {
+            0x1000F150 => {
                 trace!("BGR Write: 0x{:08X}", value.to_u32());
                 self.registers.bgr = value.to_u32();
             }
-            0xB000F180 => {
+            0x1000F180 => {
                 trace!("TXFIFO Write: 0x{:08X}", value.to_u32());
                 self.registers.txfifo = value.to_u32();
                 if let Some(transmitted_char) = value.to_char() {
@@ -112,7 +112,7 @@ impl SIO {
                     error!("Invalid type for TXFIFO write: expected u8, got u32");
                 }
             }
-            0xB000F1C0 => {
+            0x1000F1C0 => {
                 trace!("RXFIFO Write: 0x{:08X}", value.to_u32());
                 self.registers.rxfifo = value.to_u32();
             }
@@ -125,35 +125,35 @@ impl SIO {
     pub fn read<V: SIOValue>(&self, address: u32) -> V {
         trace!("SIO::read: self={:p}, address=0x{:08X}", self, address);
         let value = match address {
-            0xB000F100 => {
+            0x1000F100 => {
                 trace!("LCR Read: 0x{:08X}", self.registers.lcr);
                 self.registers.lcr
             }
-            0xB000F110 => {
+            0x1000F110 => {
                 trace!("LSR Read: 0x{:08X}", self.registers.lsr);
                 self.registers.lsr
             }
-            0xB000F120 => {
+            0x1000F120 => {
                 trace!("IER Read: 0x{:08X}", self.registers.ier);
                 self.registers.ier
             }
-            0xB000F130 => {
+            0x1000F130 => {
                 trace!("ISR Read: 0x{:08X}", self.registers.isr);
                 self.registers.isr
             }
-            0xB000F140 => {
+            0x1000F140 => {
                 trace!("FCR Read: 0x{:08X}", self.registers.fcr);
                 self.registers.fcr
             }
-            0xB000F150 => {
+            0x1000F150 => {
                 trace!("BGR Read: 0x{:08X}", self.registers.bgr);
                 self.registers.bgr
             }
-            0xB000F180 => {
+            0x1000F180 => {
                 trace!("TXFIFO Read: 0x{:08X}", self.registers.txfifo);
                 self.registers.txfifo
             }
-            0xB000F1C0 => {
+            0x1000F1C0 => {
                 trace!("RXFIFO Read: 0x{:08X}", self.registers.rxfifo);
                 self.registers.rxfifo
             }

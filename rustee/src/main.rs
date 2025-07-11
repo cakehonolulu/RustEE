@@ -1,7 +1,12 @@
+use clap::{Command, arg};
+use librustee::{
+    BIOS,
+    bus::{Bus, BusMode},
+    cpu::CPU,
+    ee::EE,
+};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
-use librustee::{bus::{Bus, BusMode}, cpu::{CPU}, ee::EE, BIOS};
-use clap::{arg, Command};
 
 use tracing_subscriber::EnvFilter;
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -15,29 +20,35 @@ fn main() {
         .version("0.0.1")
         .about("A Rust, PlayStation 2 Emulator")
         .arg(arg!(--bios <VALUE>).required(true))
-        .arg(arg!(--"ee-breakpoint" <BREAKPOINTS>)
-            .value_parser(|s: &str| {
-                s.split(',')
-                    .map(|val| {
-                        let val = val.trim();
-                        let hex_str = val.trim_start_matches("0x");
-                        u32::from_str_radix(hex_str, 16)
-                            .map_err(|_| format!("Invalid 32-bit hex value: '{}'", val))
-                    })
-                    .collect::<Result<Vec<u32>, String>>()
-            })
-            .required(false))
-        .arg(arg!(--"ee-backend" <BACKEND>)
-            .value_parser(["interpreter", "jit"])
-            .default_value("jit")
-            .help("Choose the EE backend: 'interpreter' or 'jit'"))
-        .arg(arg!(--"bus-mode" <MODE>)
-            .value_parser(["ranged", "sw_fastmem", "hw_fastmem"])
-            .default_value("hw_fastmem")
-            .help("Choose the bus emulation mode: 'ranged', 'sw_fastmem' or 'hw_fastmem'"))
+        .arg(
+            arg!(--"ee-breakpoint" <BREAKPOINTS>)
+                .value_parser(|s: &str| {
+                    s.split(',')
+                        .map(|val| {
+                            let val = val.trim();
+                            let hex_str = val.trim_start_matches("0x");
+                            u32::from_str_radix(hex_str, 16)
+                                .map_err(|_| format!("Invalid 32-bit hex value: '{}'", val))
+                        })
+                        .collect::<Result<Vec<u32>, String>>()
+                })
+                .required(false),
+        )
+        .arg(
+            arg!(--"ee-backend" <BACKEND>)
+                .value_parser(["interpreter", "jit"])
+                .default_value("jit")
+                .help("Choose the EE backend: 'interpreter' or 'jit'"),
+        )
+        .arg(
+            arg!(--"bus-mode" <MODE>)
+                .value_parser(["ranged", "sw_fastmem", "hw_fastmem"])
+                .default_value("hw_fastmem")
+                .help("Choose the bus emulation mode: 'ranged', 'sw_fastmem' or 'hw_fastmem'"),
+        )
         .get_matches();
 
-        tracing_subscriber::fmt()
+    tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::new("debug")
                 .add_directive("cranelift_codegen=warn".parse().unwrap())
@@ -71,8 +82,15 @@ fn main() {
         };
 
         let cop0_registers = Arc::new(RwLock::new([0u32; 32]));
-        let bus = Arc::new(Mutex::new(Bus::new(bus_mode, bios, Arc::clone(&cop0_registers))));
-        let ee = Arc::new(Mutex::new(EE::new(Arc::clone(&bus), Arc::clone(&cop0_registers))));
+        let bus = Arc::new(Mutex::new(Bus::new(
+            bus_mode,
+            bios,
+            Arc::clone(&cop0_registers),
+        )));
+        let ee = Arc::new(Mutex::new(EE::new(
+            Arc::clone(&bus),
+            Arc::clone(&cop0_registers),
+        )));
 
         if let Some(breakpoints) = arguments.get_one::<Vec<u32>>("ee-breakpoint") {
             for &addr in breakpoints {

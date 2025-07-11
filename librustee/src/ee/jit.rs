@@ -38,6 +38,7 @@ pub struct JIT<'a> {
     hi_ptr: *mut u128,
     lo_ptr: *mut u128,
     pc_ptr: *mut u32,
+    vu0_i_ptr: *mut u16,
     cycles: usize,
     break_func: FuncId,
     bus_write8_func: FuncId,
@@ -264,6 +265,7 @@ impl<'a> JIT<'a> {
         let hi_ptr = &mut cpu.hi as *mut u128;
         let lo_ptr = &mut cpu.lo as *mut u128;
         let pc_ptr = &mut cpu.pc as *mut u32;
+        let vu0_i_ptr = &mut cpu.vu0.vi as *mut u16;
 
         let mut store8_sig = module.make_signature();
         store8_sig.params.push(AbiParam::new(types::I64)); // bus_ptr
@@ -387,6 +389,7 @@ impl<'a> JIT<'a> {
             hi_ptr,
             lo_ptr,
             pc_ptr,
+            vu0_i_ptr,
             cycles: 0,
             break_func,
             bus_write8_func,
@@ -662,6 +665,9 @@ impl<'a> JIT<'a> {
                     0x00 => self.sll(builder, opcode, current_pc),
                     0x02 => self.srl(builder, opcode, current_pc),
                     0x03 => self.sra(builder, opcode, current_pc),
+                    0x04 => self.sllv(builder, opcode, current_pc),
+                    0x06 => self.srlv(builder, opcode, current_pc),
+                    0x07 => self.srav(builder, opcode, current_pc),
                     0x08 => self.jr(builder, opcode, current_pc),
                     0x09 => self.jalr(builder, opcode, current_pc),
                     0x0A => self.movz(builder, opcode, current_pc),
@@ -679,9 +685,12 @@ impl<'a> JIT<'a> {
                     0x23 => self.subu(builder, opcode, current_pc),
                     0x24 => self.and(builder, opcode, current_pc),
                     0x25 => self.or(builder, opcode, current_pc),
+                    0x27 => self.nor(builder, opcode, current_pc),
                     0x2A => self.slt(builder, opcode, current_pc),
                     0x2B => self.sltu(builder, opcode, current_pc),
                     0x2D => self.daddu(builder, opcode, current_pc),
+                    0x38 => self.dsll(builder, opcode, current_pc),
+                    0x3A => self.dsrl(builder, opcode, current_pc),
                     0x3C => self.dsll32(builder, opcode, current_pc),
                     0x3F => self.dsra32(builder, opcode, current_pc),
                     _ => {
@@ -737,9 +746,39 @@ impl<'a> JIT<'a> {
                     }
                 }
             }
+            0x11 => {
+                // COP1
+                Self::increment_pc(builder, self.pc_ptr as i64);
+                *current_pc = current_pc.wrapping_add(4);
+
+                None
+            }
+            0x12 => {
+                let subfunction = (opcode >> 21) & 0x1F;
+                match subfunction {
+                    0x02 => self.cfc2(builder, opcode, current_pc),
+                    0x06 => self.ctc2(builder, opcode, current_pc),
+                    0x18 => {
+                        // TODO: viswr.x
+                        Self::increment_pc(builder, self.pc_ptr as i64);
+                        *current_pc = current_pc.wrapping_add(4);
+
+                        None
+                    }
+                    _ => {
+                        //
+                        Self::increment_pc(builder, self.pc_ptr as i64);
+                        *current_pc = current_pc.wrapping_add(4);
+
+                        None
+                    }
+                }
+            }
             0x14 => self.beql(builder, opcode, current_pc),
             0x15 => self.bnel(builder, opcode, current_pc),
             0x19 => self.daddiu(builder, opcode, current_pc),
+            0x1A => self.ldl(builder, opcode, current_pc),
+            0x1B => self.ldr(builder, opcode, current_pc),
             0x1C => {
                 let subfunction = opcode & 0x3F;
 
@@ -775,9 +814,12 @@ impl<'a> JIT<'a> {
             0x23 => self.lw(builder, opcode, current_pc),
             0x24 => self.lbu(builder, opcode, current_pc),
             0x25 => self.lhu(builder, opcode, current_pc),
+            0x27 => self.lwu(builder, opcode, current_pc),
             0x28 => self.sb(builder, opcode, current_pc),
             0x29 => self.sh(builder, opcode, current_pc),
             0x2B => self.sw(builder, opcode, current_pc),
+            0x2C => self.sdl(builder, opcode, current_pc),
+            0x2D => self.sdr(builder, opcode, current_pc),
             0x2F => self.cache(builder, opcode, current_pc),
             0x39 => self.swc1(builder, opcode, current_pc),
             0x37 => self.ld(builder, opcode, current_pc),
@@ -2831,6 +2873,500 @@ impl<'a> JIT<'a> {
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
         // TODO: Implement CACHE instruction properly
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn sllv(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        // Load rs and mask to get the lower 5 bits for shift amount
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
+        let sa = builder.ins().band_imm(rs_val, 0x1F);
+
+        // Load rt and truncate to 32-bit
+        let value = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let value_32 = builder.ins().ireduce(types::I32, value);
+
+        // Perform the left shift on the 32-bit value
+        let shifted = builder.ins().ishl(value_32, sa);
+
+        let result = builder.ins().sextend(types::I64, shifted);
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+
+        // Increment PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn dsll(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+        let sa = ((opcode >> 6) & 0x1F) as i64;
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let shifted = builder.ins().ishl_imm(rt_val, sa);
+        builder.ins().store(MemFlags::new(), shifted, rd_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn srav(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        // Load rs and mask to get the lower 5 bits for shift amount
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
+        let sa = builder.ins().band_imm(rs_val, 0x1F);
+
+        // Load rt and truncate to 32-bit
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let rt_val_32 = builder.ins().ireduce(types::I32, rt_val);
+
+        // Perform arithmetic right shift on 32-bit value
+        let shifted = builder.ins().sshr(rt_val_32, sa);
+
+        // Sign-extend the 32-bit result to 64-bit
+        let result = builder.ins().sextend(types::I64, shifted);
+
+        // Store the 64-bit result in rd
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+
+        // Increment PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn nor(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+
+        let rs_val = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let orv = builder.ins().bor(rs_val, rt_val);
+        let all_ones = builder.ins().iconst(types::I64, !0u64 as i64);
+        let result = builder.ins().bxor(orv, all_ones);
+
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn cfc2(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64; // Destination GPR
+        let vi = ((opcode >> 11) & 0x1F) as i64; // VU0 integer control register index
+
+        // Compute address for rt (GPR)
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+
+        // If vi == 0, return 0 (VI[0] is read-only and always 0)
+        let zero = builder.ins().iconst(types::I64, 0);
+        let vi_idx = builder.ins().iconst(types::I64, vi);
+        let is_vi0 = builder.ins().icmp_imm(IntCC::Equal, vi_idx, 0);
+
+        // Compute address for VI[vi] (2-byte aligned)
+        let vi_addr = Self::ptr_add(builder, self.vu0_i_ptr as i64, vi, 2);
+
+        // Load 16-bit value from VI[vi]
+        let vi_val = builder.ins().load(types::I16, MemFlags::new(), vi_addr, 0);
+        // Sign-extend to 64-bit
+        let vi_val_64 = builder.ins().sextend(types::I64, vi_val);
+
+        // Select 0 if vi == 0, else VI[vi]
+        let result = builder.ins().select(is_vi0, zero, vi_val_64);
+
+        // Store to rt
+        builder.ins().store(MemFlags::new(), result, rt_addr, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn ctc2(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64; // Source GPR
+        let vi = ((opcode >> 11) & 0x1F) as i64; // VU0 integer control register index
+
+        // Skip write if vi == 0 (VI[0] is read-only)
+        let vi_idx = builder.ins().iconst(types::I64, vi);
+        let is_vi0 = builder.ins().icmp_imm(IntCC::Equal, vi_idx, 0);
+        let write_block = builder.create_block();
+        let exit_block = builder.create_block();
+
+        builder
+            .ins()
+            .brif(is_vi0, exit_block, &[], write_block, &[]);
+        builder.switch_to_block(write_block);
+
+        // Compute addresses
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let vi_addr = Self::ptr_add(builder, self.vu0_i_ptr as i64, vi, 2);
+
+        // Load 64-bit value from rt and truncate to 16-bit
+        let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let rt_val_16 = builder.ins().ireduce(types::I16, rt_val);
+
+        // Store to VI[vi]
+        builder.ins().store(MemFlags::new(), rt_val_16, vi_addr, 0);
+
+        builder.ins().jump(exit_block, &[]);
+        builder.switch_to_block(exit_block);
+
+        builder.seal_block(write_block);
+        builder.seal_block(exit_block);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn lwu(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // decode
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64 = (opcode as i16) as i64;
+
+        // address calculation (32→64 extend)
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base_idx as i64, 16);
+        let base_val32 = Self::load32(builder, base_addr);
+        let base_val = builder.ins().uextend(types::I64, base_val32);
+        let addr = builder.ins().iadd_imm(base_val, imm_i64);
+        let addr32 = builder.ins().ireduce(types::I32, addr);
+
+        // memory read
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr = &**bus as *const Bus as i64;
+        let bus_val = builder.ins().iconst(types::I64, bus_ptr);
+        let callee = self
+            .module
+            .declare_func_in_func(self.bus_read32_func, builder.func);
+        let call = builder.ins().call(callee, &[bus_val, addr32]);
+        let load_val = builder.inst_results(call)[0]; // i32
+
+        // zero‑extend to 64
+        let load_val64 = builder.ins().uextend(types::I64, load_val);
+
+        // store
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt_idx as i64, 16);
+        builder.ins().store(MemFlags::new(), load_val64, rt_addr, 0);
+
+        // bump PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn ldl(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // decode
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64 = (opcode as i16) as i64;
+
+        // -- load base_val32 and extend to i64 --
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base_idx as i64, 16);
+        let base_val32 = Self::load32(builder, base_addr); // i32
+        let base_val = builder.ins().uextend(types::I64, base_val32); // now i64
+
+        // compute v_addr as i64
+        let v_addr = builder.ins().iadd_imm(base_val, imm_i64); // i64
+
+        // extract byte offset + aligned pointer, all in i64
+        let byte = builder.ins().band_imm(v_addr, 0x7); // i64
+        let p_addr = builder.ins().band_imm(v_addr, !0x7); // i64
+
+        let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
+
+        // fetch the 64‑bit memory word
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr = &**bus as *const Bus as i64;
+        let bus_val = builder.ins().iconst(types::I64, bus_ptr);
+        let callee = self
+            .module
+            .declare_func_in_func(self.bus_read64_func, builder.func);
+        let call = builder.ins().call(callee, &[bus_val, p_addr32]);
+        let mem_quad = builder.inst_results(call)[0]; // i64
+
+        // Compute shift = (7-byte)*8 & 63
+        let seven = builder.ins().iconst(types::I64, 7);
+        let subbed = builder.ins().isub(seven, byte);
+        let raw_shift = builder.ins().imul_imm(subbed, 8);
+        let shift = builder.ins().band_imm(raw_shift, 63);
+        let mem_bytes = builder.ins().ishl(mem_quad, shift);
+
+        // Compute mask = !0 >> (byte*8 & 63)
+        let raw_mshift = builder.ins().imul_imm(byte, 8);
+        let mshift = builder.ins().band_imm(raw_mshift, 63);
+        let all_ones = builder.ins().iconst(types::I64, !0u64 as i64);
+        let mask = builder.ins().ushr(all_ones, mshift);
+
+        // merge into RT
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt_idx as i64, 16);
+        let rt_val = Self::load64(builder, rt_addr); // i64
+        let rt_kept = builder.ins().band(rt_val, mask);
+        let result = builder.ins().bor(rt_kept, mem_bytes);
+        builder.ins().store(MemFlags::new(), result, rt_addr, 0);
+
+        // bump PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn ldr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // decode
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64 = (opcode as i16) as i64;
+
+        // address calculation (32→64 extend)
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base_idx as i64, 16);
+        let base_val32 = Self::load32(builder, base_addr); // i32
+        let base_val = builder.ins().uextend(types::I64, base_val32); // i64
+        let v_addr = builder.ins().iadd_imm(base_val, imm_i64); // i64
+
+        // extract byte offset + aligned pointer (i64)
+        let byte = builder.ins().band_imm(v_addr, 0x7);
+        let p_addr = builder.ins().band_imm(v_addr, !0x7);
+        let p_addr32 = builder.ins().ireduce(types::I32, p_addr); // back to i32
+
+        // memory read
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr = &**bus as *const Bus as i64;
+        let bus_val = builder.ins().iconst(types::I64, bus_ptr);
+        let callee = self
+            .module
+            .declare_func_in_func(self.bus_read64_func, builder.func);
+        let call = builder.ins().call(callee, &[bus_val, p_addr32]);
+        let mem_quad = builder.inst_results(call)[0]; // i64
+
+        // shift & mask
+        let raw_shift = builder.ins().imul_imm(byte, 8);
+        let shift = builder.ins().band_imm(raw_shift, 63);
+        let mem_bytes = builder.ins().ushr(mem_quad, shift);
+
+        let eight = builder.ins().iconst(types::I64, 8);
+        let inv_byte = builder.ins().isub(eight, byte);
+        let raw_mshift = builder.ins().imul_imm(inv_byte, 8);
+        let mshift = builder.ins().band_imm(raw_mshift, 63);
+        let all_ones = builder.ins().iconst(types::I64, !0u64 as i64);
+        let mask = builder.ins().ishl(all_ones, mshift);
+
+        // merge & write back
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt_idx as i64, 16);
+        let rt_val = Self::load64(builder, rt_addr);
+        let kept = builder.ins().band(rt_val, mask);
+        let result = builder.ins().bor(kept, mem_bytes);
+        builder.ins().store(MemFlags::new(), result, rt_addr, 0);
+
+        // bump PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn sdl(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // decode
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64 = (opcode as i16) as i64;
+
+        // address & source (32→64 extend)
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base_idx as i64, 16);
+        let base_val32 = Self::load32(builder, base_addr);
+        let base_val = builder.ins().uextend(types::I64, base_val32);
+        let v_addr = builder.ins().iadd_imm(base_val, imm_i64);
+
+        let byte = builder.ins().band_imm(v_addr, 0x7);
+        let p_addr = builder.ins().band_imm(v_addr, !0x7);
+        let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt_idx as i64, 16);
+        let rt_val = Self::load64(builder, rt_addr);
+
+        // shift
+        let seven = builder.ins().iconst(types::I64, 7);
+        let inv = builder.ins().isub(seven, byte);
+        let raw_shift = builder.ins().imul_imm(inv, 8);
+        let shift = builder.ins().band_imm(raw_shift, 63);
+        let data_quad = builder.ins().ushr(rt_val, shift);
+
+        // memory write
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr = &**bus as *const Bus as i64;
+        let bus_val = builder.ins().iconst(types::I64, bus_ptr);
+        let callee = self
+            .module
+            .declare_func_in_func(self.bus_write64_func, builder.func);
+        builder.ins().call(callee, &[bus_val, p_addr32, data_quad]);
+
+        // bump PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn sdr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // decode
+        let base_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let imm_i64 = (opcode as i16) as i64;
+
+        // address & source (32→64 extend)
+        let base_addr = Self::ptr_add(builder, self.gpr_ptr as i64, base_idx as i64, 16);
+        let base_val32 = Self::load32(builder, base_addr);
+        let base_val = builder.ins().uextend(types::I64, base_val32);
+        let v_addr = builder.ins().iadd_imm(base_val, imm_i64);
+
+        let byte = builder.ins().band_imm(v_addr, 0x7);
+        let p_addr = builder.ins().band_imm(v_addr, !0x7);
+        let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
+
+        let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt_idx as i64, 16);
+        let rt_val = Self::load64(builder, rt_addr);
+
+        // shift
+        let raw_shift = builder.ins().imul_imm(byte, 8);
+        let shift = builder.ins().band_imm(raw_shift, 63);
+        let data_quad = builder.ins().ishl(rt_val, shift);
+
+        // memory write
+        let bus = self.cpu.bus.lock().unwrap();
+        let bus_ptr = &**bus as *const Bus as i64;
+        let bus_val = builder.ins().iconst(types::I64, bus_ptr);
+        let callee = self
+            .module
+            .declare_func_in_func(self.bus_write64_func, builder.func);
+        builder.ins().call(callee, &[bus_val, p_addr32, data_quad]);
+
+        // bump PC
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        None
+    }
+
+    fn srlv(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // decode
+        let rs_idx = ((opcode >> 21) & 0x1F) as usize;
+        let rt_idx = ((opcode >> 16) & 0x1F) as usize;
+        let rd_idx = ((opcode >> 11) & 0x1F) as usize;
+
+        let base = self.gpr_ptr as i64;
+        let rt_addr = Self::ptr_add(builder, base, rt_idx as i64, 16);
+        let rs_addr = Self::ptr_add(builder, base, rs_idx as i64, 16);
+        let rd_addr = Self::ptr_add(builder, base, rd_idx as i64, 16);
+
+        // load 64-bit RT and RS
+        let rt_val64 = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
+        let rs_val64 = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
+
+        // truncate RT to 32 bits
+        let rt_val32 = builder.ins().ireduce(types::I32, rt_val64);
+
+        // truncate RS to 32 bits
+        let rs_val32 = builder.ins().ireduce(types::I32, rs_val64);
+
+        // mask shift count to [0..31]
+        let shamt = builder.ins().band_imm(rs_val32, 0x1F);
+
+        // logical right shift on 32 bits
+        let shifted32 = builder.ins().ushr(rt_val32, shamt);
+
+        // sign‑extend 32‑bit result back to 64
+        let result64 = builder.ins().sextend(types::I64, shifted32);
+
+        // store into RD
+        builder.ins().store(MemFlags::new(), result64, rd_addr, 0);
+
+        // bump PC
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
         None

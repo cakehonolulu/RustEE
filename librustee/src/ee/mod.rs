@@ -2,19 +2,24 @@
     MIPS R5900 Emotion Engine CPU
 */
 
-use std::collections::HashSet;
-use std::sync::{Arc, RwLock, Mutex};
 use crate::Bus;
 use crate::cpu::CPU;
+use crate::ee::vu::VU;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, RwLock};
 
-pub mod jit;
+pub mod dmac;
+pub mod intc;
 pub mod interpreter;
+pub mod jit;
 pub mod sio;
+pub mod timer;
+pub mod vu;
 
-pub use interpreter::Interpreter;
-pub use jit::JIT as JIT;
 use crate::bus::map;
 use crate::bus::tlb::AccessType;
+pub use interpreter::Interpreter;
+pub use jit::JIT;
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
@@ -27,7 +32,10 @@ pub struct EE {
     pub hi: u128,
     breakpoints: HashSet<u32>,
     pub fpu_registers: [u32; 32],
+    vu0: VU,
+    vu1: VU,
 }
+
 impl Clone for EE {
     fn clone(&self) -> EE {
         EE {
@@ -39,6 +47,8 @@ impl Clone for EE {
             hi: self.hi,
             breakpoints: self.breakpoints.clone(),
             fpu_registers: self.fpu_registers.clone(),
+            vu0: self.vu0.clone(),
+            vu1: self.vu1.clone(),
         }
     }
 }
@@ -56,6 +66,8 @@ impl EE {
             bus,
             breakpoints: HashSet::new(),
             fpu_registers: [0; 32],
+            vu0: VU::new(4 * 1024, 4 * 1024),
+            vu1: VU::new(16 * 1024, 16 * 1024),
         };
 
         ee

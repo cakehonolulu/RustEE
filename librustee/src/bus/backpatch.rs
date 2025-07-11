@@ -2,9 +2,9 @@ use std::sync::atomic::AtomicBool;
 
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
-use tracing::{error, debug, trace};
+use tracing::{debug, error, trace};
 
-use super::{Bus};
+use super::Bus;
 
 pub struct Context {
     pub bus: *mut Bus,
@@ -24,7 +24,11 @@ pub trait ArchHandler {
     fn get_instruction_pointer(ctx: *mut Self::Context) -> i64;
     fn set_instruction_pointer(ctx: *mut Self::Context, addr: u64);
     fn get_stack_pointer(ctx: *mut Self::Context) -> u64;
-    fn advance_instruction_pointer(ctx: *mut Self::Context, cs: &Capstone, fault_addr: i64) -> Result<(), &'static str>;
+    fn advance_instruction_pointer(
+        ctx: *mut Self::Context,
+        cs: &Capstone,
+        fault_addr: i64,
+    ) -> Result<(), &'static str>;
     fn parse_register_from_operand(operand: &str) -> Option<Self::Register>;
     fn register_name(reg: &Self::Register) -> &'static str;
     fn get_helper_pattern() -> &'static [&'static str];
@@ -34,7 +38,10 @@ pub trait ArchHandler {
 pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
     unsafe {
         if bus.is_null() {
-            error!("Null bus pointer in io_write8_stub: addr=0x{:08X}, value=0x{:02X}", addr, value);
+            error!(
+                "Null bus pointer in io_write8_stub: addr=0x{:08X}, value=0x{:02X}",
+                addr, value
+            );
             panic!("Null bus pointer in io_write8_stub");
         }
         let bus = &mut *bus;
@@ -42,10 +49,27 @@ pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
     }
 }
 
+pub extern "C" fn io_write16_stub(bus: *mut Bus, addr: u32, value: u16) {
+    unsafe {
+        if bus.is_null() {
+            error!(
+                "Null bus pointer in io_write32_stub: addr=0x{:08X}, value=0x{:08X}",
+                addr, value
+            );
+            panic!("Null bus pointer in io_write32_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_write16(addr, value);
+    }
+}
+
 pub extern "C" fn io_write32_stub(bus: *mut Bus, addr: u32, value: u32) {
     unsafe {
         if bus.is_null() {
-            error!("Null bus pointer in io_write32_stub: addr=0x{:08X}, value=0x{:08X}", addr, value);
+            error!(
+                "Null bus pointer in io_write32_stub: addr=0x{:08X}, value=0x{:08X}",
+                addr, value
+            );
             panic!("Null bus pointer in io_write32_stub");
         }
         let bus = &mut *bus;
@@ -85,6 +109,7 @@ pub mod x86_64_impl {
     pub enum X86Register {
         Rax,
         Rcx,
+        Rdx,
         Rsi,
         Rdi,
         R8,
@@ -101,6 +126,7 @@ pub mod x86_64_impl {
         let mut buf = match reg {
             X86Register::Rax => vec![0x48, 0xB8], // movabs rax, imm64
             X86Register::Rcx => vec![0x48, 0xB9], // movabs rcx, imm64
+            X86Register::Rdx => vec![0x48, 0xBA], // movabs rdx, imm64
             X86Register::Rsi => vec![0x48, 0xBE], // movabs rsi, imm64
             X86Register::Rdi => vec![0x48, 0xBF], // movabs rdi, imm64
             X86Register::R8 => vec![0x49, 0xB8],  // movabs r8, imm64
@@ -108,7 +134,10 @@ pub mod x86_64_impl {
             X86Register::R10 => vec![0x49, 0xBA], // movabs r10, imm64
             X86Register::R11 => vec![0x49, 0xBB], // movabs r11, imm64
             _ => {
-                panic!("Unsupported register for stub call: {}", register_name_impl(reg))
+                panic!(
+                    "Unsupported register for stub call: {}",
+                    register_name_impl(reg)
+                )
             }
         };
 
@@ -120,6 +149,7 @@ pub mod x86_64_impl {
         match operand.trim() {
             "rax" => Some(X86Register::Rax),
             "rcx" => Some(X86Register::Rcx),
+            "rdx" => Some(X86Register::Rdx),
             "rsi" => Some(X86Register::Rsi),
             "rdi" => Some(X86Register::Rdi),
             "r8" => Some(X86Register::R8),
@@ -134,6 +164,7 @@ pub mod x86_64_impl {
         match reg {
             X86Register::Rax => "rax",
             X86Register::Rcx => "rcx",
+            X86Register::Rdx => "rdx",
             X86Register::Rsi => "rsi",
             X86Register::Rdi => "rdi",
             X86Register::R8 => "r8",
@@ -146,6 +177,7 @@ pub mod x86_64_impl {
     pub fn get_helper_pattern_impl() -> &'static [&'static str] {
         &[
             "librustee::ee::jit::__bus_write8",
+            "librustee::ee::jit::__bus_write16",
             "librustee::ee::jit::__bus_write32",
             "librustee::ee::jit::__bus_read16",
             "librustee::ee::jit::__bus_read32",
@@ -171,9 +203,7 @@ impl ArchHandler for CurrentArchHandler {
     }
 
     fn get_instruction_pointer(ctx: *mut Self::Context) -> i64 {
-        unsafe {
-            (*ctx).uc_mcontext.gregs[nix::libc::REG_RIP as usize]
-        }
+        unsafe { (*ctx).uc_mcontext.gregs[nix::libc::REG_RIP as usize] }
     }
 
     fn set_instruction_pointer(ctx: *mut Self::Context, addr: u64) {
@@ -183,18 +213,19 @@ impl ArchHandler for CurrentArchHandler {
     }
 
     fn get_stack_pointer(ctx: *mut Self::Context) -> u64 {
-        unsafe {
-            (*ctx).uc_mcontext.gregs[nix::libc::REG_RSP as usize] as u64
-        }
+        unsafe { (*ctx).uc_mcontext.gregs[nix::libc::REG_RSP as usize] as u64 }
     }
 
-    fn advance_instruction_pointer(ctx: *mut Self::Context, cs: &Capstone, fault_addr: i64) -> Result<(), &'static str> {
+    fn advance_instruction_pointer(
+        ctx: *mut Self::Context,
+        cs: &Capstone,
+        fault_addr: i64,
+    ) -> Result<(), &'static str> {
         let buf_size = 16;
         let buf = unsafe { std::slice::from_raw_parts(fault_addr as *const u8, buf_size) };
 
         if let Ok(insns) = cs.disasm_all(buf, fault_addr as u64) {
             if let Some(insn) = insns.iter().next() {
-
                 trace!(
                     "Current instruction at 0x{:x}: {} {}",
                     fault_addr,
@@ -239,9 +270,7 @@ impl ArchHandler for CurrentArchHandler {
     }
 
     fn get_instruction_pointer(ctx: *mut Self::Context) -> i64 {
-        unsafe {
-            (*ctx).Rip as i64
-        }
+        unsafe { (*ctx).Rip as i64 }
     }
 
     fn set_instruction_pointer(ctx: *mut Self::Context, addr: u64) {
@@ -251,12 +280,14 @@ impl ArchHandler for CurrentArchHandler {
     }
 
     fn get_stack_pointer(ctx: *mut Self::Context) -> u64 {
-        unsafe {
-            (*ctx).Rsp
-        }
+        unsafe { (*ctx).Rsp }
     }
 
-    fn advance_instruction_pointer(ctx: *mut Self::Context, cs: &Capstone, fault_addr: i64) -> Result<(), &'static str> {
+    fn advance_instruction_pointer(
+        ctx: *mut Self::Context,
+        cs: &Capstone,
+        fault_addr: i64,
+    ) -> Result<(), &'static str> {
         let buf_size = 16;
         let buf = unsafe { std::slice::from_raw_parts(fault_addr as *const u8, buf_size) };
 
