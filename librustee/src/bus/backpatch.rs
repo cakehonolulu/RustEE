@@ -77,6 +77,45 @@ pub extern "C" fn io_write32_stub(bus: *mut Bus, addr: u32, value: u32) {
     }
 }
 
+pub extern "C" fn io_write64_stub(bus: *mut Bus, addr: u32, value: u64) {
+    unsafe {
+        if bus.is_null() {
+            error!(
+                "Null bus pointer in io_write64_stub: addr=0x{:08X}, value=0x{:08X}",
+                addr, value
+            );
+            panic!("Null bus pointer in io_write64_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_write64(addr, value);
+    }
+}
+
+pub extern "C" fn io_write128_stub(bus: *mut Bus, addr: u32, value: u128) {
+    unsafe {
+        if bus.is_null() {
+            error!(
+                "Null bus pointer in io_write128_stub: addr=0x{:08X}, value=0x{:08X}",
+                addr, value
+            );
+            panic!("Null bus pointer in io_write128_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_write128(addr, value);
+    }
+}
+
+pub extern "C" fn io_read8_stub(bus: *mut Bus, addr: u32) -> u8 {
+    unsafe {
+        if bus.is_null() {
+            error!("Null bus pointer in io_read8_stub: addr=0x{:08X}", addr);
+            panic!("Null bus pointer in io_read8_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_read8(addr)
+    }
+}
+
 pub extern "C" fn io_read16_stub(bus: *mut Bus, addr: u32) -> u16 {
     unsafe {
         if bus.is_null() {
@@ -96,6 +135,28 @@ pub extern "C" fn io_read32_stub(bus: *mut Bus, addr: u32) -> u32 {
         }
         let bus = &mut *bus;
         bus.io_read32(addr)
+    }
+}
+
+pub extern "C" fn io_read64_stub(bus: *mut Bus, addr: u32) -> u64 {
+    unsafe {
+        if bus.is_null() {
+            error!("Null bus pointer in io_read64_stub: addr=0x{:08X}", addr);
+            panic!("Null bus pointer in io_read64_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_read64(addr)
+    }
+}
+
+pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32) -> u128 {
+    unsafe {
+        if bus.is_null() {
+            error!("Null bus pointer in io_read128_stub: addr=0x{:08X}", addr);
+            panic!("Null bus pointer in io_read128_stub");
+        }
+        let bus = &mut *bus;
+        bus.io_read128(addr)
     }
 }
 
@@ -179,8 +240,13 @@ pub mod x86_64_impl {
             "librustee::ee::jit::__bus_write8",
             "librustee::ee::jit::__bus_write16",
             "librustee::ee::jit::__bus_write32",
+            "librustee::ee::jit::__bus_write64",
+            "librustee::ee::jit::__bus_write128",
+            "librustee::ee::jit::__bus_read8",
             "librustee::ee::jit::__bus_read16",
             "librustee::ee::jit::__bus_read32",
+            "librustee::ee::jit::__bus_read64",
+            "librustee::ee::jit::__bus_read128",
         ]
     }
 

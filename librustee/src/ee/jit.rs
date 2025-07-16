@@ -11,6 +11,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use lru::LruCache;
 use std::collections::HashMap;
+use std::fs;
 use std::num::{NonZero, NonZeroU128};
 use std::sync::{Arc, Mutex};
 use std::thread::current;
@@ -54,6 +55,7 @@ pub struct JIT<'a> {
     tlbwi_func: FuncId,
     read_cop0_func: FuncId,
     write_cop0_func: FuncId,
+    load_elf_func: FuncId,
 }
 
 pub enum BranchTarget {
@@ -65,6 +67,7 @@ enum BranchInfo {
     Conditional { cond: Value, target: BranchTarget },
     Unconditional { target: BranchTarget },
     ConditionalLikely { cond: Value, target: BranchTarget },
+    Eret { target: BranchTarget },
 }
 
 const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
@@ -215,6 +218,15 @@ pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
     }
 }
 
+pub extern "C" fn __load_elf(cpu_ptr: *mut EE) {
+    unsafe {
+        let cpu = &mut *cpu_ptr;
+        let elf_bytes = fs::read(&cpu.elf_path)
+            .unwrap_or_else(|e| panic!("Failed to read ELF '{}': {}", cpu.elf_path, e));
+        cpu.load_elf(&elf_bytes);
+    }
+}
+
 impl<'a> JIT<'a> {
     pub fn new(cpu: &'a mut EE) -> Self {
         let mut shared_builder = settings::builder();
@@ -255,6 +267,8 @@ impl<'a> JIT<'a> {
         builder.symbol("__read_cop0", __read_cop0 as *const u8);
 
         builder.symbol("__write_cop0", __write_cop0 as *const u8);
+
+        builder.symbol("__load_elf", __load_elf as *const u8);
 
         let mut module = JITModule::new(builder);
         let gpr_ptr = cpu.registers.as_mut_ptr();
@@ -373,6 +387,12 @@ impl<'a> JIT<'a> {
             .declare_function("__break", Linkage::Import, &break_sig)
             .expect("Failed to declare __break");
 
+        let mut load_elf_sig = module.make_signature();
+        load_elf_sig.params.push(AbiParam::new(types::I64)); // cpu_ptr
+        let load_elf_func = module
+            .declare_function("__load_elf", Linkage::Import, &load_elf_sig)
+            .expect("Failed to declare __load_elf");
+
         JIT {
             cpu,
             module,
@@ -400,6 +420,7 @@ impl<'a> JIT<'a> {
             tlbwi_func,
             read_cop0_func,
             write_cop0_func,
+            load_elf_func,
         }
     }
 
@@ -592,6 +613,9 @@ impl<'a> JIT<'a> {
                         let next_pc = delay_pc.wrapping_add(4);
                         JIT::set_pc_to_const(&mut builder, next_pc, pc_addr);
                     }
+                    BranchInfo::Eret { target } => {
+                        JIT::set_pc_to_target(&mut builder, target, pc_addr);
+                    }
                 }
                 break;
             } else if single_step {
@@ -627,8 +651,7 @@ impl<'a> JIT<'a> {
                 builder.ins().store(MemFlags::new(), t, pc_addr, 0);
             }
             BranchTarget::Reg(val) => {
-                let t32 = builder.ins().ireduce(types::I32, val);
-                builder.ins().store(MemFlags::new(), t32, pc_addr, 0);
+                builder.ins().store(MemFlags::new(), val, pc_addr, 0);
             }
         }
     }
@@ -732,7 +755,21 @@ impl<'a> JIT<'a> {
                 match subfunction {
                     0x00 => self.mfc0(builder, opcode, current_pc),
                     0x04 => self.mtc0(builder, opcode, current_pc),
-                    0x10 => self.tlbwi(builder, current_pc),
+                    0x10 => {
+                        let funct = opcode & 0x3F;
+
+                        match funct {
+                            0x2 => self.tlbwi(builder, current_pc),
+                            0x18 => self.eret(builder, opcode, current_pc),
+                            0x39 => self.di(builder, opcode, current_pc),
+                            _ => panic!(
+                                "Unhandled EE JIT C0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
+                                opcode,
+                                funct,
+                                self.cpu.pc()
+                            ),
+                        }
+                    }
                     _ => {
                         error!(
                             "Unhandled EE JIT COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
@@ -782,6 +819,19 @@ impl<'a> JIT<'a> {
                     0x12 => self.mflo1(builder, opcode, current_pc),
                     0x18 => self.mult1(builder, opcode, current_pc),
                     0x1B => self.divu1(builder, opcode, current_pc),
+                    0x28 => {
+                        let mmi1_function = (opcode >> 6) & 0x1F;
+
+                        match mmi1_function {
+                            0x10 => self.padduw(builder, opcode, current_pc),
+                            _ => {
+                                panic!(
+                                    "Unimplemented MMI1 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
+                                    mmi1_function, current_pc
+                                );
+                            }
+                        }
+                    }
                     0x29 => {
                         let mmi3_function = (opcode >> 6) & 0x1F;
 
@@ -3394,6 +3444,265 @@ impl<'a> JIT<'a> {
         *current_pc = current_pc.wrapping_add(4);
 
         None
+    }
+
+    fn padduw(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr_lo = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 16);
+        let rs_val_lo = builder
+            .ins()
+            .load(types::I64, MemFlags::new(), rs_addr_lo, 0);
+        let rs_addr_hi = Self::ptr_add(builder, self.gpr_ptr as i64, rs, 24);
+        let rs_val_hi = builder
+            .ins()
+            .load(types::I64, MemFlags::new(), rs_addr_hi, 0);
+
+        let rt_addr_lo = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
+        let rt_val_lo = builder
+            .ins()
+            .load(types::I64, MemFlags::new(), rt_addr_lo, 0);
+        let rt_addr_hi = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 24);
+        let rt_val_hi = builder
+            .ins()
+            .load(types::I64, MemFlags::new(), rt_addr_hi, 0);
+
+        let rs_words: [Value; 4] = [
+            builder.ins().ireduce(types::I32, rs_val_lo),
+            {
+                let shifted = builder.ins().ushr_imm(rs_val_lo, 32);
+                builder.ins().ireduce(types::I32, shifted)
+            },
+            builder.ins().ireduce(types::I32, rs_val_hi),
+            {
+                let shifted = builder.ins().ushr_imm(rs_val_hi, 32);
+                builder.ins().ireduce(types::I32, shifted)
+            },
+        ];
+        let rt_words: [Value; 4] = [
+            builder.ins().ireduce(types::I32, rt_val_lo),
+            {
+                let shifted = builder.ins().ushr_imm(rt_val_lo, 32);
+                builder.ins().ireduce(types::I32, shifted)
+            },
+            builder.ins().ireduce(types::I32, rt_val_hi),
+            {
+                let shifted = builder.ins().ushr_imm(rt_val_hi, 32);
+                builder.ins().ireduce(types::I32, shifted)
+            },
+        ];
+
+        let max_u32 = builder.ins().iconst(types::I64, 0xFFFFFFFF);
+        let mut result_words: [Value; 4] = [max_u32; 4];
+        for i in 0..4 {
+            let rs_word_64 = builder.ins().uextend(types::I64, rs_words[i]);
+            let rt_word_64 = builder.ins().uextend(types::I64, rt_words[i]);
+            let sum = builder.ins().iadd(rs_word_64, rt_word_64);
+
+            let overflow = builder.ins().icmp(IntCC::UnsignedGreaterThan, sum, max_u32);
+            result_words[i] = builder.ins().select(overflow, max_u32, sum);
+        }
+
+        let shifted_lo = builder.ins().ishl_imm(result_words[1], 32);
+        let result_lo = builder.ins().bor(result_words[0], shifted_lo);
+        let shifted_hi = builder.ins().ishl_imm(result_words[3], 32);
+        let result_hi = builder.ins().bor(result_words[2], shifted_hi);
+
+        let rd_addr_lo = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
+        builder
+            .ins()
+            .store(MemFlags::new(), result_lo, rd_addr_lo, 0);
+        let rd_addr_hi = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 24);
+        builder
+            .ins()
+            .store(MemFlags::new(), result_hi, rd_addr_hi, 0);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn di(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        _opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
+        let status_idx = builder.ins().iconst(types::I32, 12);
+
+        let read_cop0 = self
+            .module
+            .declare_func_in_func(self.read_cop0_func, builder.func);
+        let write_cop0 = self
+            .module
+            .declare_func_in_func(self.write_cop0_func, builder.func);
+
+        let call_status = builder.ins().call(read_cop0, &[cpu_arg, status_idx]);
+        let status = builder.inst_results(call_status)[0];
+
+        let edi_shift = builder.ins().ushr_imm(status, 10);
+        let edi = builder.ins().band_imm(edi_shift, 0x1);
+
+        let exl_shift = builder.ins().ushr_imm(status, 1);
+        let exl = builder.ins().band_imm(exl_shift, 0x1);
+
+        let erl_shift = builder.ins().ushr_imm(status, 2);
+        let erl = builder.ins().band_imm(erl_shift, 0x1);
+
+        let ksu_shift = builder.ins().ushr_imm(status, 3);
+        let ksu = builder.ins().band_imm(ksu_shift, 0x3);
+
+        let edi_cond = builder.ins().icmp_imm(IntCC::Equal, edi, 1);
+        let exl_cond = builder.ins().icmp_imm(IntCC::Equal, exl, 1);
+        let erl_cond = builder.ins().icmp_imm(IntCC::Equal, erl, 1);
+        let ksu_cond = builder.ins().icmp_imm(IntCC::Equal, ksu, 0);
+
+        let cond1 = builder.ins().bor(edi_cond, exl_cond);
+        let cond2 = builder.ins().bor(cond1, erl_cond);
+        let final_cond = builder.ins().bor(cond2, ksu_cond);
+
+        let mask = builder.ins().iconst(types::I32, (!(1u32) as i64));
+        let new_status = builder.ins().band(status, mask);
+
+        let final_status = builder.ins().select(final_cond, new_status, status);
+
+        builder
+            .ins()
+            .call(write_cop0, &[cpu_arg, status_idx, final_status]);
+
+        Self::increment_pc(builder, self.pc_ptr as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn eret(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        _opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        // --- Prep CPU & COP0 helpers ---
+        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
+        let read_cop0 = self
+            .module
+            .declare_func_in_func(self.read_cop0_func, builder.func);
+        let write_cop0 = self
+            .module
+            .declare_func_in_func(self.write_cop0_func, builder.func);
+
+        // --- Read Status (COP0 idx 12) ---
+        let idx12 = builder.ins().iconst(types::I32, 12);
+        let call_read12 = builder.ins().call(read_cop0, &[cpu_arg, idx12]);
+        let status = builder.inst_results(call_read12)[0];
+
+        // Extract ERL bit and compare to zero
+        let erl_mask = builder.ins().iconst(types::I32, 1 << 2);
+        let erl_bit = builder.ins().band(status, erl_mask);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        let erl_nonzero = builder.ins().icmp(IntCC::NotEqual, erl_bit, zero_i32);
+
+        // --- Create blocks & params (Values) ---
+        let erl_true_block = builder.create_block();
+        let erl_false_block = builder.create_block();
+        let sideload_block = builder.create_block();
+        let epc_param_val = builder.append_block_param(sideload_block, types::I32);
+        let sideload_true_block = builder.create_block();
+        let end_block = builder.create_block();
+        let final_param_val = builder.append_block_param(end_block, types::I32);
+
+        // --- Branch on ERL ---
+        builder
+            .ins()
+            .brif(erl_nonzero, erl_true_block, &[], erl_false_block, &[]);
+
+        // --- ERL=1 path: ErrorEPC, clear ERL, to sideload_block ---
+        builder.switch_to_block(erl_true_block);
+        let idx30 = builder.ins().iconst(types::I32, 30);
+        let call_read30 = builder.ins().call(read_cop0, &[cpu_arg, idx30]);
+        let error_epc = builder.inst_results(call_read30)[0];
+        // clear ERL field
+        let not_erl_bitmask = builder.ins().iconst(types::I32, !(1 << 2));
+        let clear_erl = builder.ins().band(status, not_erl_bitmask);
+        builder.ins().call(write_cop0, &[cpu_arg, idx12, clear_erl]);
+        builder
+            .ins()
+            .jump(sideload_block, &[BlockArg::Value(error_epc)]);
+
+        // --- ERL=0 path: EPC, clear EXL, to sideload_block ---
+        builder.switch_to_block(erl_false_block);
+        let idx14 = builder.ins().iconst(types::I32, 14);
+        let call_read14 = builder.ins().call(read_cop0, &[cpu_arg, idx14]);
+        let epc = builder.inst_results(call_read14)[0];
+        // clear EXL field
+        let not_exl_bitmask = builder.ins().iconst(types::I32, !(1 << 1));
+        let clear_exl = builder.ins().band(status, not_exl_bitmask);
+        builder.ins().call(write_cop0, &[cpu_arg, idx12, clear_exl]);
+        builder.ins().jump(sideload_block, &[BlockArg::Value(epc)]);
+
+        // --- Sideload check ---
+        builder.switch_to_block(sideload_block);
+        let incoming_epc = builder.block_params(sideload_block)[0];
+        let sideload_ptr =
+            builder.ins().iconst(
+                types::I64,
+                unsafe { &(*self.cpu).sideload_elf } as *const bool as i64,
+            );
+        let sideload_val = builder
+            .ins()
+            .load(types::I8, MemFlags::trusted(), sideload_ptr, 0);
+        let zero_i8 = builder.ins().iconst(types::I8, 0);
+        let need_sideload = builder.ins().icmp(IntCC::NotEqual, sideload_val, zero_i8);
+
+        builder.ins().brif(
+            need_sideload,
+            sideload_true_block,
+            &[],
+            end_block,
+            &[BlockArg::Value(incoming_epc)],
+        );
+
+        // --- Sideload=true: clear flag, load ELF entry, finish at end_block ---
+        builder.switch_to_block(sideload_true_block);
+        let load_elf = self
+            .module
+            .declare_func_in_func(self.load_elf_func, builder.func);
+        builder.ins().call(load_elf, &[cpu_arg]);
+        builder
+            .ins()
+            .store(MemFlags::trusted(), zero_i8, sideload_ptr, 0);
+        let entry_point_ptr = builder.ins().iconst(
+            types::I64,
+            &(*self.cpu).elf_entry_point as *const u32 as i64,
+        );
+        let entry_point = builder
+            .ins()
+            .load(types::I32, MemFlags::trusted(), entry_point_ptr, 0);
+        builder
+            .ins()
+            .jump(end_block, &[BlockArg::Value(entry_point)]);
+
+        // --- End block: pick up final PC ---
+        builder.switch_to_block(end_block);
+        let final_pc = builder.block_params(end_block)[0];
+
+        builder.seal_all_blocks();
+        *current_pc = current_pc.wrapping_add(4);
+
+        Some(BranchInfo::Eret {
+            target: BranchTarget::Reg(final_pc),
+        })
     }
 }
 

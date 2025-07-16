@@ -3,6 +3,7 @@ use crate::bus::tlb::TlbEntry;
 use crate::cpu::CPU;
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
+use std::fs;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
@@ -125,6 +126,9 @@ impl Interpreter {
                     }
                     0x0B => {
                         self.movn(opcode);
+                    }
+                    0x0C => {
+                        self.syscall(opcode);
                     }
                     0x0D => {
                         self.break_();
@@ -265,16 +269,27 @@ impl Interpreter {
                         self.mtc0(opcode);
                     }
                     0x10 => {
-                        self.tlbwi();
+                        let funct = opcode & 0x3F;
+
+                        match funct {
+                            0x2 => self.tlbwi(),
+                            0x18 => self.eret(),
+                            0x39 => self.di(),
+                            _ => panic!(
+                                "Unhandled EE Interpreter C0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
+                                opcode,
+                                funct,
+                                self.cpu.pc()
+                            ),
+                        }
                     }
                     _ => {
-                        error!(
+                        panic!(
                             "Unhandled EE Interpreter COP0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
                             opcode,
                             subfunction,
                             self.cpu.pc()
                         );
-                        panic!();
                     }
                 }
             }
@@ -328,6 +343,20 @@ impl Interpreter {
                     }
                     0x1B => {
                         self.divu1(opcode);
+                    }
+                    0x28 => {
+                        let mmi1_function = (opcode >> 6) & 0x1F;
+
+                        match mmi1_function {
+                            0x10 => self.padduw(opcode),
+                            _ => {
+                                panic!(
+                                    "Unimplemented MMI1 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
+                                    mmi1_function,
+                                    self.cpu.pc()
+                                );
+                            }
+                        }
                     }
                     0x29 => {
                         let mmi3_function = (opcode >> 6) & 0x1F;
@@ -1650,6 +1679,97 @@ impl Interpreter {
 
         // advance PC
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn padduw(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register(rs);
+        let rt_val = self.cpu.read_register(rt);
+
+        let rs_words = [
+            (rs_val & 0xFFFFFFFF) as u32,
+            ((rs_val >> 32) & 0xFFFFFFFF) as u32,
+            ((rs_val >> 64) & 0xFFFFFFFF) as u32,
+            ((rs_val >> 96) & 0xFFFFFFFF) as u32,
+        ];
+        let rt_words = [
+            (rt_val & 0xFFFFFFFF) as u32,
+            ((rt_val >> 32) & 0xFFFFFFFF) as u32,
+            ((rt_val >> 64) & 0xFFFFFFFF) as u32,
+            ((rt_val >> 96) & 0xFFFFFFFF) as u32,
+        ];
+
+        let mut result = 0u128;
+        for i in 0..4 {
+            let sum = (rs_words[i] as u64) + (rt_words[i] as u64);
+            let word = if sum > 0xFFFFFFFF {
+                0xFFFFFFFF
+            } else {
+                sum as u32
+            };
+            result |= (word as u128) << (i * 32);
+        }
+
+        self.cpu.write_register(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn di(&mut self) {
+        let status = self.cpu.read_cop0_register(12);
+        let edi = (status >> 10) & 0x1; // Bit 10: EDI
+        let exl = (status >> 1) & 0x1; // Bit 1: EXL
+        let erl = (status >> 2) & 0x1; // Bit 2: ERL
+        let ksu = (status >> 3) & 0x3; // Bits 4:3: KSU
+
+        if edi == 1 || exl == 1 || erl == 1 || ksu == 0 {
+            let new_status = status & !(1u32); // Clear EIE (bit 0)
+            self.cpu.write_cop0_register(12, new_status);
+        }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn eret(&mut self) {
+        let status = self.cpu.read_cop0_register(12); // Status register
+        let erl = (status >> 2) & 0x1; // Bit 2
+        if erl == 1 {
+            self.cpu.pc = self.cpu.read_cop0_register(30); // ErrorEPC
+            self.cpu.write_cop0_register(12, status & !(1 << 2)); // Clear ERL
+        } else {
+            self.cpu.pc = self.cpu.read_cop0_register(14); // EPC
+            self.cpu.write_cop0_register(12, status & !(1 << 1)); // Clear EXL
+        }
+
+        if self.cpu.sideload_elf {
+            let elf_bytes = fs::read(&self.cpu.elf_path)
+                .unwrap_or_else(|e| panic!("Failed to read ELF '{}': {}", self.cpu.elf_path, e));
+
+            self.cpu.load_elf(&elf_bytes);
+
+            self.cpu.sideload_elf = false;
+            self.cpu.pc = self.cpu.elf_entry_point;
+        }
+    }
+
+    fn syscall(&mut self, opcode: u32) {
+        let code = (opcode >> 6) & 0xFFFFF;
+
+        let status = self.cpu.read_cop0_register(12);
+
+        let current_pc = self.cpu.pc();
+        self.cpu.write_cop0_register(14, current_pc);
+
+        let new_status = status | (1 << 1);
+        self.cpu.write_cop0_register(12, new_status);
+
+        let cause = (8 << 2) | ((code as u32) << 10);
+        self.cpu.write_cop0_register(13, cause);
+
+        let exception_vector = 0x80000180;
+        self.cpu.set_pc(exception_vector);
     }
 }
 

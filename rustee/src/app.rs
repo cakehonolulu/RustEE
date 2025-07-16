@@ -124,16 +124,26 @@ impl Disassembler {
         base_addr: u64,
     ) -> Result<Vec<String>, capstone::Error> {
         let insns = self.cs.disasm_all(bytes, base_addr)?;
-
         let mut results = Vec::new();
+
         for insn in insns.iter() {
-            let disassembled = format!(
-                "0x{:08x}:\t{}\t{}",
+            // 1) pull out the raw bytes for this instruction…
+            let raw = insn
+                .bytes()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            // 2) format PC, raw bytes, then mnemonic + operands
+            let line = format!(
+                "0x{:08x}:\t{:<11}\t{:<6}\t{}",
                 insn.address(),
+                raw,
                 insn.mnemonic().unwrap_or(""),
                 insn.op_str().unwrap_or("")
             );
-            results.push(disassembled);
+            results.push(line);
         }
 
         Ok(results)
@@ -159,6 +169,10 @@ pub struct App {
     disassembly_start_addr: u32,
     address_input: String,
     follow_pc: bool,
+    ram_view_open: bool,
+    ram_view_addr: u32,
+    ram_view_len: usize,
+    tlb_view_open: bool,
 }
 
 impl App {
@@ -195,6 +209,10 @@ impl App {
             disassembly_start_addr: 0,
             address_input: "0x0".to_string(),
             follow_pc: true,
+            ram_view_open: false,
+            ram_view_addr: 0x0000_0000,
+            ram_view_len: 256, // show 256 bytes by default
+            tlb_view_open: false,
         }
     }
 
@@ -518,8 +536,215 @@ impl App {
                     if ui.button("Toggle Disassembly").clicked() {
                         self.disassembly_open = !self.disassembly_open;
                     }
+                    if ui.button("Toggle RAM View").clicked() {
+                        self.ram_view_open = !self.ram_view_open;
+                    }
+                    if ui.button("Toggle TLB View").clicked() {
+                        self.tlb_view_open = !self.tlb_view_open;
+                    }
                 });
             });
+
+            if self.tlb_view_open {
+                let bus = self.bus.lock().unwrap();
+                let tlb = bus.tlb.borrow();
+                egui::Window::new("TLB Viewer")
+                    .resizable(true)
+                    .default_size(egui::vec2(800.0, 400.0))
+                    .show(state.egui_renderer.context(), |ui| {
+                        ScrollArea::both().show(ui, |ui| {
+                            TableBuilder::new(ui)
+                                .striped(true)
+                                .column(Column::auto().resizable(true)) // Index
+                                .column(Column::auto().resizable(true)) // VPN2
+                                .column(Column::auto().resizable(true)) // ASID
+                                .column(Column::auto().resizable(true)) // G
+                                .column(Column::auto().resizable(true)) // PFN0
+                                .column(Column::auto().resizable(true)) // PFN1
+                                .column(Column::auto().resizable(true)) // C0
+                                .column(Column::auto().resizable(true)) // C1
+                                .column(Column::auto().resizable(true)) // D0
+                                .column(Column::auto().resizable(true)) // D1
+                                .column(Column::auto().resizable(true)) // V0
+                                .column(Column::auto().resizable(true)) // V1
+                                .column(Column::auto().resizable(true)) // S0
+                                .column(Column::auto().resizable(true)) // S1
+                                .column(Column::auto().resizable(true)) // Mask
+                                .header(20.0, |mut header| {
+                                    header.col(|ui| {
+                                        ui.label("Index");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("VPN2");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("ASID");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("G");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("PFN0");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("PFN1");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("C0");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("C1");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("D0");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("D1");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("V0");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("V1");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("S0");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("S1");
+                                    });
+                                    header.col(|ui| {
+                                        ui.label("Mask");
+                                    });
+                                })
+                                .body(|mut body| {
+                                    for (index, entry) in tlb.entries.iter().enumerate() {
+                                        if let Some(e) = entry {
+                                            body.row(18.0, |mut row| {
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", index));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("0x{:08X}", e.vpn2));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("0x{:02X}", e.asid));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.g { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("0x{:08X}", e.pfn0));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("0x{:08X}", e.pfn1));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", e.c0));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", e.c1));
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.d0 { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.d1 { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.v0 { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.v1 { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.s0 { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(if e.s1 { "1" } else { "0" });
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(format!("0x{:08X}", e.mask));
+                                                });
+                                            });
+                                        } else {
+                                            body.row(18.0, |mut row| {
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", index));
+                                                });
+                                                for _ in 0..14 {
+                                                    row.col(|ui| {
+                                                        ui.label("---");
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
+                        });
+                    });
+            }
+
+            if self.ram_view_open {
+                let bus = self.bus.lock().unwrap();
+                let ram = &bus.ram;
+
+                egui::Window::new("RAM Viewer")
+                    .resizable(true)
+                    .default_size(egui::vec2(400.0, 300.0))
+                    .show(state.egui_renderer.context(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Addr:");
+                            if ui
+                                .text_edit_singleline(&mut self.address_input)
+                                .lost_focus()
+                            {
+                                if let Ok(v) = u32::from_str_radix(
+                                    self.address_input.trim_start_matches("0x"),
+                                    16,
+                                ) {
+                                    self.ram_view_addr = v;
+                                }
+                            }
+                            ui.label("Len:");
+                            ui.add(egui::DragValue::new(&mut self.ram_view_len).range(16..=4096));
+                        });
+
+                        ui.separator();
+
+                        let bytes_per_row = 16;
+                        let rows = (self.ram_view_len + bytes_per_row - 1) / bytes_per_row;
+
+                        ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui::Grid::new("ram_grid")
+                                    .spacing([8.0, 4.0])
+                                    .min_col_width(0.0)
+                                    .show(ui, |ui| {
+                                        // Header row
+                                        ui.label(""); // corner
+                                        for i in 0..bytes_per_row {
+                                            ui.label(format!("{:02X}", i));
+                                        }
+                                        ui.end_row();
+
+                                        // Data rows
+                                        for row in 0..rows {
+                                            let base =
+                                                self.ram_view_addr as usize + row * bytes_per_row;
+                                            ui.label(format!("0x{:08X}", base));
+                                            for col in 0..bytes_per_row {
+                                                let idx = base + col;
+                                                let byte = ram.get(idx).copied().unwrap_or(0);
+                                                ui.label(format!("{:02X}", byte));
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
+                    });
+            }
 
             if self.disassembly_open {
                 if let Ok(mut ee) = self.ee_backend.get_cpu().lock() {

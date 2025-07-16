@@ -1,4 +1,7 @@
-use crate::bus::backpatch::{io_read16_stub, io_write8_stub, io_write16_stub};
+use crate::bus::backpatch::{
+    io_read8_stub, io_read16_stub, io_read64_stub, io_read128_stub, io_write8_stub,
+    io_write16_stub, io_write64_stub, io_write128_stub,
+};
 use crate::bus::unix::libc::ucontext_t;
 use backtrace::Backtrace;
 use nix::libc;
@@ -72,8 +75,13 @@ fn generic_segv_handler<H: ArchHandler>(
                 if name_str.contains("__bus_write8")
                     || name_str.contains("__bus_write16")
                     || name_str.contains("__bus_write32")
+                    || name_str.contains("__bus_write64")
+                    || name_str.contains("__bus_write128")
+                    || name_str.contains("__bus_read8")
                     || name_str.contains("__bus_read16")
                     || name_str.contains("__bus_read32")
+                    || name_str.contains("__bus_read64")
+                    || name_str.contains("__bus_read128")
                 {
                     is_jit = true;
                     trace!("  Found JIT access at frame {}", frame_idx);
@@ -86,12 +94,27 @@ fn generic_segv_handler<H: ArchHandler>(
                 } else if name_str.contains("hw_write32") {
                     access_type = Some("write32");
                     trace!("  Found write32 access at frame {}", frame_idx);
+                } else if name_str.contains("hw_write64") {
+                    access_type = Some("write64");
+                    trace!("  Found write64 access at frame {}", frame_idx);
+                } else if name_str.contains("hw_write128") {
+                    access_type = Some("write128");
+                    trace!("  Found write128 access at frame {}", frame_idx);
+                } else if name_str.contains("hw_read8") {
+                    access_type = Some("read8");
+                    trace!("  Found read8 access at frame {}", frame_idx);
                 } else if name_str.contains("hw_read16") {
                     access_type = Some("read16");
                     trace!("  Found read16 access at frame {}", frame_idx);
                 } else if name_str.contains("hw_read32") {
                     access_type = Some("read32");
                     trace!("  Found read32 access at frame {}", frame_idx);
+                } else if name_str.contains("hw_read64") {
+                    access_type = Some("read64");
+                    trace!("  Found read64 access at frame {}", frame_idx);
+                } else if name_str.contains("hw_read128") {
+                    access_type = Some("read128");
+                    trace!("  Found read128 access at frame {}", frame_idx);
                 }
             }
         }
@@ -144,8 +167,13 @@ fn generic_segv_handler<H: ArchHandler>(
             pattern if pattern.contains("__bus_write8") => io_write8_stub as *const () as u64,
             pattern if pattern.contains("__bus_write16") => io_write16_stub as *const () as u64,
             pattern if pattern.contains("__bus_write32") => io_write32_stub as *const () as u64,
+            pattern if pattern.contains("__bus_write64") => io_write64_stub as *const () as u64,
+            pattern if pattern.contains("__bus_write128") => io_write128_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read8") => io_read8_stub as *const () as u64,
             pattern if pattern.contains("__bus_read16") => io_read16_stub as *const () as u64,
             pattern if pattern.contains("__bus_read32") => io_read32_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read64") => io_read64_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read128") => io_read128_stub as *const () as u64,
             other => {
                 panic!("Unrecognized helper pattern: {}", other);
             }
@@ -158,11 +186,6 @@ fn generic_segv_handler<H: ArchHandler>(
                 "Processing frame at index {} with IP 0x{:x}",
                 target_frame_index, ip
             );
-
-            // load a 14‑byte window ending at IP
-            let buf_size = 14;
-            let buf_start = ip.saturating_sub(buf_size);
-            let buf: [u8; 14] = unsafe { std::ptr::read(buf_start as *const [u8; 14]) };
 
             let movabs_opcodes = [
                 ([0x48, 0xB8], "rax"),
@@ -197,51 +220,111 @@ fn generic_segv_handler<H: ArchHandler>(
                 ([0x41, 0xFF, 0xD3], "r11"),
             ];
 
-            // collect all movabs hits
-            let mut mov_hits = Vec::new();
-            for i in 0..=buf_size - 2 {
-                if let Some((_, reg)) = movabs_opcodes.iter().find(|(opc, _)| &buf[i..i + 2] == opc)
-                {
-                    mov_hits.push((i, *reg));
+            // Memory validation function
+            let validate_memory_region = |start: usize, size: usize| -> Result<(), String> {
+                let page_size = nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
+                    .map_err(|e| format!("Failed to get page size: {}", e))?
+                    .ok_or("Page size not available")? as usize;
+                let page_start = start & !(page_size - 1);
+                let page_end = (start + size - 1) | (page_size - 1);
+                unsafe {
+                    mprotect(
+                        std::ptr::NonNull::new_unchecked(page_start as *mut c_void),
+                        page_end - page_start + 1,
+                        ProtFlags::PROT_READ,
+                    )
+                    .map_err(|e| format!("mprotect failed: {}", e))?;
+                    Ok(())
                 }
-            }
+            };
 
-            // collect all call hits
-            let mut call_hits = Vec::new();
-            for i in 0..=buf_size - 2 {
-                // 2‑byte calls
-                if let Some((_, reg)) = call_opcodes_2byte
-                    .iter()
-                    .find(|(opc, _)| &buf[i..i + 2] == opc)
-                {
-                    call_hits.push((i, *reg, 2));
-                }
-                // 3‑byte calls
-                if i + 3 <= buf_size {
-                    if let Some((_, reg)) = call_opcodes_3byte
+            // Try backward search first
+            let try_patch = |buf_start: usize, buf: &[u8]| -> bool {
+                let mut mov_hits = Vec::new();
+                for i in 0..=buf.len().saturating_sub(2) {
+                    if let Some((_, reg)) = movabs_opcodes
                         .iter()
-                        .find(|(opc, _)| &buf[i..i + 3] == opc)
+                        .find(|(opc, _)| buf.get(i..i + 2) == Some(opc))
                     {
-                        call_hits.push((i, *reg, 3));
+                        mov_hits.push((i, reg));
                     }
                 }
+
+                let mut call_hits = Vec::new();
+                for i in 0..=buf.len().saturating_sub(2) {
+                    if let Some((_, reg)) = call_opcodes_2byte
+                        .iter()
+                        .find(|(opc, _)| buf.get(i..i + 2) == Some(opc))
+                    {
+                        call_hits.push((i, reg, 2));
+                    }
+                    if i + 3 <= buf.len() {
+                        if let Some((_, reg)) = call_opcodes_3byte
+                            .iter()
+                            .find(|(opc, _)| buf.get(i..i + 3) == Some(opc))
+                        {
+                            call_hits.push((i, reg, 3));
+                        }
+                    }
+                }
+
+                for &(mov_off, mov_reg) in &mov_hits {
+                    for &(call_off, call_reg, call_len) in &call_hits {
+                        if mov_reg == call_reg {
+                            let movabs_addr = buf_start + mov_off;
+                            let reg = H::parse_register_from_operand(mov_reg).unwrap();
+                            let stub_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
+                            if let Err(e) = patch_instruction(movabs_addr as u64, &stub_bytes) {
+                                error!("Failed to patch instruction at 0x{:x}: {}", movabs_addr, e);
+                                return false;
+                            }
+                            if let Err(e) = H::advance_instruction_pointer(
+                                ctx,
+                                &cs,
+                                H::get_instruction_pointer(ctx),
+                            ) {
+                                error!("Failed to advance instruction pointer: {}", e);
+                                return false;
+                            }
+                            fix_return_address::<H>(ctx, movabs_addr as u64, ip);
+                            trace!("Patched at 0x{:x}", movabs_addr);
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
+
+            // Backward search: 14-byte window ending at IP
+            let buf_size = 14;
+            let buf_start = ip.saturating_sub(buf_size);
+            if validate_memory_region(buf_start, buf_size).is_err() {
+                error!(
+                    "Memory region 0x{:x}-0x{:x} is not readable",
+                    buf_start,
+                    buf_start + buf_size
+                );
+                restore_default_handler_and_raise(signum);
+                return;
+            }
+            let buf: [u8; 14] = unsafe { std::ptr::read(buf_start as *const [u8; 14]) };
+            if try_patch(buf_start, &buf) {
+                return;
             }
 
-            for &(mov_off, mov_reg) in &mov_hits {
-                for &(_, call_reg, _) in &call_hits {
-                    if mov_reg == call_reg {
-                        let movabs_addr = buf_start + mov_off;
-                        let reg = H::parse_register_from_operand(mov_reg).unwrap();
-                        let stub_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
-                        patch_instruction(movabs_addr as u64, &stub_bytes)
-                            .expect("failed to write stub");
-                        H::advance_instruction_pointer(ctx, &cs, H::get_instruction_pointer(ctx))
-                            .unwrap();
-                        fix_return_address::<H>(ctx, movabs_addr as u64, ip);
-                        trace!("Patched at 0x{:x}", movabs_addr);
-                        return;
-                    }
-                }
+            // Forward search: 14-byte window starting at IP
+            if validate_memory_region(ip, buf_size).is_err() {
+                error!(
+                    "Memory region 0x{:x}-0x{:x} is not readable",
+                    ip,
+                    ip + buf_size
+                );
+                restore_default_handler_and_raise(signum);
+                return;
+            }
+            let buf: [u8; 14] = unsafe { std::ptr::read(ip as *const [u8; 14]) };
+            if try_patch(ip, &buf) {
+                return;
             }
             error!(
                 "no movabs+call pair matched in 14-byte window at IP 0x{:x}",
@@ -287,6 +370,32 @@ fn generic_segv_handler<H: ArchHandler>(
                     bus_ptr, addr, value
                 );
             }
+            "write64" => {
+                let value = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
+                io_write64_stub(bus_ptr, addr, value);
+                trace!(
+                    "Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                    bus_ptr, addr, value
+                );
+            }
+            "write128" => {
+                let low = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
+                let high = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
+                let value = ((high as u128) << 64) | (low as u128);
+                io_write128_stub(bus_ptr, addr, value);
+                trace!(
+                    "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                    bus_ptr, addr, value
+                );
+            }
+            "read8" => {
+                let value = io_read8_stub(bus_ptr, addr);
+                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
+                trace!(
+                    "Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                    bus_ptr, addr, value
+                );
+            }
             "read16" => {
                 let value = io_read16_stub(bus_ptr, addr);
                 uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
@@ -300,6 +409,25 @@ fn generic_segv_handler<H: ArchHandler>(
                 uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
                 trace!(
                     "Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                    bus_ptr, addr, value
+                );
+            }
+            "read64" => {
+                let value = io_read64_stub(bus_ptr, addr);
+                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
+                trace!(
+                    "Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                    bus_ptr, addr, value
+                );
+            }
+            "read128" => {
+                let value = io_read128_stub(bus_ptr, addr);
+                let low = (value as u128) as u64;
+                let high = (value >> 64) as u64;
+                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = low as i64;
+                uc.uc_mcontext.gregs[libc::REG_RDX as usize] = high as i64;
+                trace!(
+                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
                     bus_ptr, addr, value
                 );
             }

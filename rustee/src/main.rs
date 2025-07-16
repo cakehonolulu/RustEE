@@ -5,8 +5,8 @@ use librustee::{
     cpu::CPU,
     ee::EE,
 };
-use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
+use std::{fs, path::Path};
 
 use tracing_subscriber::EnvFilter;
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -45,6 +45,11 @@ fn main() {
                 .value_parser(["ranged", "sw_fastmem", "hw_fastmem"])
                 .default_value("hw_fastmem")
                 .help("Choose the bus emulation mode: 'ranged', 'sw_fastmem' or 'hw_fastmem'"),
+        )
+        .arg(
+            arg!(--elf <ELFPATH>)
+                .required(false)
+                .help("Path to an ELF executable to sideload"),
         )
         .get_matches();
 
@@ -96,6 +101,12 @@ fn main() {
             for &addr in breakpoints {
                 ee.lock().unwrap().add_breakpoint(addr);
             }
+        }
+
+        if let Some(elf) = arguments.get_one::<String>("elf") {
+            let mut ee_lock = ee.lock().unwrap();
+            ee_lock.elf_path = elf.to_string();
+            ee_lock.sideload_elf = true;
         }
 
         let backend = arguments

@@ -3,6 +3,8 @@ pub mod bios;
 use bios::BIOS;
 use tracing::{debug, info};
 
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, RwLock};
 use std::{cell::RefCell, ptr::null_mut};
@@ -18,6 +20,11 @@ use crate::ee::dmac::EE_Dmac;
 use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
 use crate::ee::timer::Timers;
+use crate::gif::GIF;
+use crate::gs::GS;
+use crate::ipu::IPU;
+use crate::sif::SIF;
+use crate::vif::{VIF, VIF0_BASE, VIF1_BASE};
 
 use tlb::{OperatingMode, Tlb};
 
@@ -71,17 +78,34 @@ const NUM_PAGES: usize = 1 << (32 - PAGE_BITS); // 4 GiB / 4 KiB = 1 048 576
 
 pub struct Bus {
     pub(crate) bios: BIOS,
-    pub(crate) ram: Vec<u8>,
+    pub ram: Vec<u8>,
+    pub iop_ram: Vec<u8>,
+    vu0_code: Vec<u8>, // 4 KB VU0 code
+    vu0_data: Vec<u8>, // 4 KB VU0 data
+    vu1_code: Vec<u8>, // 16 KB VU1 code
+    vu1_data: Vec<u8>, // 16 KB VU1 data
     pub(crate) scratchpad: Vec<u8>,
 
     pub tlb: RefCell<Tlb>,
     pub(crate) operating_mode: OperatingMode,
+
+    #[cfg(unix)]
+    ram_fd: Option<OwnedFd>,
+
+    #[cfg(windows)]
+    ram_handle: Option<HANDLE>,
 
     pub sio: SIO,
     rdram: RDRAM,
     ee_intc: INTC,
     ee_timer: Timers,
     ee_dmac: EE_Dmac,
+    sif: SIF,
+    gif: GIF,
+    gs: GS,
+    vif0: VIF,
+    vif1: VIF,
+    ipu: IPU,
 
     mode: BusMode,
 
@@ -117,6 +141,11 @@ impl Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
             scratchpad: vec![0; 16 * 1024],
+            iop_ram: vec![0; 2 * 1024 * 1024],
+            vu0_code: vec![0; 4 * 1024],
+            vu0_data: vec![0; 4 * 1024],
+            vu1_code: vec![0; 16 * 1024],
+            vu1_data: vec![0; 16 * 1024],
             page_read: vec![0; NUM_PAGES],
             page_write: vec![0; NUM_PAGES],
             sio: SIO::new(),
@@ -124,6 +153,12 @@ impl Bus {
             ee_intc: INTC::new(),
             ee_timer: Timers::new(),
             ee_dmac: EE_Dmac::new(),
+            sif: SIF::new(),
+            gif: GIF::new(),
+            gs: GS::new(),
+            vif0: VIF::new(VIF0_BASE),
+            vif1: VIF::new(VIF1_BASE),
+            ipu: IPU::new(),
             mode: mode.clone(),
             dev9_delay3: 0,
             read8: Bus::sw_fmem_read8,
@@ -142,6 +177,7 @@ impl Bus {
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers: Arc::clone(&cop0_registers),
+            ram_fd: None,
         });
 
         match mode {
@@ -242,6 +278,18 @@ impl Bus {
             0x10000000..=0x10001830 => {
                 self.ee_timer.write32(addr, value);
             }
+            0x10002000 | 0x10002010 => {
+                self.ipu.write32(addr, value);
+            }
+            0x10003000 => {
+                self.gif.write32(addr, value);
+            }
+            0x10003810 | 0x10003820 | 0x10003830 => {
+                self.vif0.write32(addr, value);
+            }
+            0x10003C00 | 0x10003C10 => {
+                self.vif1.write32(addr, value);
+            }
             0x10008000..=0x1000D4FF => {
                 self.ee_dmac.write_register(addr, value);
             }
@@ -255,6 +303,9 @@ impl Bus {
             | 0x1000F180 | 0x1000F1C0 => {
                 self.sio.write(addr, value);
             }
+            0x1000F200 | 0x1000F210 | 0x1000F220 | 0x1000F230 | 0x1000F240 | 0x1000F260 => {
+                self.sif.write32(addr, value);
+            }
             0x1000F400 | 0x1000F410 | 0x1000F420 => {}
             0x1000F430 | 0x1000F440 => {
                 self.rdram.write(addr, value);
@@ -265,7 +316,10 @@ impl Bus {
             0x1000F500 => {
                 debug!("Memory controller (?) 32-bit write");
             }
-            0x1000F510..=0x1000F590 => {
+            0x1000F510 => {
+                // ?
+            }
+            0x1000F520 | 0x1000F590 => {
                 self.ee_dmac.write_register(addr, value);
             }
             0x1F80141C => self.dev9_delay3 = value,
@@ -274,6 +328,55 @@ impl Bus {
                     "Invalid IO write32: addr=0x{:08X}, value=0x{:08X}",
                     addr, value
                 );
+            }
+        }
+    }
+
+    pub fn io_write64(&mut self, mut addr: u32, value: u64) {
+        addr &= 0x1FFFFFFF;
+        match addr {
+            0x12000000 | 0x12000010 | 0x12000020 | 0x12000030 | 0x12000040 | 0x12000050
+            | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090 | 0x120000A0 | 0x120000B0
+            | 0x120000C0 | 0x120000D0 | 0x120000E0 | 0x12001010 => self.gs.write64(addr, value),
+            0x12001000 => self.gs.write64(addr, value),
+            _ => {
+                panic!(
+                    "Invalid IO write64: addr=0x{:08X}, value=0x{:08X}",
+                    addr, value
+                );
+            }
+        }
+    }
+
+    pub fn io_write128(&mut self, mut addr: u32, value: u128) {
+        addr &= 0x1FFFFFFF;
+        match addr {
+            0x10004000 => {
+                // TODO: VIF0 FIFO
+            }
+            0x10005000 => {
+                // TODO: VIF1 FIFO
+            }
+            0x10006000 => {
+                // TODO: Gif FIFO
+            }
+            0x10007010 => {
+                // TODO: Ifu FIFO
+            }
+            _ => {
+                panic!(
+                    "Invalid IO write128: addr=0x{:08X}, value=0x{:08X}",
+                    addr, value
+                );
+            }
+        }
+    }
+
+    pub fn io_read8(&mut self, mut addr: u32) -> u8 {
+        addr &= 0x1FFFFFFF;
+        match addr {
+            _ => {
+                panic!("Invalid IO read8: addr=0x{:08X}", addr);
             }
         }
     }
@@ -291,17 +394,41 @@ impl Bus {
     pub fn io_read32(&mut self, mut addr: u32) -> u32 {
         addr &= 0x1FFFFFFF;
         match addr {
+            0x10002000 | 0x10002010 => self.ipu.read32(addr),
+            0x10003020 => self.gif.read32(addr),
             0x10008000..=0x1000D4FF => self.ee_dmac.read_register(addr),
             0x1000E000..=0x1000E050 => self.ee_dmac.read_register(addr),
             0x1000F000 | 0x1000F010 => self.ee_intc.read32(addr),
             0x1000F130 => self.sio.read(addr),
+            0x1000F200 | 0x1000F210 | 0x1000F220 | 0x1000F230 | 0x1000F240 | 0x1000F260 => {
+                self.sif.read32(addr)
+            }
             0x1000F400 | 0x1000F410 => 0,
             0x1000F430 | 0x1000F440 => self.rdram.read(addr),
-            0x1000F510..=0x1000F590 => self.ee_dmac.read_register(addr),
+            0x1000F520 | 0x1000F590 => self.ee_dmac.read_register(addr),
             0x1C0003C0 => 0,
             0x1F80141C => self.dev9_delay3,
             _ => {
                 panic!("Invalid IO read32: addr=0x{:08X}", addr);
+            }
+        }
+    }
+
+    pub fn io_read64(&mut self, mut addr: u32) -> u64 {
+        addr &= 0x1FFFFFFF;
+        match addr {
+            0x12000000 | 0x12001000 => self.gs.read64(addr),
+            _ => {
+                panic!("Invalid IO read64: addr=0x{:08X}", addr);
+            }
+        }
+    }
+
+    pub fn io_read128(&mut self, mut addr: u32) -> u128 {
+        addr &= 0x1FFFFFFF;
+        match addr {
+            _ => {
+                panic!("Invalid IO read128: addr=0x{:08X}", addr);
             }
         }
     }

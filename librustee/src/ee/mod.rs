@@ -18,8 +18,11 @@ pub mod vu;
 
 use crate::bus::map;
 use crate::bus::tlb::AccessType;
+use goblin::elf::Elf;
+use goblin::elf::program_header::PT_LOAD;
 pub use interpreter::Interpreter;
 pub use jit::JIT;
+use tracing::{error, info};
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
@@ -34,6 +37,9 @@ pub struct EE {
     pub fpu_registers: [u32; 32],
     vu0: VU,
     vu1: VU,
+    pub sideload_elf: bool,
+    elf_entry_point: u32,
+    pub elf_path: String,
 }
 
 impl Clone for EE {
@@ -49,6 +55,9 @@ impl Clone for EE {
             fpu_registers: self.fpu_registers.clone(),
             vu0: self.vu0.clone(),
             vu1: self.vu1.clone(),
+            sideload_elf: self.sideload_elf,
+            elf_entry_point: self.elf_entry_point,
+            elf_path: self.elf_path.clone(),
         }
     }
 }
@@ -68,6 +77,9 @@ impl EE {
             fpu_registers: [0; 32],
             vu0: VU::new(4 * 1024, 4 * 1024),
             vu1: VU::new(16 * 1024, 16 * 1024),
+            sideload_elf: false,
+            elf_entry_point: 0,
+            elf_path: "".to_string(),
         };
 
         ee
@@ -87,6 +99,89 @@ impl EE {
 
     pub fn write_fpu_register_from_f32(&mut self, index: usize, value: f32) {
         self.fpu_registers[index] = value.to_bits();
+    }
+
+    pub fn load_elf(&mut self, elf_data: &[u8]) {
+        // Parse ELF
+        let elf = match Elf::parse(elf_data) {
+            Ok(e) => e,
+            Err(e) => {
+                error!("Failed to parse ELF: {:?}", e);
+                return;
+            }
+        };
+
+        info!(
+            "ELF parsed: entry=0x{:08X}, {} program headers",
+            elf.header.e_entry,
+            elf.program_headers.len()
+        );
+
+        // Grab a mutable reference to RAM once
+        let mut bus = self.bus.lock().unwrap();
+
+        // Iterate all PT_LOAD segments
+        for (i, phdr) in elf.program_headers.iter().enumerate() {
+            if phdr.p_type != PT_LOAD {
+                continue;
+            }
+
+            let paddr = phdr.p_paddr as usize;
+            let filesz = phdr.p_filesz as usize;
+            let memsz = phdr.p_memsz as usize;
+            let offset = phdr.p_offset as usize;
+
+            info!(
+                "Segment {}: p_paddr=0x{:08X}, filesz=0x{:X}, memsz=0x{:X}, offset=0x{:X}",
+                i, phdr.p_paddr, filesz, memsz, phdr.p_offset
+            );
+
+            // Bounds check
+            if paddr + memsz > bus.ram.len() {
+                error!(
+                    "Segment {} out of RAM bounds: paddr=0x{:08X}, memsz=0x{:X}",
+                    i, phdr.p_paddr, memsz
+                );
+                continue;
+            }
+
+            // Zero entire memsz region (covers BSS)
+            for i in paddr..(paddr + memsz) {
+                (bus.write8)(&mut bus, i as u32, 0);
+            }
+
+            // Copy file data
+            if offset + filesz <= elf_data.len() {
+                let data = &elf_data[offset..offset + filesz];
+
+                for (i, &b) in data.iter().enumerate() {
+                    (bus.write8)(&mut bus, (paddr + i) as u32, b);
+                }
+
+                info!(
+                    "  → loaded 0x{:X} bytes into RAM[0x{:08X}..]",
+                    filesz, paddr
+                );
+            } else {
+                error!(
+                    "Segment {} offset+filesz out of bounds: offset=0x{:X}, filesz=0x{:X}",
+                    i, phdr.p_offset, filesz
+                );
+            }
+        }
+
+        let entry_point = elf.header.e_entry as u32;
+
+        if entry_point as usize >= bus.ram.len() {
+            error!("ELF entry point 0x{:08X} exceeds RAM bounds", entry_point);
+            return;
+        }
+
+        self.elf_entry_point = entry_point;
+        info!(
+            "ELF entry point set to physical address 0x{:08X}",
+            entry_point
+        );
     }
 }
 
