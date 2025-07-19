@@ -5,6 +5,8 @@ use tracing::{debug, info};
 
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
+#[cfg(windows)]
+use std::os::windows::raw::HANDLE;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, RwLock};
 use std::{cell::RefCell, ptr::null_mut};
@@ -93,7 +95,7 @@ pub struct Bus {
     ram_fd: Option<OwnedFd>,
 
     #[cfg(windows)]
-    ram_handle: Option<HANDLE>,
+    ram_mapping: Option<HANDLE>,
 
     pub sio: SIO,
     rdram: RDRAM,
@@ -177,7 +179,10 @@ impl Bus {
             tlb: Tlb::new().into(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers: Arc::clone(&cop0_registers),
+            #[cfg(unix)]
             ram_fd: None,
+            #[cfg(windows)]
+            ram_mapping: None,
         });
 
         match mode {
