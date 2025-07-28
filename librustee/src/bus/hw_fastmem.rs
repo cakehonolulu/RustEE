@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use super::tlb::{Tlb, TlbEntry, mask_to_page_size};
 use super::{Bus, HW_BASE};
 use crate::bus::HW_LENGTH;
@@ -28,19 +29,11 @@ use libc::{
 };
 
 #[cfg(windows)]
-use winapi::um::handleapi::CloseHandle;
-#[cfg(windows)]
-use winapi::um::memoryapi::{CreateFileMappingW, MapViewOfFile, MapViewOfFileEx, UnmapViewOfFile, VirtualAlloc};
-#[cfg(windows)]
-use winapi::um::memoryapi::{FILE_MAP_READ, FILE_MAP_WRITE};
-#[cfg(windows)]
-use winapi::um::winnt::{
-    HANDLE, MEM_COMMIT, MEM_RESERVE, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
-};
-#[cfg(windows)]
-use winapi::shared::minwindef::LPVOID;
-#[cfg(windows)]
-use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use std::os::windows::ffi::OsStrExt;
+use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::Memory::{CreateFileMapping2, MapViewOfFile3, UnmapViewOfFile2, VirtualAlloc2, VirtualFree, FILE_MAP_READ, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE, MEM_REPLACE_PLACEHOLDER, MEM_RESERVE, MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE};
+use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     debug!("Initializing Hardware Fast Memory...");
@@ -68,7 +61,6 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
 pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> {
     let size = 1usize << 32; // 4GB virtual address space
 
-    // Reserve 4GB of virtual address space with no backing
     let base = mmap(
         ptr::null_mut(),
         size,
@@ -87,8 +79,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
 
     let base = base as *mut u8;
 
-    // Create shared memory for main RAM (32MB)
-    let ram_size = 0x2000000; // 32MB
+    let ram_size = 0x2000000;
     let ram_name = c"/rustee_ram";
     let ram_fd = shm_open(
         ram_name,
@@ -103,7 +94,6 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         io::Error::new(ErrorKind::Other, format!("Failed to set RAM size: {}", e))
     })?;
 
-    // Map RAM to fixed kernel segments (these are always mapped)
     map_fixed_region(
         base,
         0x80000000,
@@ -121,16 +111,13 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         PROT_READ | PROT_WRITE,
     )?;
 
-    // Store ram_fd for TLB dynamic mapping
     bus.ram_fd = Some(ram_fd);
     shm_unlink(ram_name).map_err(|e| {
         io::Error::new(ErrorKind::Other, format!("Failed to unlink RAM shm: {}", e))
     })?;
 
-    // Map BIOS (read-only)
     map_bios(bus, base)?;
 
-    // Map other fixed regions
     map_iop_ram(base)?;
     map_scratchpad(base)?;
     map_vu_memory(base)?;
@@ -145,52 +132,314 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
 #[cfg(windows)]
 pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> {
     let size = 1usize << 32; // 4GB
-
-    // Try to reserve 4GB of virtual address space at a specific base address
-    // Use a fixed address in the lower 32-bit range to avoid conflicts
-    let desired_base = 0x10000000usize as LPVOID; // Start at 256MB
-    
-    let base = VirtualAlloc(desired_base, size, MEM_RESERVE, PAGE_NOACCESS);
+    let base = unsafe {
+        VirtualAlloc2(
+            ptr::null_mut(),
+            ptr::null_mut(),
+            size,
+            MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+            PAGE_NOACCESS,
+            ptr::null_mut(),
+            0,
+        )
+    };
     if base.is_null() {
-        // If we can't get the desired address, try anywhere
-        let base = VirtualAlloc(ptr::null_mut(), size, MEM_RESERVE, PAGE_NOACCESS);
-        if base.is_null() {
-            return Err(io::Error::new(ErrorKind::Other, "Failed to reserve address space"));
+        return Err(io::Error::new(ErrorKind::Other, "Failed to reserve address space"));
+    }
+    let base = base as *mut u8;
+    debug!("Reserved base address: {:p}", base);
+
+    let ram_size = 0x0200_0000;
+    let ram_section = unsafe {
+        CreateFileMapping2(
+            INVALID_HANDLE_VALUE,
+            ptr::null_mut(),
+            FILE_MAP_READ | FILE_MAP_WRITE,
+            PAGE_READWRITE,
+            0,
+            ram_size as u64,
+            OsStr::new("RustEE RAM")
+                .encode_wide()
+                .chain(Some(0))
+                .collect::<Vec<u16>>()
+                .as_ptr(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if ram_section == ptr::null_mut() {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to create RAM section"));
+    }
+    debug!("RAM section handle: {:?}", ram_section);
+
+    let addr1 = unsafe { base.add(0x8000_0000) } as *mut c_void;
+    let addr2 = unsafe { base.add(0xA000_0000) } as *mut c_void;
+    for &addr in &[addr1, addr2] {
+        let res = unsafe {
+            VirtualFree(
+                addr,
+                ram_size,
+                MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
+            )
+        };
+        if res == 0 {
+            return Err(io::Error::new(ErrorKind::Other, "Failed to split placeholder"));
         }
     }
 
-    let base = base as *mut u8;
-    debug!("Reserved base address: {:?}", base);
-
-    // Create file mapping for RAM (32MB)
-    let ram_size = 0x2000000; // 32MB
-    let ram_mapping = CreateFileMappingW(
-        INVALID_HANDLE_VALUE,
-        ptr::null_mut(),
-        PAGE_READWRITE,
-        0,
-        ram_size as u32,
-        ptr::null(),
-    );
-    if ram_mapping.is_null() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create RAM file mapping"));
+    for &offset in &[0x8000_0000usize, 0xA000_0000usize] {
+        let view = unsafe {
+            MapViewOfFile3(
+                ram_section,
+                GetCurrentProcess(),
+                base.add(offset) as *const c_void,
+                0,
+                ram_size,
+                MEM_REPLACE_PLACEHOLDER,
+                PAGE_READWRITE,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if view.Value == ptr::null_mut() {
+            return Err(io::Error::new(ErrorKind::Other,
+                                      format!("Failed to map RAM view at offset {:#x}", offset)
+            ));
+        }
+        debug!("Mapped RAM at {:p}", view.Value);
     }
-    debug!("RAM mapping handle created: {:?}", ram_mapping);
 
-    // Map RAM to fixed kernel segments
-    map_fixed_region_windows(base, 0x80000000, ram_size, ram_mapping, 0, FILE_MAP_READ | FILE_MAP_WRITE)?;
-    map_fixed_region_windows(base, 0xA0000000, ram_size, ram_mapping, 0, FILE_MAP_READ | FILE_MAP_WRITE)?;
+    bus.ram_mapping = Some(ram_section as *mut std::ffi::c_void);
 
-    // Store ram_mapping for TLB dynamic mapping
-    bus.ram_mapping = Some(ram_mapping as *mut std::ffi::c_void);
+    let iop_size: usize = 0x0020_0000;
 
-    // Map BIOS
-    map_bios_windows(bus, base)?;
+    let name_iop: Vec<u16> = OsStr::new("RustEE IOP RAM")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let iop_section = unsafe {
+        CreateFileMapping2(
+            INVALID_HANDLE_VALUE,
+            ptr::null_mut(),
+            FILE_MAP_READ | FILE_MAP_WRITE,
+            PAGE_READWRITE,
+            0,
+            iop_size as u64,
+            name_iop.as_ptr(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if iop_section == ptr::null_mut() {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to create IOP RAM section"));
+    }
 
-    // Map other fixed regions
-    map_iop_ram_windows(base)?;
-    map_scratchpad_windows(base)?;
-    map_vu_memory_windows(base)?;
+    for &offset in &[0x9C00_0000usize, 0xBC00_0000usize] {
+        let addr = unsafe { base.add(offset) } as *mut c_void;
+        let ok = unsafe {
+            VirtualFree(addr, iop_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
+        };
+        if ok == 0 {
+            return Err(io::Error::new(ErrorKind::Other, "Failed to split IOP placeholder"));
+        }
+        let view = unsafe {
+            MapViewOfFile3(
+                iop_section,
+                GetCurrentProcess(),
+                base.add(offset) as *const c_void,
+                0,
+                iop_size,
+                MEM_REPLACE_PLACEHOLDER,
+                PAGE_READWRITE,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if view.Value == ptr::null_mut() {
+            return Err(io::Error::new(ErrorKind::Other,
+                                      format!("Failed to map IOP RAM at offset {:#x}", offset)));
+        }
+        debug!("Mapped IOP RAM at {:p}", view.Value);
+    }
+
+    let sp_total: usize = 0x1_0000;
+    let name_sp: Vec<u16> = OsStr::new("RustEE Scratchpad")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let sp_section = unsafe {
+        CreateFileMapping2(
+            INVALID_HANDLE_VALUE,
+            ptr::null_mut(),
+            FILE_MAP_READ | FILE_MAP_WRITE,
+            PAGE_READWRITE,
+            0,
+            sp_total as u64,
+            name_sp.as_ptr(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if sp_section == ptr::null_mut() {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to create scratchpad section"));
+    }
+    let sp_offset = 0x7000_0000usize;
+    let sp_addr = unsafe { base.add(sp_offset) } as *mut c_void;
+    let ok = unsafe {
+        VirtualFree(sp_addr, sp_total, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
+    };
+    if ok == 0 {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to split scratchpad placeholder"));
+    }
+    let sp_view = unsafe {
+        MapViewOfFile3(
+            sp_section,
+            GetCurrentProcess(),
+            base.add(sp_offset) as *const c_void,
+            0,
+            sp_total,
+            MEM_REPLACE_PLACEHOLDER,
+            PAGE_READWRITE,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if sp_view.Value == ptr::null_mut() {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to map scratchpad"));
+    }
+    debug!("Mapped scratchpad at {:p} (using first 16 KiB)", sp_view.Value);
+
+    let vu_total: usize = 0x1_0000;
+    let vu_slice: usize = 0x8_000;
+    let name_vu: Vec<u16> = OsStr::new("RustEE VU")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    let vu_section = unsafe {
+        CreateFileMapping2(
+            INVALID_HANDLE_VALUE,
+            ptr::null_mut(),
+            FILE_MAP_READ | FILE_MAP_WRITE,
+            PAGE_READWRITE,
+            0,
+            vu_total as u64,
+            name_vu.as_ptr(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if vu_section == ptr::null_mut() {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to create VU section"));
+    }
+
+    let vu_offsets = [0x1100_0000usize, 0x1100_8000usize];
+    for &offset in &vu_offsets {
+        let addr = unsafe { base.add(offset) } as *mut c_void;
+        let ok = unsafe {
+            VirtualFree(addr, vu_slice, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
+        };
+        if ok == 0 {
+            return Err(io::Error::new(ErrorKind::Other,
+                                      format!("Failed to split VU placeholder at {:#x}", offset)));
+        }
+    }
+
+    for &offset in &vu_offsets {
+        let view = unsafe {
+            MapViewOfFile3(
+                vu_section,
+                GetCurrentProcess(),
+                base.add(offset) as *const c_void,
+                0,
+                vu_slice,
+                MEM_REPLACE_PLACEHOLDER,
+                PAGE_READWRITE,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if view.Value == ptr::null_mut() {
+            return Err(io::Error::new(ErrorKind::Other,
+                                      format!("Failed to map VU view at offset {:#x}", offset)));
+        }
+        debug!("Mapped VU at {:p}", view.Value);
+    }
+
+    let bios_size = bus.bios.bytes.len();
+    assert!(bios_size > 0, "BIOS image must be nonempty");
+
+    let name_bios: Vec<u16> = OsStr::new("RustEE BIOS")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    let bios_section = unsafe {
+        CreateFileMapping2(
+            INVALID_HANDLE_VALUE,
+            ptr::null_mut(),
+            FILE_MAP_READ | FILE_MAP_WRITE,
+            PAGE_READWRITE,
+            0,
+            bios_size as u64,
+            name_bios.as_ptr(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if bios_section == ptr::null_mut() {
+        return Err(io::Error::new(ErrorKind::Other, "Failed to create BIOS section"));
+    }
+    debug!("BIOS section handle: {:?}", bios_section);
+
+    let bios_offsets = [0x1FC0_0000usize, 0x9FC0_0000usize, 0xBFC0_0000usize];
+    for &off in &bios_offsets {
+        let addr = unsafe { base.add(off) } as *mut c_void;
+        let ok = unsafe {
+            VirtualFree(addr, bios_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
+        };
+        if ok == 0 {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to split BIOS placeholder at {:#x}", off),
+            ));
+        }
+    }
+
+    for (i, &off) in bios_offsets.iter().enumerate() {
+        let view = unsafe {
+            MapViewOfFile3(
+                bios_section,
+                GetCurrentProcess(),
+                base.add(off) as *const c_void,
+                0,
+                bios_size,
+                MEM_REPLACE_PLACEHOLDER,
+                PAGE_READWRITE,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if view.Value.is_null() {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to map BIOS view at {:#x}", off),
+            ));
+        }
+        let ptr = view.Value as *mut u8;
+        debug!("Mapped BIOS at {:p}", ptr);
+
+        if i == 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bus.bios.bytes.as_ptr(),
+                    ptr,
+                    bios_size,
+                );
+            }
+            debug!("Copied BIOS data into mapping at {:#x}", off);
+        }
+    }
 
     Ok((base, size))
 }
@@ -225,60 +474,9 @@ unsafe fn map_fixed_region(
     Ok(())
 }
 
-#[cfg(windows)]
-use winapi::um::errhandlingapi::GetLastError;
-
-#[cfg(windows)]
-unsafe fn map_fixed_region_windows(
-    base: *mut u8,
-    virt_addr: u32,
-    size: usize,
-    mapping: HANDLE,
-    offset: u64,
-    access: u32,
-) -> io::Result<()> {
-    // Calculate the target address within our reserved space
-    // We need to map PS2 addresses relative to our base
-    let ps2_base = 0u32; // PS2 starts at 0x00000000
-    let relative_addr = virt_addr.wrapping_sub(ps2_base) as usize;
-    
-    // Ensure we don't go outside our reserved space
-    if relative_addr >= (1usize << 32) {
-        return Err(io::Error::new(
-            ErrorKind::Other,
-            format!("Virtual address 0x{:08X} outside reserved space", virt_addr),
-        ));
-    }
-    
-    let target = base.add(relative_addr) as LPVOID;
-    
-    debug!("Mapping PS2 addr 0x{:08X} to host addr {:?}", virt_addr, target);
-    
-    let view = MapViewOfFileEx(
-        mapping,
-        access,
-        (offset >> 32) as u32,
-        (offset & 0xFFFFFFFF) as u32,
-        size,
-        target,
-    );
-    
-    if view.is_null() {
-        let error_code = GetLastError();
-        return Err(io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to map fixed region at 0x{:08X} (target: {:?}), error code: {}", 
-                   virt_addr, target, error_code),
-        ));
-    }
-    
-    debug!("Successfully mapped 0x{:08X} to {:?}", virt_addr, view);
-    Ok(())
-}
-
 #[cfg(unix)]
 unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
-    let bios_size = 0x400000; // 4MB
+    let bios_size = 0x400000;
     let bios_name = c"/rustee_bios";
     let bios_fd = shm_open(
         bios_name,
@@ -295,7 +493,6 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     ftruncate(&bios_fd, bios_size as i64)
         .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set BIOS size: {}", e)))?;
 
-    // Copy BIOS data to shared memory
     let temp_map = mmap(
         ptr::null_mut(),
         bios_size,
@@ -317,7 +514,6 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
 
     munmap(temp_map, bios_size);
 
-    // Map BIOS to both kernel segments (read-only)
     map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ)?;
     map_fixed_region(base, 0x9FC00000, bios_size, &bios_fd, 0, PROT_READ)?;
     map_fixed_region(base, 0xBFC00000, bios_size, &bios_fd, 0, PROT_READ)?;
@@ -334,56 +530,9 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-unsafe fn map_bios_windows(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
-    let bios_size = 0x400000; // 4MB
-    
-    // Create a single read-write mapping for initial setup
-    let bios_mapping = CreateFileMappingW(
-        INVALID_HANDLE_VALUE,
-        ptr::null_mut(),
-        PAGE_READWRITE,
-        0,
-        bios_size as u32,
-        ptr::null(),
-    );
-    if bios_mapping.is_null() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create BIOS file mapping"));
-    }
-
-    // Map a temporary view to write BIOS data
-    let temp_view = MapViewOfFile(bios_mapping, FILE_MAP_WRITE, 0, 0, bios_size);
-    if temp_view.is_null() {
-        CloseHandle(bios_mapping);
-        return Err(io::Error::new(ErrorKind::Other, "Failed to map BIOS temp view"));
-    }
-
-    // Copy BIOS data to the mapping
-    std::ptr::copy_nonoverlapping(
-        bus.bios.bytes.as_ptr(),
-        temp_view as *mut u8,
-        bus.bios.bytes.len(),
-    );
-
-    // Unmap the temporary view
-    UnmapViewOfFile(temp_view);
-
-    // Now map the BIOS to the fixed PS2 addresses with read-only access
-    // We'll use the same mapping but with read-only access for the final mappings
-    map_fixed_region_windows(base, 0x1FC00000, bios_size, bios_mapping, 0, FILE_MAP_READ)?;
-    map_fixed_region_windows(base, 0x9FC00000, bios_size, bios_mapping, 0, FILE_MAP_READ)?;
-    map_fixed_region_windows(base, 0xBFC00000, bios_size, bios_mapping, 0, FILE_MAP_READ)?;
-
-    // Don't close the handle yet - the mappings are still using it
-    // The handle will be cleaned up when the process exits
-    // If you need explicit cleanup, store the handle in the Bus struct
-    
-    Ok(())
-}
-
 #[cfg(unix)]
 unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> {
-    let iop_size = 0x200000; // 2MB
+    let iop_size = 0x200000;
     let iop_name = c"/rustee_iop";
     let iop_fd = shm_open(
         iop_name,
@@ -430,63 +579,9 @@ unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-unsafe fn map_iop_ram_windows(base: *mut u8) -> io::Result<()> {
-    let iop_size = 0x200000; // 2MB
-    let iop_mapping = CreateFileMappingW(
-        INVALID_HANDLE_VALUE,
-        ptr::null_mut(),
-        PAGE_READWRITE,
-        0,
-        iop_size as u32,
-        ptr::null(),
-    );
-    if iop_mapping.is_null() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create IOP RAM file mapping"));
-    }
-
-    map_fixed_region_windows(base, 0x9C000000, iop_size, iop_mapping, 0, FILE_MAP_READ | FILE_MAP_WRITE)?;
-    map_fixed_region_windows(base, 0xBC000000, iop_size, iop_mapping, 0, FILE_MAP_READ | FILE_MAP_WRITE)?;
-
-    CloseHandle(iop_mapping);
-
-    Ok(())
-}
-
-#[cfg(windows)]
-unsafe fn map_scratchpad_windows(base: *mut u8) -> io::Result<()> {
-    let sp_size = 0x4000; // 16KB
-    
-    // Create a file mapping for scratchpad memory
-    let sp_mapping = CreateFileMappingW(
-        INVALID_HANDLE_VALUE,
-        ptr::null_mut(),
-        PAGE_READWRITE,
-        0,
-        sp_size as u32,
-        ptr::null(),
-    );
-    if sp_mapping.is_null() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create scratchpad file mapping"));
-    }
-    
-    // Map it to the PS2 scratchpad address using our existing helper function
-    match map_fixed_region_windows(base, 0x70000000, sp_size, sp_mapping, 0, FILE_MAP_READ | FILE_MAP_WRITE) {
-        Ok(_) => {
-            // Don't close the handle yet - the mapping is still using it
-            // You might want to store this handle in the Bus struct for cleanup
-            Ok(())
-        }
-        Err(e) => {
-            CloseHandle(sp_mapping);
-            Err(e)
-        }
-    }
-}
-
 #[cfg(unix)]
 unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> {
-    let sp_size = 0x4000; // 16KB
+    let sp_size = 0x4000;
     let sp_name = c"/rustee_scratchpad";
     let sp_fd = shm_open(
         sp_name,
@@ -540,7 +635,6 @@ unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> {
 
 #[cfg(unix)]
 unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
-    // VU0 Memory (8KB) - Fixed typo: was vu0_when_size, should be vu0_size
     let vu0_size = 0x8000;
     let vu0_target = base.add(0x11000000);
 
@@ -557,7 +651,6 @@ unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
         return Err(io::Error::new(ErrorKind::Other, "Failed to map VU0"));
     }
 
-    // VU1 Memory (32KB)
     let vu1_size = 0x8000;
     let vu1_target = base.add(0x11008000);
 
@@ -577,46 +670,12 @@ unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-unsafe fn map_vu_memory_windows(base: *mut u8) -> io::Result<()> {
-    // Create a single larger mapping for both VU0 and VU1 memory
-    // VU0: 32KB at 0x11000000
-    // VU1: 32KB at 0x11008000
-    // Total: 64KB to cover both regions
-    let total_vu_size = 0x10000; // 64KB
-    let vu_mapping = CreateFileMappingW(
-        INVALID_HANDLE_VALUE,
-        ptr::null_mut(),
-        PAGE_READWRITE,
-        0,
-        total_vu_size as u32,
-        ptr::null(),
-    );
-    if vu_mapping.is_null() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create VU memory file mapping"));
-    }
-
-    // Map the entire VU region starting at VU0 address
-    if let Err(e) = map_fixed_region_windows(base, 0x11000000, total_vu_size, vu_mapping, 0, FILE_MAP_READ | FILE_MAP_WRITE) {
-        CloseHandle(vu_mapping);
-        return Err(e);
-    }
-
-    debug!("Successfully mapped VU memory: VU0 at 0x11000000, VU1 at 0x11008000, total size: {}KB", total_vu_size / 1024);
-
-    // Don't close the handle yet - the mapping is still using it
-    // You might want to store this handle in the Bus struct for cleanup
-    
-    Ok(())
-}
-
 impl Tlb {
     #[cfg(unix)]
     pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
         let va_start = (entry.vpn2 << 13) as usize;
 
-        // Skip fixed kernel segments - they're always mapped
         if Self::is_fixed_region(va_start, page_size) {
             trace!(
                 "Skipping TLB mapping for fixed region: va_start=0x{:08X}",
@@ -627,7 +686,6 @@ impl Tlb {
 
         let ram_fd = bus.ram_fd.as_ref().expect("RAM file descriptor missing");
 
-        // Map even page if valid
         if entry.v0 {
             let pa_start = (entry.pfn0 << 12) as usize;
             if pa_start <= 0x01FFFFFF {
@@ -654,7 +712,6 @@ impl Tlb {
             }
         }
 
-        // Map odd page if valid
         if entry.v1 {
             let va_start_odd = va_start + page_size;
             let pa_start_odd = (entry.pfn1 << 12) as usize;
@@ -686,56 +743,59 @@ impl Tlb {
     #[cfg(windows)]
     pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 13) as usize;
+        let mut sys_info = unsafe { std::mem::zeroed::<SYSTEM_INFO>() };
+        unsafe { GetSystemInfo(&mut sys_info) };
+        let granularity = sys_info.dwAllocationGranularity as usize;
 
+        let va_start = (entry.vpn2 << 13) as usize;
         if Self::is_fixed_region(va_start, page_size) {
-            trace!("Skipping TLB mapping for fixed region: va_start=0x{:08X}", va_start);
             return;
         }
+        let ram_size = 0x2000000;
 
-        let ram_mapping = bus.ram_mapping.expect("RAM file mapping missing") as winapi::um::winnt::HANDLE;
+        let ram_section = bus.ram_mapping.expect("RAM section missing") as HANDLE;
+        let proc = unsafe { GetCurrentProcess() };
 
-        // Map even page if valid
-        if entry.v0 {
-            let pa_start = (entry.pfn0 << 12) as usize;
-            if pa_start <= 0x01FFFFFF {
-                let access = if entry.d0 { FILE_MAP_READ | FILE_MAP_WRITE } else { FILE_MAP_READ };
-                unsafe {
-                    let target = bus.hw_base.add(va_start) as LPVOID;
-                    let view = MapViewOfFileEx(
-                        ram_mapping,
-                        access,
-                        (pa_start as u64 >> 32) as u32,
-                        (pa_start as u64 & 0xFFFFFFFF) as u32,
-                        page_size,
-                        target,
-                    );
-                    if view.is_null() {
-                        error!("Failed to map TLB even page at 0x{:08X}", va_start);
-                    }
+        unsafe {
+            for &(valid, pfn, d_bit, is_odd) in &[
+                (entry.v0, entry.pfn0, entry.d0, false),
+                (entry.v1, entry.pfn1, entry.d1, true),
+            ] {
+                if !valid { continue; }
+                let pa = (pfn << 12) as usize;
+                if pa >= bus.hw_size { continue; }
+                if pa >= ram_size {
+                    continue;
                 }
-            }
-        }
 
-        // Map odd page if valid
-        if entry.v1 {
-            let va_start_odd = va_start + page_size;
-            let pa_start_odd = (entry.pfn1 << 12) as usize;
-            if pa_start_odd <= 0x01FFFFFF {
-                let access = if entry.d1 { FILE_MAP_READ | FILE_MAP_WRITE } else { FILE_MAP_READ };
-                unsafe {
-                    let target = bus.hw_base.add(va_start_odd) as LPVOID;
-                    let view = MapViewOfFileEx(
-                        ram_mapping,
-                        access,
-                        (pa_start_odd as u64 >> 32) as u32,
-                        (pa_start_odd as u64 & 0xFFFFFFFF) as u32,
-                        page_size,
-                        target,
-                    );
-                    if view.is_null() {
-                        error!("Failed to map TLB odd page at 0x{:08X}", va_start_odd);
-                    }
+                let va = va_start + if is_odd { page_size } else { 0 };
+                let chunk_base = (va / granularity) * granularity;
+                let offset_within = va - chunk_base;
+                let target = bus.hw_base.add(chunk_base);
+
+                let r = VirtualFree(
+                    target as *mut c_void,
+                    granularity,
+                    MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
+                );
+                if r == 0 {
+                    trace!("Placeholder at {:#X} not present (already mapped), skipping", chunk_base);
+                    continue;
+                }
+                let view = MapViewOfFile3(
+                    ram_section,
+                    proc,
+                    target as *const c_void,
+                    (pa / granularity * granularity) as u64,
+                    granularity,
+                    MEM_REPLACE_PLACEHOLDER,
+                    if d_bit { PAGE_READWRITE } else { PAGE_READONLY },
+                    ptr::null_mut(),
+                    0,
+                );
+                if view.Value == ptr::null_mut() {
+                    error!("Failed to map placeholder at {:#X}", chunk_base);
+                    continue;
                 }
             }
         }
@@ -746,7 +806,6 @@ impl Tlb {
         let page_size = mask_to_page_size(entry.mask) as usize;
         let va_start = (entry.vpn2 << 13) as usize;
 
-        // Skip fixed kernel segments
         if Self::is_fixed_region(va_start, page_size) {
             trace!(
                 "Skipping TLB clear for fixed region: va_start=0x{:08X}",
@@ -761,11 +820,9 @@ impl Tlb {
         );
 
         unsafe {
-            // Unmap even page
             let target = bus.hw_base.add(va_start);
             let _ = munmap(target as *mut c_void, page_size);
 
-            // Unmap odd page
             let target_odd = bus.hw_base.add(va_start + page_size);
             let _ = munmap(target_odd as *mut c_void, page_size);
         }
@@ -774,26 +831,45 @@ impl Tlb {
     #[cfg(windows)]
     pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 13) as usize;
-
+        let va_start  = (entry.vpn2 << 13) as usize;
         if Self::is_fixed_region(va_start, page_size) {
-            trace!("Skipping TLB clear for fixed region: va_start=0x{:08X}", va_start);
             return;
         }
 
-        unsafe {
-            // Unmap even page
-            let target = bus.hw_base.add(va_start) as LPVOID;
-            UnmapViewOfFile(target);
+        let mut sys_info = unsafe { std::mem::zeroed::<SYSTEM_INFO>() };
+        unsafe { GetSystemInfo(&mut sys_info) };
+        let granularity = sys_info.dwAllocationGranularity as usize;
+        let proc = unsafe { GetCurrentProcess() };
 
-            // Unmap odd page
-            let target_odd = bus.hw_base.add(va_start + page_size) as LPVOID;
-            UnmapViewOfFile(target_odd);
+        unsafe {
+            let chunk_even = (va_start / granularity) * granularity;
+            let addr_even = bus.hw_base.add(chunk_even) as *mut c_void;
+            let view_addr_even = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_even };
+            let _ = UnmapViewOfFile2(
+                proc,
+                view_addr_even,
+                MEM_PRESERVE_PLACEHOLDER,
+            );
+
+            let chunk_odd = ((va_start + page_size) / granularity) * granularity;
+            let addr_odd = bus.hw_base.add(chunk_odd) as *mut c_void;
+            let view_addr_odd = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_odd };
+            let _ = UnmapViewOfFile2(
+                proc,
+                view_addr_odd,
+                MEM_PRESERVE_PLACEHOLDER,
+            );
         }
+
+        trace!(
+        "Cleared TLB mapping at VA 0x{:08X} (size {})",
+        va_start,
+        page_size
+    );
     }
 
     fn is_fixed_region(va_start: usize, page_size: usize) -> bool {
-        let va_end = va_start + page_size * 2; // Account for even and odd pages
+        let va_end = va_start + page_size * 2;
         // KSEG0/KSEG1 RAM mappings
         (va_start < 0x82000000 && va_end > 0x80000000) ||
         (va_start < 0xA2000000 && va_end > 0xA0000000) ||

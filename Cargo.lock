@@ -1582,7 +1582,6 @@ dependencies = [
  "target-lexicon",
  "tracing",
  "tracing-subscriber",
- "winapi",
  "windows-sys 0.59.0",
 ]
 

@@ -15,7 +15,7 @@ use windows_sys::Win32::System::{
     };
 
 use backtrace::resolve;
-use crate::bus::backpatch::io_write8_stub;
+use crate::bus::backpatch::{io_read128_stub, io_read16_stub, io_read64_stub, io_read8_stub, io_write128_stub, io_write16_stub, io_write64_stub, io_write8_stub};
 use super::{Bus, BUS_PTR, HW_BASE, HW_LENGTH};
 
 #[cfg(target_arch = "x86_64")]
@@ -92,18 +92,42 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
             if let Some(name) = symbol.name() {
                 let demangled = format!("{}", name);
                 trace!("  Symbol: {}", demangled);
-                if demangled.contains("__bus_write8") ||demangled.contains("__bus_write32") || demangled.contains("__bus_read32") {
+                if demangled.contains("__bus_write8") ||demangled.contains("__bus_write16") ||demangled.contains("__bus_write32")
+                    ||demangled.contains("__bus_write64") ||demangled.contains("__bus_write128")  || demangled.contains("__bus_read8")
+                    || demangled.contains("__bus_read16")  || demangled.contains("__bus_read32")  || demangled.contains("__bus_read64")
+                    || demangled.contains("__bus_read128") {
                     is_jit = true;
                     trace!("  Found JIT access");
-                } else if demangled.contains("hw_write32") {
-                    access_type = Some("write32");
-                    trace!("  Found write32 access");
-                } else if demangled.contains("hw_read32") {
-                    access_type = Some("read32");
-                    trace!("  Found read32 access");
                 } else if demangled.contains("hw_write8") {
                     access_type = Some("write8");
                     trace!("  Found write8 access");
+                } else if demangled.contains("hw_write16") {
+                    access_type = Some("write16");
+                    trace!("  Found write16 access");
+                } else if demangled.contains("hw_write32") {
+                    access_type = Some("write32");
+                    trace!("  Found write32 access");
+                } else if demangled.contains("hw_write64") {
+                    access_type = Some("write64");
+                    trace!("  Found write64 access");
+                } else if demangled.contains("hw_write128") {
+                    access_type = Some("write128");
+                    trace!("  Found write128 access")
+                } else if demangled.contains("hw_read8") {
+                    access_type = Some("read8");
+                    trace!("  Found read8 access");
+                } else if demangled.contains("hw_read16") {
+                    access_type = Some("read16");
+                    trace!("  Found read16 access");
+                } else if demangled.contains("hw_read32") {
+                    access_type = Some("read32");
+                    trace!("  Found read32 access");
+                } else if demangled.contains("hw_read64") {
+                    access_type = Some("read64");
+                    trace!("  Found read64 access");
+                } else if demangled.contains("hw_read128") {
+                    access_type = Some("read128");
+                    trace!("  Found read128 access");
                 }
             }
         });
@@ -150,8 +174,15 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
 
         let stub_addr: u64 = match matched_pattern.unwrap() {
             pattern if pattern.contains("__bus_write8") => io_write8_stub as *const () as u64,
+            pattern if pattern.contains("__bus_write16") => io_write16_stub as *const () as u64,
             pattern if pattern.contains("__bus_write32") => io_write32_stub as *const () as u64,
+            pattern if pattern.contains("__bus_write64") => io_write64_stub as *const () as u64,
+            pattern if pattern.contains("__bus_write128") => io_write128_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read8") => io_read8_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read16") => io_read16_stub as *const () as u64,
             pattern if pattern.contains("__bus_read32") => io_read32_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read64") => io_read64_stub as *const () as u64,
+            pattern if pattern.contains("__bus_read128") => io_read128_stub as *const () as u64,
             other => {
                 error!("Unrecognized helper pattern: {}", other);
                 return EXCEPTION_CONTINUE_SEARCH;
@@ -251,15 +282,55 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                 io_write8_stub(bus_ptr, addr, value);
                 trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
+            "write16" => {
+                let value = (*ctx).R8 as u16;
+                io_write16_stub(bus_ptr, addr, value);
+                trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+            }
             "write32" => {
                 let value = (*ctx).R8 as u32;
                 io_write32_stub(bus_ptr, addr, value);
                 trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
+            "write64" => {
+                let value = (*ctx).R8 as u64;
+                io_write64_stub(bus_ptr, addr, value);
+                trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+            }
+            "write128" => {
+                let low = (*ctx).R8 as u64;
+                let high = (*ctx).R9 as u64;
+                let value = ((high as u128) << 64) | (low as u128);
+                //io_write128_stub(bus_ptr, addr, value);
+                trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+            }
+            "read8" => {
+                let value = io_read8_stub(bus_ptr, addr);
+                (*ctx).Rax = value as u64;
+                trace!("Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+            }
+            "read16" => {
+                let value = io_read16_stub(bus_ptr, addr);
+                (*ctx).Rax = value as u64;
+                trace!("Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+            }
             "read32" => {
                 let value = io_read32_stub(bus_ptr, addr);
                 (*ctx).Rax = value as u64;
                 trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+            }
+            "read64" => {
+                let value = io_read64_stub(bus_ptr, addr);
+                (*ctx).Rax = value as u64;
+                trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+            }
+            "read128" => {
+                let value = io_read128_stub(bus_ptr, addr);
+                let low = (value as u128) as u64;
+                let high = (value >> 64) as u64;
+                (*ctx).Rax = low as u64;
+                (*ctx).Rdx = high as u64;
+                trace!("Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
             }
             _ => {
                 error!("Unknown access type: {}", access);
