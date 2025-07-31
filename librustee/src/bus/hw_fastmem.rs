@@ -891,7 +891,7 @@ impl Bus {
     pub fn hw_read8(&mut self, addr: u32) -> u8 {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *const u8;
-            *host_ptr
+            core::ptr::read_volatile(host_ptr)
         }
     }
 
@@ -899,7 +899,7 @@ impl Bus {
     pub fn hw_read16(&mut self, addr: u32) -> u16 {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *const u16;
-            *host_ptr
+            core::ptr::read_volatile(host_ptr)
         }
     }
 
@@ -907,7 +907,7 @@ impl Bus {
     pub fn hw_read32(&mut self, addr: u32) -> u32 {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *const u32;
-            *host_ptr
+            core::ptr::read_volatile(host_ptr)
         }
     }
 
@@ -915,7 +915,7 @@ impl Bus {
     pub fn hw_read64(&mut self, addr: u32) -> u64 {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *const u64;
-            *host_ptr
+            core::ptr::read_volatile(host_ptr)
         }
     }
 
@@ -923,7 +923,7 @@ impl Bus {
     pub fn hw_read128(&mut self, addr: u32) -> u128 {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *const u128;
-            *host_ptr
+            core::ptr::read_volatile(host_ptr)
         }
     }
 
@@ -931,7 +931,7 @@ impl Bus {
     pub fn hw_write8(&mut self, addr: u32, val: u8) {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *mut u8;
-            *host_ptr = val;
+            core::ptr::write_volatile(host_ptr, val);
         }
     }
 
@@ -939,7 +939,7 @@ impl Bus {
     pub fn hw_write16(&mut self, addr: u32, val: u16) {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *mut u16;
-            *host_ptr = val;
+            core::ptr::write_volatile(host_ptr, val);
         }
     }
 
@@ -947,7 +947,7 @@ impl Bus {
     pub fn hw_write32(&mut self, addr: u32, val: u32) {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *mut u32;
-            *host_ptr = val;
+            core::ptr::write_volatile(host_ptr, val);
         }
     }
 
@@ -955,7 +955,7 @@ impl Bus {
     pub fn hw_write64(&mut self, addr: u32, val: u64) {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *mut u64;
-            *host_ptr = val;
+            core::ptr::write_volatile(host_ptr, val);
         }
     }
 
@@ -963,7 +963,7 @@ impl Bus {
     pub fn hw_write128(&mut self, addr: u32, val: u128) {
         unsafe {
             let host_ptr = self.hw_base.add(addr as usize) as *mut u128;
-            *host_ptr = val;
+            core::ptr::write_volatile(host_ptr, val);
         }
     }
 }

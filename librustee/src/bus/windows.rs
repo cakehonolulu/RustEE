@@ -65,11 +65,13 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
     let base = HW_BASE.load(Ordering::SeqCst);
     let size = HW_LENGTH.load(Ordering::SeqCst);
 
-    if guest_addr < base || guest_addr >= base + size {
+    let end = base.saturating_add(size);
+
+    if guest_addr < base || guest_addr >= end {
         error!(
-            "Address 0x{:x} out of bounds (base=0x{:x}, size=0x{:x})",
-            guest_addr, base, size
-        );
+        "Address 0x{:x} out of bounds (base=0x{:x}, size=0x{:x}, valid range=[0x{:x}, 0x{:x}))",
+        guest_addr, base, size, base, end
+    );
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
@@ -254,10 +256,82 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                         let stub_bytes = H::encode_stub_call(&reg, stub_addr).unwrap();
                         patch_instruction(movabs_addr as u64, &stub_bytes)
                             .expect("failed to write stub");
-                        H::advance_instruction_pointer(ctx, &cs, H::get_instruction_pointer(ctx))
-                            .unwrap();
-                        fix_return_address::<H>(ctx, movabs_addr as u64, ip);
-                        trace!("Patched at 0x{:x}", movabs_addr);
+
+                        let fault_rip = (*ctx).Rip as i64;
+                        if let Err(e) = H::advance_instruction_pointer(ctx, &cs, fault_rip) {
+                            error!("Failed to advance instruction pointer: {}", e);
+                            return EXCEPTION_CONTINUE_SEARCH;
+                        }
+
+                        // Windows x64 calling convention: RCX, RDX, R8, R9
+                        let bus_ptr = BUS_PTR as *mut Bus;
+                        let addr = fault_addr as u32;
+
+                        if let Some(access) = access_type {
+                        match access {
+                            "write8" => {
+                                let value = (*ctx).Rcx as u8;
+                                io_write8_stub(bus_ptr, addr, value);
+                                trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                            }
+                            "write16" => {
+                                let value = (*ctx).Rcx as u16;
+                                io_write16_stub(bus_ptr, addr, value);
+                                trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                            }
+                            "write32" => {
+                                let value = (*ctx).Rcx as u32;
+                                io_write32_stub(bus_ptr, addr, value);
+                                trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                            }
+                            "write64" => {
+                                let value = (*ctx).Rcx as u64;
+                                io_write64_stub(bus_ptr, addr, value);
+                                trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                            }
+                            "write128" => {
+                                let low = (*ctx).R8 as u64;
+                                let high = (*ctx).R9 as u64;
+                                let value = ((high as u128) << 64) | (low as u128);
+                                io_write128_stub(bus_ptr, addr, value);
+                                trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                            }
+                            "read8" => {
+                                let value = io_read8_stub(bus_ptr, addr);
+                                (*ctx).Rax = value as u64;
+                                trace!("Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                            }
+                            "read16" => {
+                                let value = io_read16_stub(bus_ptr, addr);
+                                (*ctx).Rax = value as u64;
+                                trace!("Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                            }
+                            "read32" => {
+                                let value = io_read32_stub(bus_ptr, addr);
+                                (*ctx).Rax = value as u64;
+                                trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                            }
+                            "read64" => {
+                                let value = io_read64_stub(bus_ptr, addr);
+                                (*ctx).Rax = value as u64;
+                                trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                            }
+                            "read128" => {
+                                let value = io_read128_stub(bus_ptr, addr);
+                                let low = (value as u128) as u64;
+                                let high = (value >> 64) as u64;
+                                (*ctx).Rax = low as u64;
+                                (*ctx).Rdx = high as u64;
+                                trace!("Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                            }
+                            _ => {
+                                error!("Unknown access type: {}", access);
+                                return EXCEPTION_CONTINUE_SEARCH;
+                            }
+                        }
+                    }
+
+                    trace!("Patched at 0x{:x}", movabs_addr);
                                 return EXCEPTION_CONTINUE_EXECUTION;
                             }
                         }
@@ -273,27 +347,27 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
 
         // Windows x64 calling convention: RCX, RDX, R8, R9
         let bus_ptr = BUS_PTR as *mut Bus;
-        let addr = (*ctx).Rdx as u32;
+        let addr = fault_addr as u32;
         let fault_rip = (*ctx).Rip as i64;
 
         match access {
             "write8" => {
-                let value = (*ctx).R8 as u8;
+                let value = (*ctx).Rcx as u8;
                 io_write8_stub(bus_ptr, addr, value);
                 trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write16" => {
-                let value = (*ctx).R8 as u16;
+                let value = (*ctx).Rcx as u16;
                 io_write16_stub(bus_ptr, addr, value);
                 trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write32" => {
-                let value = (*ctx).R8 as u32;
+                let value = (*ctx).Rcx as u32;
                 io_write32_stub(bus_ptr, addr, value);
                 trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write64" => {
-                let value = (*ctx).R8 as u64;
+                let value = (*ctx).Rcx as u64;
                 io_write64_stub(bus_ptr, addr, value);
                 trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }

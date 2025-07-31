@@ -96,74 +96,50 @@ pub extern "C" fn __write_cop0(cpu_ptr: *mut EE, index: u32, value: u32) {
     }
 }
 
-pub extern "C" fn __bus_write8(bus_ptr: *mut Bus, addr: u32, value: u8) {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.write8)(bus, addr, value);
-    }
+pub extern "C" fn __bus_write8(bus: *mut Bus, addr: u32, value: u8) {
+    unsafe { ((*bus).write8)(&mut *bus, addr, value); }
 }
 
-pub extern "C" fn __bus_write16(bus_ptr: *mut Bus, addr: u32, value: u16) {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.write16)(bus, addr, value);
-    }
+pub extern "C" fn __bus_write16(bus: *mut Bus, addr: u32, value: u16) {
+    unsafe { ((*bus).write16)(&mut *bus, addr, value); }
 }
 
-pub extern "C" fn __bus_write32(bus_ptr: *mut Bus, addr: u32, value: u32) {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.write32)(bus, addr, value);
-    }
+pub extern "C" fn __bus_write32(bus: *mut Bus, addr: u32, value: u32) {
+    unsafe { ((*bus).write32)(&mut *bus, addr, value); }
 }
 
-pub extern "C" fn __bus_write64(bus_ptr: *mut Bus, addr: u32, value: u64) {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.write64)(bus, addr, value);
-    }
+pub extern "C" fn __bus_write64(bus: *mut Bus, addr: u32, value: u64) {
+    unsafe { ((*bus).write64)(&mut *bus, addr, value); }
 }
 
-pub extern "C" fn __bus_write128(bus_ptr: *mut Bus, addr: u32, value: u128) {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.write128)(bus, addr, value);
-    }
+pub extern "C" fn __bus_write128(
+    bus: *mut Bus,
+    addr: u32,
+    lo:  u64,
+    hi:  u64,
+) {
+    let value = (hi as u128) << 64 | (lo as u128);
+    unsafe { ((*bus).write128)(&mut *bus, addr, value); }
 }
 
-pub extern "C" fn __bus_read8(bus_ptr: *mut Bus, addr: u32) -> u8 {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.read8)(bus, addr)
-    }
+pub extern "C" fn __bus_read8(bus: *mut Bus, addr: u32) -> u8 {
+    unsafe { ((*bus).read8)(&mut *bus, addr) }
 }
 
-pub extern "C" fn __bus_read16(bus_ptr: *mut Bus, addr: u32) -> u16 {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.read16)(bus, addr)
-    }
+pub extern "C" fn __bus_read16(bus: *mut Bus, addr: u32) -> u16 {
+    unsafe { ((*bus).read16)(&mut *bus, addr) }
 }
 
-pub extern "C" fn __bus_read32(bus_ptr: *mut Bus, addr: u32) -> u32 {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.read32)(bus, addr)
-    }
+pub extern "C" fn __bus_read32(bus: *mut Bus, addr: u32) -> u32 {
+    unsafe { ((*bus).read32)(&mut *bus, addr) }
 }
 
-pub extern "C" fn __bus_read64(bus_ptr: *mut Bus, addr: u32) -> u64 {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.read64)(bus, addr)
-    }
+pub extern "C" fn __bus_read64(bus: *mut Bus, addr: u32) -> u64 {
+    unsafe { ((*bus).read64)(&mut *bus, addr) }
 }
 
-pub extern "C" fn __bus_read128(bus_ptr: *mut Bus, addr: u32) -> u128 {
-    unsafe {
-        let bus = &mut *bus_ptr;
-        (bus.read128)(bus, addr)
-    }
+pub extern "C" fn __bus_read128(bus: *mut Bus, addr: u32) -> u128 {
+    unsafe { ((*bus).read128)(&mut *bus, addr) }
 }
 
 pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
@@ -311,9 +287,10 @@ impl<'a> JIT<'a> {
             .expect("Failed to declare __bus_write64 function!");
 
         let mut store128_sig = module.make_signature();
-        store128_sig.params.push(AbiParam::new(types::I64));
-        store128_sig.params.push(AbiParam::new(types::I32));
-        store128_sig.params.push(AbiParam::new(types::I128));
+        store128_sig.params.push(AbiParam::new(types::I64)); // Pointer to Bus
+        store128_sig.params.push(AbiParam::new(types::I32)); // Address
+        store128_sig.params.push(AbiParam::new(types::I64)); // Low 64 bits
+        store128_sig.params.push(AbiParam::new(types::I64)); // High 64 bits
         let bus_write128_func: FuncId = module
             .declare_function("__bus_write128", Linkage::Import, &store128_sig)
             .expect("Failed to declare __bus_write128 function!");
@@ -2880,6 +2857,10 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         let rt_val = builder.ins().load(types::I128, MemFlags::new(), rt_addr, 0);
 
+        let low = builder.ins().ireduce(types::I64, rt_val);
+        let upper_bits_shifted = builder.ins().ushr_imm(rt_val, 64);
+        let high = builder.ins().ireduce(types::I64, upper_bits_shifted);
+
         let bus = self.cpu.bus.lock().unwrap();
         let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
@@ -2890,7 +2871,7 @@ impl<'a> JIT<'a> {
 
         builder
             .ins()
-            .call(callee, &[bus_val, aligned_addr32, rt_val]);
+            .call(callee, &[bus_val, aligned_addr32, low, high]);
 
         Self::increment_pc(builder, self.pc_ptr as i64);
         *current_pc = current_pc.wrapping_add(4);
