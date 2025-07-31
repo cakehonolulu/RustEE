@@ -1,3 +1,4 @@
+use std::ptr::null;
 use std::sync::atomic::AtomicBool;
 
 use capstone::Capstone;
@@ -91,15 +92,18 @@ pub extern "C" fn io_write64_stub(bus: *mut Bus, addr: u32, value: u64) {
     }
 }
 
-pub extern "C" fn io_write128_stub(bus: *mut Bus, addr: u32, value: u128) {
+pub extern "C" fn io_write128_stub(bus: *mut Bus, addr: u32, lo: u64, hi: u64) {
     unsafe {
         if bus.is_null() {
             error!(
-                "Null bus pointer in io_write128_stub: addr=0x{:08X}, value=0x{:08X}",
-                addr, value
+                "Null bus pointer in io_write128_stub: addr=0x{:08X}, lo=0x{:016X}, hi=0x{:016X}",
+                addr, lo, hi
             );
             panic!("Null bus pointer in io_write128_stub");
         }
+
+        let value = ((hi as u128) << 64) | (lo as u128);
+
         let bus = &mut *bus;
         bus.io_write128(addr, value);
     }

@@ -262,7 +262,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         debug!("Mapped IOP RAM at {:p}", view.Value);
     }
 
-    let sp_total: usize = 0x1_0000;
+    let sp_total: usize = 0x4000;
     let name_sp: Vec<u16> = OsStr::new("RustEE Scratchpad")
         .encode_wide()
         .chain(Some(0))
@@ -423,11 +423,11 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         if view.Value.is_null() {
             return Err(io::Error::new(
                 ErrorKind::Other,
-                format!("Failed to map BIOS view at {:#x}", off),
+                format!("Failed to map BIOS view as RW at {:#x}", off),
             ));
         }
         let ptr = view.Value as *mut u8;
-        debug!("Mapped BIOS at {:p}", ptr);
+        debug!("Mapped BIOS as RW at {:p}", ptr);
 
         if i == 0 {
             unsafe {
@@ -439,6 +439,42 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
             }
             debug!("Copied BIOS data into mapping at {:#x}", off);
         }
+
+        // Unmap the RW mapping
+        let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: ptr as *mut c_void };
+        let unmap_result = unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
+        if unmap_result == 0 {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to unmap RW BIOS view at {:#x}", off),
+            ));
+        }
+
+        debug!("Unmapped RW BIOS view at {:p}", ptr);
+    }
+
+    for (i, &off) in bios_offsets.iter().enumerate() {
+        let view = unsafe {
+            MapViewOfFile3(
+                bios_section,
+                GetCurrentProcess(),
+                base.add(off) as *const c_void,
+                0,
+                bios_size,
+                MEM_REPLACE_PLACEHOLDER,
+                PAGE_READONLY,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if view.Value.is_null() {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to remap BIOS view as RO at {:#x}", off),
+            ));
+        }
+        let ptr = view.Value as *mut u8;
+        debug!("Re-mapped BIOS as RO at {:p}", ptr);
     }
 
     Ok((base, size))
@@ -743,16 +779,14 @@ impl Tlb {
     #[cfg(windows)]
     pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
-        let mut sys_info = unsafe { std::mem::zeroed::<SYSTEM_INFO>() };
-        unsafe { GetSystemInfo(&mut sys_info) };
-        let granularity = sys_info.dwAllocationGranularity as usize;
-
         let va_start = (entry.vpn2 << 13) as usize;
+
+        // Skip fixed regions
         if Self::is_fixed_region(va_start, page_size) {
             return;
         }
-        let ram_size = 0x2000000;
 
+        let ram_size = 0x2000000;
         let ram_section = bus.ram_mapping.expect("RAM section missing") as HANDLE;
         let proc = unsafe { GetCurrentProcess() };
 
@@ -763,38 +797,30 @@ impl Tlb {
             ] {
                 if !valid { continue; }
                 let pa = (pfn << 12) as usize;
-                if pa >= bus.hw_size { continue; }
-                if pa >= ram_size {
-                    continue;
-                }
+                if pa >= bus.hw_size || pa >= ram_size { continue; }
 
                 let va = va_start + if is_odd { page_size } else { 0 };
-                let chunk_base = (va / granularity) * granularity;
-                let offset_within = va - chunk_base;
-                let target = bus.hw_base.add(chunk_base);
+                let target = bus.hw_base.add(va);
 
-                let r = VirtualFree(
+                let _ = VirtualFree(
                     target as *mut c_void,
-                    granularity,
+                    page_size,
                     MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
                 );
-                if r == 0 {
-                    trace!("Placeholder at {:#X} not present (already mapped), skipping", chunk_base);
-                    continue;
-                }
+
                 let view = MapViewOfFile3(
                     ram_section,
                     proc,
                     target as *const c_void,
-                    (pa / granularity * granularity) as u64,
-                    granularity,
+                    pa as u64,
+                    page_size,
                     MEM_REPLACE_PLACEHOLDER,
                     if d_bit { PAGE_READWRITE } else { PAGE_READONLY },
                     ptr::null_mut(),
                     0,
                 );
-                if view.Value == ptr::null_mut() {
-                    error!("Failed to map placeholder at {:#X}", chunk_base);
+                if view.Value.is_null() {
+                    error!("Failed to map fastmem page at VA=0x{:X}", va);
                     continue;
                 }
             }
@@ -832,40 +858,29 @@ impl Tlb {
     pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
         let va_start  = (entry.vpn2 << 13) as usize;
+
         if Self::is_fixed_region(va_start, page_size) {
             return;
         }
 
-        let mut sys_info = unsafe { std::mem::zeroed::<SYSTEM_INFO>() };
-        unsafe { GetSystemInfo(&mut sys_info) };
-        let granularity = sys_info.dwAllocationGranularity as usize;
-        let proc = unsafe { GetCurrentProcess() };
-
         unsafe {
-            let chunk_even = (va_start / granularity) * granularity;
-            let addr_even = bus.hw_base.add(chunk_even) as *mut c_void;
-            let view_addr_even = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_even };
-            let _ = UnmapViewOfFile2(
-                proc,
-                view_addr_even,
-                MEM_PRESERVE_PLACEHOLDER,
-            );
+            // Even page
+            let va_even = va_start;
+            let addr_even = bus.hw_base.add(va_even) as *mut c_void;
+            let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_even };
+            let _ = unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
 
-            let chunk_odd = ((va_start + page_size) / granularity) * granularity;
-            let addr_odd = bus.hw_base.add(chunk_odd) as *mut c_void;
-            let view_addr_odd = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_odd };
-            let _ = UnmapViewOfFile2(
-                proc,
-                view_addr_odd,
-                MEM_PRESERVE_PLACEHOLDER,
-            );
+            // Odd page
+            let va_odd = va_start + page_size;
+            let addr_odd = bus.hw_base.add(va_odd) as *mut c_void;
+            let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_odd };
+            let _ = unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
         }
-
         trace!(
-        "Cleared TLB mapping at VA 0x{:08X} (size {})",
-        va_start,
-        page_size
-    );
+            "Cleared fastmem TLB mapping at VA=0x{:08X} (size={})",
+            va_start,
+            page_size
+        );
     }
 
     fn is_fixed_region(va_start: usize, page_size: usize) -> bool {

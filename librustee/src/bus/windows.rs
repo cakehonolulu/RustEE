@@ -197,9 +197,9 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
             trace!("Processing frame at index {} with IP 0x{:x}", target_frame_index, ip);
 
             // load a 14‑byte window ending at IP
-            let buf_size = 14;
+            let buf_size = 19;
             let buf_start = ip.saturating_sub(buf_size);
-            let buf: [u8; 14] = unsafe { std::ptr::read(buf_start as *const [u8; 14]) };
+            let buf: [u8; 19] = unsafe { std::ptr::read(buf_start as *const [u8; 19]) };
 
             let movabs_opcodes = [
                 ([0x48, 0xB8], "rax"), ([0x48, 0xB9], "rcx"), ([0x48, 0xBA], "rdx"),
@@ -293,7 +293,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                                 let low = (*ctx).R8 as u64;
                                 let high = (*ctx).R9 as u64;
                                 let value = ((high as u128) << 64) | (low as u128);
-                                io_write128_stub(bus_ptr, addr, value);
+                                io_write128_stub(bus_ptr, addr, low, high);
                                 trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
                             }
                             "read8" => {
@@ -375,7 +375,7 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                 let low = (*ctx).R8 as u64;
                 let high = (*ctx).R9 as u64;
                 let value = ((high as u128) << 64) | (low as u128);
-                //io_write128_stub(bus_ptr, addr, value);
+                io_write128_stub(bus_ptr, addr, low, high);
                 trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "read8" => {
@@ -483,7 +483,7 @@ fn fix_return_address<H: ArchHandler<Context = CONTEXT>>(
     let old_sp = H::get_stack_pointer(ctx) as usize;
     let target_ret = patch_addr - 12;
 
-    trace!(
+    debug!(
         "old_sp = 0x{:016x}, original_ret = 0x{:016x}, target_ret = 0x{:016x}",
         old_sp, ret_addr, target_ret
     );
@@ -496,13 +496,13 @@ fn fix_return_address<H: ArchHandler<Context = CONTEXT>>(
         let candidate: usize = unsafe { *(slot_addr as *const usize) };
 
         if candidate.eq(&ret_addr ) {
-            trace!(
+            debug!(
                 "Found match at slot[{}] → overwriting with 0x{:016x}",
                 i, target_ret
             );
             unsafe { *(slot_addr as *mut u64) = target_ret; }
             found = true;
-            trace!("Returning to patched block...");
+            debug!("Returning to patched block...");
             break;
         }
     }

@@ -359,13 +359,34 @@ impl Bus {
             0x10004000 => {
                 // TODO: VIF0 FIFO
             }
+            0x10004004 => {
+                // TODO: VIF0 FIFO
+            }
+            0x10004008 => {
+                // TODO: VIF0 FIFO
+            }
             0x10005000 => {
+                // TODO: VIF1 FIFO
+            }
+            0x10005004 => {
+                // TODO: VIF1 FIFO
+            }
+            0x10005008 => {
                 // TODO: VIF1 FIFO
             }
             0x10006000 => {
                 // TODO: Gif FIFO
             }
+            0x10006004 => {
+                // TODO: Gif FIFO
+            }
+            0x10006008 => {
+                // TODO: Gif FIFO
+            }
             0x10007010 => {
+                // TODO: Ifu FIFO
+            }
+            0x10007018 => {
                 // TODO: Ifu FIFO
             }
             _ => {
