@@ -1,8 +1,8 @@
-use std::ffi::OsStr;
 use super::tlb::{Tlb, TlbEntry, mask_to_page_size};
 use super::{Bus, HW_BASE};
 use crate::bus::HW_LENGTH;
 use backtrace::Backtrace;
+use std::ffi::OsStr;
 
 #[cfg(unix)]
 use nix::fcntl::{OFlag, open};
@@ -30,9 +30,18 @@ use libc::{
 
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
-use windows_sys::Win32::System::Memory::{CreateFileMapping2, MapViewOfFile3, UnmapViewOfFile2, VirtualAlloc2, VirtualFree, FILE_MAP_READ, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE, MEM_REPLACE_PLACEHOLDER, MEM_RESERVE, MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE};
+#[cfg(windows)]
+use windows_sys::Win32::System::Memory::{
+    CreateFileMapping2, FILE_MAP_READ, FILE_MAP_WRITE, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE,
+    MEM_REPLACE_PLACEHOLDER, MEM_RESERVE, MEM_RESERVE_PLACEHOLDER, MEMORY_MAPPED_VIEW_ADDRESS,
+    MapViewOfFile3, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE, UnmapViewOfFile2, VirtualAlloc2,
+    VirtualFree,
+};
+#[cfg(windows)]
 use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
@@ -86,13 +95,10 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         OFlag::O_CREAT | OFlag::O_RDWR,
         Mode::S_IRUSR | Mode::S_IWUSR,
     )
-    .map_err(|e| {
-        io::Error::new(ErrorKind::Other, format!("Failed to create RAM shm: {}", e))
-    })?;
+    .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to create RAM shm: {}", e)))?;
 
-    ftruncate(&ram_fd, ram_size as i64).map_err(|e| {
-        io::Error::new(ErrorKind::Other, format!("Failed to set RAM size: {}", e))
-    })?;
+    ftruncate(&ram_fd, ram_size as i64)
+        .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set RAM size: {}", e)))?;
 
     map_fixed_region(
         base,
@@ -144,7 +150,10 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         )
     };
     if base.is_null() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to reserve address space"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to reserve address space",
+        ));
     }
     let base = base as *mut u8;
     debug!("Reserved base address: {:p}", base);
@@ -168,22 +177,22 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         )
     };
     if ram_section == ptr::null_mut() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create RAM section"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to create RAM section",
+        ));
     }
     debug!("RAM section handle: {:?}", ram_section);
 
     let addr1 = unsafe { base.add(0x8000_0000) } as *mut c_void;
     let addr2 = unsafe { base.add(0xA000_0000) } as *mut c_void;
     for &addr in &[addr1, addr2] {
-        let res = unsafe {
-            VirtualFree(
-                addr,
-                ram_size,
-                MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
-            )
-        };
+        let res = unsafe { VirtualFree(addr, ram_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
         if res == 0 {
-            return Err(io::Error::new(ErrorKind::Other, "Failed to split placeholder"));
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                "Failed to split placeholder",
+            ));
         }
     }
 
@@ -202,8 +211,9 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
             )
         };
         if view.Value == ptr::null_mut() {
-            return Err(io::Error::new(ErrorKind::Other,
-                                      format!("Failed to map RAM view at offset {:#x}", offset)
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to map RAM view at offset {:#x}", offset),
             ));
         }
         debug!("Mapped RAM at {:p}", view.Value);
@@ -231,16 +241,20 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         )
     };
     if iop_section == ptr::null_mut() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create IOP RAM section"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to create IOP RAM section",
+        ));
     }
 
     for &offset in &[0x9C00_0000usize, 0xBC00_0000usize] {
         let addr = unsafe { base.add(offset) } as *mut c_void;
-        let ok = unsafe {
-            VirtualFree(addr, iop_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
-        };
+        let ok = unsafe { VirtualFree(addr, iop_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
         if ok == 0 {
-            return Err(io::Error::new(ErrorKind::Other, "Failed to split IOP placeholder"));
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                "Failed to split IOP placeholder",
+            ));
         }
         let view = unsafe {
             MapViewOfFile3(
@@ -256,8 +270,10 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
             )
         };
         if view.Value == ptr::null_mut() {
-            return Err(io::Error::new(ErrorKind::Other,
-                                      format!("Failed to map IOP RAM at offset {:#x}", offset)));
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to map IOP RAM at offset {:#x}", offset),
+            ));
         }
         debug!("Mapped IOP RAM at {:p}", view.Value);
     }
@@ -281,15 +297,19 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         )
     };
     if sp_section == ptr::null_mut() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create scratchpad section"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to create scratchpad section",
+        ));
     }
     let sp_offset = 0x7000_0000usize;
     let sp_addr = unsafe { base.add(sp_offset) } as *mut c_void;
-    let ok = unsafe {
-        VirtualFree(sp_addr, sp_total, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
-    };
+    let ok = unsafe { VirtualFree(sp_addr, sp_total, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
     if ok == 0 {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to split scratchpad placeholder"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to split scratchpad placeholder",
+        ));
     }
     let sp_view = unsafe {
         MapViewOfFile3(
@@ -307,7 +327,10 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
     if sp_view.Value == ptr::null_mut() {
         return Err(io::Error::new(ErrorKind::Other, "Failed to map scratchpad"));
     }
-    debug!("Mapped scratchpad at {:p} (using first 16 KiB)", sp_view.Value);
+    debug!(
+        "Mapped scratchpad at {:p} (using first 16 KiB)",
+        sp_view.Value
+    );
 
     let vu_total: usize = 0x1_0000;
     let vu_slice: usize = 0x8_000;
@@ -330,18 +353,21 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         )
     };
     if vu_section == ptr::null_mut() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create VU section"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to create VU section",
+        ));
     }
 
     let vu_offsets = [0x1100_0000usize, 0x1100_8000usize];
     for &offset in &vu_offsets {
         let addr = unsafe { base.add(offset) } as *mut c_void;
-        let ok = unsafe {
-            VirtualFree(addr, vu_slice, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
-        };
+        let ok = unsafe { VirtualFree(addr, vu_slice, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
         if ok == 0 {
-            return Err(io::Error::new(ErrorKind::Other,
-                                      format!("Failed to split VU placeholder at {:#x}", offset)));
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to split VU placeholder at {:#x}", offset),
+            ));
         }
     }
 
@@ -360,8 +386,10 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
             )
         };
         if view.Value == ptr::null_mut() {
-            return Err(io::Error::new(ErrorKind::Other,
-                                      format!("Failed to map VU view at offset {:#x}", offset)));
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to map VU view at offset {:#x}", offset),
+            ));
         }
         debug!("Mapped VU at {:p}", view.Value);
     }
@@ -388,16 +416,17 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         )
     };
     if bios_section == ptr::null_mut() {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to create BIOS section"));
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to create BIOS section",
+        ));
     }
     debug!("BIOS section handle: {:?}", bios_section);
 
     let bios_offsets = [0x1FC0_0000usize, 0x9FC0_0000usize, 0xBFC0_0000usize];
     for &off in &bios_offsets {
         let addr = unsafe { base.add(off) } as *mut c_void;
-        let ok = unsafe {
-            VirtualFree(addr, bios_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)
-        };
+        let ok = unsafe { VirtualFree(addr, bios_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
         if ok == 0 {
             return Err(io::Error::new(
                 ErrorKind::Other,
@@ -431,18 +460,17 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
 
         if i == 0 {
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    bus.bios.bytes.as_ptr(),
-                    ptr,
-                    bios_size,
-                );
+                std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), ptr, bios_size);
             }
             debug!("Copied BIOS data into mapping at {:#x}", off);
         }
 
         // Unmap the RW mapping
-        let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: ptr as *mut c_void };
-        let unmap_result = unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
+        let view_addr = MEMORY_MAPPED_VIEW_ADDRESS {
+            Value: ptr as *mut c_void,
+        };
+        let unmap_result =
+            unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
         if unmap_result == 0 {
             return Err(io::Error::new(
                 ErrorKind::Other,
@@ -795,9 +823,13 @@ impl Tlb {
                 (entry.v0, entry.pfn0, entry.d0, false),
                 (entry.v1, entry.pfn1, entry.d1, true),
             ] {
-                if !valid { continue; }
+                if !valid {
+                    continue;
+                }
                 let pa = (pfn << 12) as usize;
-                if pa >= bus.hw_size || pa >= ram_size { continue; }
+                if pa >= bus.hw_size || pa >= ram_size {
+                    continue;
+                }
 
                 let va = va_start + if is_odd { page_size } else { 0 };
                 let target = bus.hw_base.add(va);
@@ -857,7 +889,7 @@ impl Tlb {
     #[cfg(windows)]
     pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
         let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start  = (entry.vpn2 << 13) as usize;
+        let va_start = (entry.vpn2 << 13) as usize;
 
         if Self::is_fixed_region(va_start, page_size) {
             return;
@@ -868,18 +900,21 @@ impl Tlb {
             let va_even = va_start;
             let addr_even = bus.hw_base.add(va_even) as *mut c_void;
             let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_even };
-            let _ = unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
+            let _ = unsafe {
+                UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER)
+            };
 
             // Odd page
             let va_odd = va_start + page_size;
             let addr_odd = bus.hw_base.add(va_odd) as *mut c_void;
             let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_odd };
-            let _ = unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
+            let _ = unsafe {
+                UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER)
+            };
         }
         trace!(
             "Cleared fastmem TLB mapping at VA=0x{:08X} (size={})",
-            va_start,
-            page_size
+            va_start, page_size
         );
     }
 
