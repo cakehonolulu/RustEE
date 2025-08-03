@@ -184,8 +184,7 @@ impl App {
             }
             "jit" => {
                 let cloned_ee = Box::new(ee.lock().unwrap().clone());
-                let static_ee: &'static mut EE = Box::leak(cloned_ee);
-                Box::new(JIT::new(static_ee))
+                Box::new(JIT::new(*cloned_ee))
             }
             _ => panic!("Unsupported backend: {}", backend),
         };

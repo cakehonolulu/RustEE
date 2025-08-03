@@ -27,8 +27,8 @@ pub struct Block {
     pub cycle_count: u32,
 }
 
-pub struct JIT<'a> {
-    pub cpu: &'a mut EE,
+pub struct JIT {
+    pub cpu: EE,
     module: JITModule,
     blocks: LruCache<u32, Block>,
     compiled_funcs: HashMap<u32, FuncId>,
@@ -37,7 +37,6 @@ pub struct JIT<'a> {
     fpr_ptr: *mut u32,
     hi_ptr: *mut u128,
     lo_ptr: *mut u128,
-    pc_ptr: *mut u32,
     vu0_i_ptr: *mut u16,
     cycles: usize,
     break_func: FuncId,
@@ -206,8 +205,8 @@ pub extern "C" fn __load_elf(cpu_ptr: *mut EE) {
     }
 }
 
-impl<'a> JIT<'a> {
-    pub fn new(cpu: &'a mut EE) -> Self {
+impl JIT {
+    pub fn new(mut cpu: EE) -> Self {
         let mut shared_builder = settings::builder();
         shared_builder
             .set("enable_llvm_abi_extensions", "true")
@@ -254,7 +253,6 @@ impl<'a> JIT<'a> {
         let fpr_ptr = cpu.fpu_registers.as_mut_ptr();
         let hi_ptr = &mut cpu.hi as *mut u128;
         let lo_ptr = &mut cpu.lo as *mut u128;
-        let pc_ptr = &mut cpu.pc as *mut u32;
         let vu0_i_ptr = &mut cpu.vu0.vi as *mut u16;
 
         let mut store8_sig = module.make_signature();
@@ -385,7 +383,6 @@ impl<'a> JIT<'a> {
             fpr_ptr,
             hi_ptr,
             lo_ptr,
-            pc_ptr,
             vu0_i_ptr,
             cycles: 0,
             break_func,
@@ -517,7 +514,7 @@ impl<'a> JIT<'a> {
             };
             self.blocks.put(pc, new_block.clone());
             block = new_block;
-        }
+        };
 
         let ptr = self.module.get_finalized_function(block.func_id);
         let f: fn() = unsafe { std::mem::transmute(ptr) };
@@ -540,7 +537,7 @@ impl<'a> JIT<'a> {
         let mut breakpoint = false;
         let mut total_cycles = 0;
         let mut current_pc = pc;
-        let pc_addr = builder.ins().iconst(types::I64, self.pc_ptr as i64);
+        let pc_addr = builder.ins().iconst(types::I64, &mut self.cpu.pc as *mut u32 as i64);
 
         loop {
             if self.cpu.has_breakpoint(current_pc) {
@@ -763,7 +760,7 @@ impl<'a> JIT<'a> {
             }
             0x11 => {
                 // COP1
-                Self::increment_pc(builder, self.pc_ptr as i64);
+                Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
                 *current_pc = current_pc.wrapping_add(4);
 
                 None
@@ -775,14 +772,14 @@ impl<'a> JIT<'a> {
                     0x06 => self.ctc2(builder, opcode, current_pc),
                     0x18 => {
                         // TODO: viswr.x
-                        Self::increment_pc(builder, self.pc_ptr as i64);
+                        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
                         *current_pc = current_pc.wrapping_add(4);
 
                         None
                     }
                     _ => {
                         //
-                        Self::increment_pc(builder, self.pc_ptr as i64);
+                        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
                         *current_pc = current_pc.wrapping_add(4);
 
                         None
@@ -911,7 +908,7 @@ impl<'a> JIT<'a> {
 
         let gpr_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
 
-        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_ptr = &mut self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
         let rd_arg = builder.ins().iconst(types::I32, rd);
 
@@ -936,7 +933,7 @@ impl<'a> JIT<'a> {
 
         let _ = builder.ins().call(write_cop0, &[cpu_arg, idx9, sum]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -961,7 +958,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result64, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -993,7 +990,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), out64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1014,7 +1011,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1042,7 +1039,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1059,7 +1056,7 @@ impl<'a> JIT<'a> {
 
         let gpr_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
 
-        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_ptr = &mut self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
         let rd_arg = builder.ins().iconst(types::I32, rd);
         let gpr_val = Self::load32(builder, gpr_addr);
@@ -1069,7 +1066,7 @@ impl<'a> JIT<'a> {
             .declare_func_in_func(self.write_cop0_func, builder.func);
         builder.ins().call(callee, &[cpu_arg, rd_arg, gpr_val]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1080,7 +1077,7 @@ impl<'a> JIT<'a> {
         _opcode: u32,
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1106,7 +1103,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1144,7 +1141,7 @@ impl<'a> JIT<'a> {
             .declare_func_in_func(self.bus_write32_func, builder.func);
         builder.ins().call(callee, &[bus_arg, addr32, store_val32]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1161,7 +1158,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().call(local_callee, &[bus_value]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1200,7 +1197,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), loaded64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1299,7 +1296,7 @@ impl<'a> JIT<'a> {
             .declare_func_in_func(self.bus_write64_func, builder.func);
         builder.ins().call(callee, &[bus_value, addr32, store_val]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1325,7 +1322,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), sum, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1371,7 +1368,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1425,7 +1422,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1472,7 +1469,7 @@ impl<'a> JIT<'a> {
         let rd_final = builder.ins().select(rd_nonzero, lo64, current_rd);
         builder.ins().store(MemFlags::new(), rd_final, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1515,7 +1512,7 @@ impl<'a> JIT<'a> {
         builder.ins().store(MemFlags::new(), quot_store, lo_addr, 0);
         builder.ins().store(MemFlags::new(), rem_store, hi_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1554,7 +1551,7 @@ impl<'a> JIT<'a> {
         opcode: u32,
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
-        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_ptr = &mut self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
 
         let callee = self
@@ -1584,7 +1581,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::new(), lo_val_64, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1614,7 +1611,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), out64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1679,7 +1676,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), sext_val, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1712,7 +1709,7 @@ impl<'a> JIT<'a> {
             .declare_func_in_func(self.bus_write32_func, builder.func);
         builder.ins().call(callee, &[bus_value, addr, fpu_val]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1748,7 +1745,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), zext, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1775,7 +1772,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result64, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -1812,7 +1809,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), loaded, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1868,7 +1865,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().call(callee, &[bus_val, addr, byte_val]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1895,7 +1892,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1967,7 +1964,7 @@ impl<'a> JIT<'a> {
         builder.ins().store(MemFlags::new(), quot_64, lo_addr, 0);
         builder.ins().store(MemFlags::new(), rem_64, hi_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -1989,7 +1986,7 @@ impl<'a> JIT<'a> {
         let hi_val_64 = builder.ins().ireduce(types::I64, hi_val);
         builder.ins().store(MemFlags::new(), hi_val_64, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2020,7 +2017,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), out64, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2080,7 +2077,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), diff_sext, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2138,7 +2135,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::new(), val, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2167,7 +2164,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2194,7 +2191,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), res, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2221,7 +2218,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), shifted, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2257,7 +2254,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), zext, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2366,7 +2363,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().call(callee, &[bus_val, addr, store_val]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2427,7 +2424,7 @@ impl<'a> JIT<'a> {
         builder.ins().store(MemFlags::new(), quot_store, lo_addr, 0);
         builder.ins().store(MemFlags::new(), rem_store, hi_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2456,7 +2453,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::trusted(), rs_ext, lo_addr, 8);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2482,7 +2479,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::trusted(), val64, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2515,7 +2512,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::trusted(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2543,7 +2540,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::trusted(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2571,7 +2568,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::trusted(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2598,7 +2595,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::trusted(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2666,7 +2663,7 @@ impl<'a> JIT<'a> {
         let rd_final = builder.ins().select(store_rd, lo64, current_rd);
         builder.ins().store(MemFlags::new(), rd_final, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2702,7 +2699,7 @@ impl<'a> JIT<'a> {
         let result = builder.ins().select(rt_zero, rs_val, current_rd_val);
         builder.ins().store(MemFlags::trusted(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2729,7 +2726,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::trusted(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2756,7 +2753,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::trusted(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2789,7 +2786,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::trusted(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2837,7 +2834,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), value, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2884,7 +2881,7 @@ impl<'a> JIT<'a> {
             .ins()
             .call(callee, &[bus_val, aligned_addr32, low, high]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2923,7 +2920,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2935,7 +2932,7 @@ impl<'a> JIT<'a> {
         _opcode: u32,
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
         None
     }
@@ -2967,7 +2964,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -2992,7 +2989,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3025,7 +3022,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3053,7 +3050,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3084,7 +3081,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3123,7 +3120,7 @@ impl<'a> JIT<'a> {
         builder.seal_block(write_block);
         builder.seal_block(exit_block);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3162,7 +3159,7 @@ impl<'a> JIT<'a> {
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3219,7 +3216,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3281,7 +3278,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().store(MemFlags::new(), result, rt_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3328,7 +3325,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().call(callee, &[bus_val, p_addr32, data_quad]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3373,7 +3370,7 @@ impl<'a> JIT<'a> {
 
         builder.ins().call(callee, &[bus_val, p_addr32, data_quad]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3406,7 +3403,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result64, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3432,7 +3429,7 @@ impl<'a> JIT<'a> {
         let rd_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rd, 16);
         builder.ins().store(MemFlags::new(), result, rd_addr, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3516,7 +3513,7 @@ impl<'a> JIT<'a> {
             .ins()
             .store(MemFlags::new(), result_hi, rd_addr_hi, 0);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3528,7 +3525,7 @@ impl<'a> JIT<'a> {
         _opcode: u32,
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
-        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_ptr = &mut self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
         let status_idx = builder.ins().iconst(types::I32, 12);
 
@@ -3572,7 +3569,7 @@ impl<'a> JIT<'a> {
             .ins()
             .call(write_cop0, &[cpu_arg, status_idx, final_status]);
 
-        Self::increment_pc(builder, self.pc_ptr as i64);
+        Self::increment_pc(builder, &mut self.cpu.pc as *mut u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
 
         None
@@ -3585,7 +3582,7 @@ impl<'a> JIT<'a> {
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
         // --- Prep CPU & COP0 helpers ---
-        let cpu_ptr = self.cpu as *mut EE as i64;
+        let cpu_ptr = &mut self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
         let read_cop0 = self
             .module
@@ -3649,7 +3646,7 @@ impl<'a> JIT<'a> {
         let sideload_ptr =
             builder.ins().iconst(
                 types::I64,
-                unsafe { &(*self.cpu).sideload_elf } as *const bool as i64,
+                &self.cpu.sideload_elf as *const bool as i64
             );
         let sideload_val = builder
             .ins()
@@ -3676,7 +3673,7 @@ impl<'a> JIT<'a> {
             .store(MemFlags::trusted(), zero_i8, sideload_ptr, 0);
         let entry_point_ptr = builder.ins().iconst(
             types::I64,
-            &(*self.cpu).elf_entry_point as *const u32 as i64,
+            &self.cpu.elf_entry_point as *const u32 as i64,
         );
         let entry_point = builder
             .ins()
@@ -3698,7 +3695,7 @@ impl<'a> JIT<'a> {
     }
 }
 
-impl EmulationBackend<EE> for JIT<'_> {
+impl EmulationBackend<EE> for JIT {
     fn step(&mut self) {
         let (breakpoint_hit, _) = self.execute(true);
 
@@ -3731,6 +3728,6 @@ impl EmulationBackend<EE> for JIT<'_> {
     }
 
     fn get_cpu(&self) -> Arc<Mutex<EE>> {
-        Arc::new(Mutex::new((*self.cpu).clone()))
+        Arc::new(Mutex::new(self.cpu.clone()))
     }
 }
