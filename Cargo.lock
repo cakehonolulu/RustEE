@@ -1578,6 +1578,8 @@ dependencies = [
  "lru",
  "mipsasm",
  "nix",
+ "once_cell",
+ "regex",
  "region",
  "target-lexicon",
  "tracing",

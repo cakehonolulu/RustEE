@@ -14,6 +14,8 @@ use windows_sys::Win32::System::{
     };
 
 use backtrace::resolve;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use crate::bus::backpatch::{io_read128_stub, io_read16_stub, io_read64_stub, io_read8_stub, io_write128_stub, io_write16_stub, io_write64_stub, io_write8_stub};
 use super::{Bus, BUS_PTR, HW_BASE, HW_LENGTH};
 
@@ -84,7 +86,12 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
 
     let raw_frames = capture_raw_backtrace(0, 20);
     let mut is_jit = false;
-    let mut access_type = None;
+    let mut access_type: Option<String> = None;
+
+    static BUS_HW_RE: Lazy<Regex> = Lazy::new(|| {
+        // match either "__bus" or "hw", then "_" then "read" or "write", then a number
+        Regex::new(r"(?:__bus|hw)_(read|write)(8|16|32|64|128)").unwrap()
+    });
 
     // First pass: detect JIT vs interpreter access using raw frames
     for (frame_idx, &ip) in raw_frames.iter().enumerate() {
@@ -93,42 +100,20 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
             if let Some(name) = symbol.name() {
                 let demangled = format!("{}", name);
                 trace!("  Symbol: {}", demangled);
-                if demangled.contains("__bus_write8") ||demangled.contains("__bus_write16") ||demangled.contains("__bus_write32")
-                    ||demangled.contains("__bus_write64") ||demangled.contains("__bus_write128")  || demangled.contains("__bus_read8")
-                    || demangled.contains("__bus_read16")  || demangled.contains("__bus_read32")  || demangled.contains("__bus_read64")
-                    || demangled.contains("__bus_read128") {
-                    is_jit = true;
-                    trace!("  Found JIT access");
-                } else if demangled.contains("hw_write8") {
-                    access_type = Some("write8");
-                    trace!("  Found write8 access");
-                } else if demangled.contains("hw_write16") {
-                    access_type = Some("write16");
-                    trace!("  Found write16 access");
-                } else if demangled.contains("hw_write32") {
-                    access_type = Some("write32");
-                    trace!("  Found write32 access");
-                } else if demangled.contains("hw_write64") {
-                    access_type = Some("write64");
-                    trace!("  Found write64 access");
-                } else if demangled.contains("hw_write128") {
-                    access_type = Some("write128");
-                    trace!("  Found write128 access")
-                } else if demangled.contains("hw_read8") {
-                    access_type = Some("read8");
-                    trace!("  Found read8 access");
-                } else if demangled.contains("hw_read16") {
-                    access_type = Some("read16");
-                    trace!("  Found read16 access");
-                } else if demangled.contains("hw_read32") {
-                    access_type = Some("read32");
-                    trace!("  Found read32 access");
-                } else if demangled.contains("hw_read64") {
-                    access_type = Some("read64");
-                    trace!("  Found read64 access");
-                } else if demangled.contains("hw_read128") {
-                    access_type = Some("read128");
-                    trace!("  Found read128 access");
+
+                // detect “jit” anywhere in the path
+                let frame_is_jit = demangled.contains("jit");
+
+                if let Some(caps) = BUS_HW_RE.captures(&demangled) {
+                    let kind  = &caps[1];   // "read" or "write"
+                    let width = &caps[2];   // "8", "16", etc.
+                    access_type = Some(format!("{}{}", kind, width));
+                    is_jit      = frame_is_jit;
+                    trace!(
+                    "  Found {} access (JIT={})",
+                    access_type.as_deref().unwrap(),
+                    is_jit
+                );
                 }
             }
         });
@@ -267,24 +252,40 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                         let addr = fault_addr as u32;
 
                         if let Some(access) = access_type {
-                        match access {
+                        match access.as_str() {
                             "write8" => {
-                                let value = (*ctx).Rcx as u8;
+                                #[cfg(debug_assertions)]
+                                let value: u8 = (*ctx).Rcx as u8;
+
+                                #[cfg(not(debug_assertions))]
+                                let value: u8 = (*ctx).R8 as u8;
                                 io_write8_stub(bus_ptr, addr, value);
                                 trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
                             }
                             "write16" => {
-                                let value = (*ctx).Rcx as u16;
+                                #[cfg(debug_assertions)]
+                                let value: u16 = (*ctx).Rcx as u16;
+
+                                #[cfg(not(debug_assertions))]
+                                let value: u16 = (*ctx).R8 as u16;
                                 io_write16_stub(bus_ptr, addr, value);
                                 trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
                             }
                             "write32" => {
-                                let value = (*ctx).Rcx as u32;
+                                #[cfg(debug_assertions)]
+                                let value: u32 = (*ctx).Rcx as u32;
+
+                                #[cfg(not(debug_assertions))]
+                                let value: u32 = (*ctx).R8 as u32;
                                 io_write32_stub(bus_ptr, addr, value);
                                 trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
                             }
                             "write64" => {
-                                let value = (*ctx).Rcx as u64;
+                                #[cfg(debug_assertions)]
+                                let value: u64 = (*ctx).Rcx as u64;
+
+                                #[cfg(not(debug_assertions))]
+                                let value: u64 = (*ctx).R8 as u64;
                                 io_write64_stub(bus_ptr, addr, value);
                                 trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
                             }
@@ -354,24 +355,40 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
         let addr = fault_addr as u32;
         let fault_rip = (*ctx).Rip as i64;
 
-        match access {
+        match access.as_str() {
             "write8" => {
-                let value = (*ctx).Rcx as u8;
+                #[cfg(debug_assertions)]
+                let value: u8 = (*ctx).Rcx as u8;
+
+                #[cfg(not(debug_assertions))]
+                let value: u8 = (*ctx).R8 as u8;
                 io_write8_stub(bus_ptr, addr, value);
                 trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write16" => {
-                let value = (*ctx).Rcx as u16;
+                #[cfg(debug_assertions)]
+                let value: u16 = (*ctx).Rcx as u16;
+
+                #[cfg(not(debug_assertions))]
+                let value: u16 = (*ctx).R8 as u16;
                 io_write16_stub(bus_ptr, addr, value);
                 trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write32" => {
-                let value = (*ctx).Rcx as u32;
+                #[cfg(debug_assertions)]
+                let value: u32 = (*ctx).Rcx as u32;
+
+                #[cfg(not(debug_assertions))]
+                let value: u32 = (*ctx).R8 as u32;
                 io_write32_stub(bus_ptr, addr, value);
                 trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write64" => {
-                let value = (*ctx).Rcx as u64;
+                #[cfg(debug_assertions)]
+                let value: u64 = (*ctx).Rcx as u64;
+
+                #[cfg(not(debug_assertions))]
+                let value: u64 = (*ctx).R8 as u64;
                 io_write64_stub(bus_ptr, addr, value);
                 trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
