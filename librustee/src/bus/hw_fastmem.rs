@@ -1,7 +1,6 @@
 use super::tlb::{Tlb, TlbEntry, mask_to_page_size};
 use super::{Bus, HW_BASE};
 use crate::bus::HW_LENGTH;
-use backtrace::Backtrace;
 use std::ffi::OsStr;
 
 #[cfg(unix)]
@@ -17,7 +16,6 @@ use std::os::fd::AsRawFd;
 
 use std::io::{self, ErrorKind};
 use std::os::raw::c_void;
-use std::process::exit;
 use std::ptr;
 use std::sync::atomic::Ordering;
 use tracing::{debug, error, trace};
@@ -39,8 +37,6 @@ use windows_sys::Win32::System::Memory::{
     MapViewOfFile3, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE, UnmapViewOfFile2, VirtualAlloc2,
     VirtualFree,
 };
-#[cfg(windows)]
-use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 

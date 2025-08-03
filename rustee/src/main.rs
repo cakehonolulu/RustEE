@@ -6,7 +6,7 @@ use librustee::{
     ee::EE,
 };
 use std::sync::{Arc, Mutex, RwLock};
-use std::{fs, path::Path};
+use std::path::Path;
 
 use tracing_subscriber::EnvFilter;
 use winit::event_loop::{ControlFlow, EventLoop};

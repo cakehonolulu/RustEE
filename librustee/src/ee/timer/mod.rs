@@ -1,4 +1,4 @@
-use tracing::{debug, trace};
+use tracing::trace;
 
 pub struct Timer {
     count: u16,        // TN_COUNT: 16-bit counter

@@ -1,9 +1,8 @@
-use std::ptr::null;
 use std::sync::atomic::AtomicBool;
 
 use capstone::Capstone;
 use capstone::arch::BuildsCapstone;
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 
 use super::Bus;
 
@@ -153,14 +152,16 @@ pub extern "C" fn io_read64_stub(bus: *mut Bus, addr: u32) -> u64 {
     }
 }
 
-pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32) -> u128 {
+pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32, lo: *mut u64, hi: *mut u64) {
     unsafe {
         if bus.is_null() {
             error!("Null bus pointer in io_read128_stub: addr=0x{:08X}", addr);
             panic!("Null bus pointer in io_read128_stub");
         }
         let bus = &mut *bus;
-        bus.io_read128(addr)
+        let value: u128 = bus.io_read128(addr);
+        *lo = value as u64;
+        *hi = (value >> 64) as u64;
     }
 }
 
@@ -168,7 +169,7 @@ pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32) -> u128 {
 pub mod x86_64_impl {
     use super::*;
     use capstone::arch::x86::ArchMode;
-    use tracing::error;
+    
 
     #[derive(Clone, PartialEq)]
     pub enum X86Register {

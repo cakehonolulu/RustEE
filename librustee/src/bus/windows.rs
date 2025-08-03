@@ -2,7 +2,6 @@ use std::ffi::c_void;
 use std::io::{self, ErrorKind};
 use std::ptr;
 use std::sync::atomic::Ordering;
-use std::ops::Add;
 use tracing::{debug, error, info, trace};
 use windows_sys::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace;
 use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
@@ -317,12 +316,17 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                                 trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
                             }
                             "read128" => {
-                                let value = io_read128_stub(bus_ptr, addr);
-                                let low = (value as u128) as u64;
-                                let high = (value >> 64) as u64;
-                                (*ctx).Rax = low as u64;
-                                (*ctx).Rdx = high as u64;
-                                trace!("Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                                let mut low: u64 = 0;
+                                let mut high: u64 = 0;
+                                io_read128_stub(bus_ptr, addr, &mut low, &mut high);
+
+                                (*ctx).Rax = low;
+                                (*ctx).Rdx = high;
+
+                                trace!(
+                                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
+                                    bus_ptr, addr, low, high
+                                );
                             }
                             _ => {
                                 error!("Unknown access type: {}", access);
@@ -399,12 +403,17 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                 trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
             }
             "read128" => {
-                let value = io_read128_stub(bus_ptr, addr);
-                let low = (value as u128) as u64;
-                let high = (value >> 64) as u64;
-                (*ctx).Rax = low as u64;
-                (*ctx).Rdx = high as u64;
-                trace!("Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                let mut low: u64 = 0;
+                let mut high: u64 = 0;
+                io_read128_stub(bus_ptr, addr, &mut low, &mut high);
+
+                (*ctx).Rax = low;
+                (*ctx).Rdx = high;
+
+                trace!(
+                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
+                    bus_ptr, addr, low, high
+                );
             }
             _ => {
                 error!("Unknown access type: {}", access);

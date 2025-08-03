@@ -12,9 +12,8 @@ use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use lru::LruCache;
 use std::collections::HashMap;
 use std::fs;
-use std::num::{NonZero, NonZeroU128};
+use std::num::NonZero;
 use std::sync::{Arc, Mutex};
-use std::thread::current;
 use target_lexicon::Triple;
 use tracing::{debug, error};
 
@@ -138,8 +137,12 @@ pub extern "C" fn __bus_read64(bus: *mut Bus, addr: u32) -> u64 {
     unsafe { ((*bus).read64)(&mut *bus, addr) }
 }
 
-pub extern "C" fn __bus_read128(bus: *mut Bus, addr: u32) -> u128 {
-    unsafe { ((*bus).read128)(&mut *bus, addr) }
+pub extern "C" fn __bus_read128(bus: *mut Bus, addr: u32, lo: *mut u64, hi: *mut u64) {
+    let value: u128 = unsafe { ((*bus).read128)(&mut *bus, addr) };
+    unsafe {
+        *lo = value as u64;
+        *hi = (value >> 64) as u64;
+    }
 }
 
 pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
@@ -330,7 +333,9 @@ impl<'a> JIT<'a> {
         let mut load128_sig = module.make_signature();
         load128_sig.params.push(AbiParam::new(types::I64));
         load128_sig.params.push(AbiParam::new(types::I32));
-        load128_sig.returns.push(AbiParam::new(types::I128));
+        load128_sig.returns.push(AbiParam::new(types::I64));
+        load128_sig.returns.push(AbiParam::new(types::I64));
+
         let bus_read128_func = module
             .declare_function("__bus_read128", Linkage::Import, &load128_sig)
             .expect("Failed to declare __bus_read128");
@@ -2821,7 +2826,13 @@ impl<'a> JIT<'a> {
             .declare_func_in_func(self.bus_read128_func, builder.func);
 
         let call = builder.ins().call(callee, &[bus_val, aligned_addr32]);
-        let value = builder.inst_results(call)[0];
+        let low = builder.inst_results(call)[0];
+        let high = builder.inst_results(call)[1];
+
+        let low_ext = builder.ins().uextend(types::I128, low);
+        let high_ext = builder.ins().uextend(types::I128, high);
+        let shifted_high = builder.ins().ishl_imm(high_ext, 64);
+        let value = builder.ins().bor(shifted_high, low_ext);
 
         let rt_addr = Self::ptr_add(builder, self.gpr_ptr as i64, rt, 16);
         builder.ins().store(MemFlags::new(), value, rt_addr, 0);
@@ -3552,7 +3563,7 @@ impl<'a> JIT<'a> {
         let cond2 = builder.ins().bor(cond1, erl_cond);
         let final_cond = builder.ins().bor(cond2, ksu_cond);
 
-        let mask = builder.ins().iconst(types::I32, (!(1u32) as i64));
+        let mask = builder.ins().iconst(types::I32, !(1u32) as i64);
         let new_status = builder.ins().band(status, mask);
 
         let final_status = builder.ins().select(final_cond, new_status, status);

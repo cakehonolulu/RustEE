@@ -1,5 +1,4 @@
 use tracing::{debug, error, trace};
-use std::sync::{Arc, RwLock};
 
 pub trait SIOValue: Copy {
     fn to_u32(self) -> u32;

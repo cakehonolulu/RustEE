@@ -1,4 +1,4 @@
-use tracing::{debug, trace};
+use tracing::trace;
 
 pub struct INTC {
     i_stat: u32,
