@@ -349,11 +349,18 @@ fn generic_segv_handler<H: ArchHandler>(
                                         );
                                     }
                                     "write128" => {
-                                        let low =
+                                        #[cfg(debug_assertions)]
+                                        let high: u64 =
+                                            uc.uc_mcontext.gregs[libc::REG_R8 as usize] as u64;
+
+                                        #[cfg(not(debug_assertions))]
+                                        let high: u64 =
                                             uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
-                                        let high =
+
+                                        let low =
                                             uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
                                         let value = ((high as u128) << 64) | (low as u128);
+
                                         io_write128_stub(bus_ptr, addr, low, high);
                                         trace!(
                                             "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
@@ -519,9 +526,10 @@ fn generic_segv_handler<H: ArchHandler>(
                 );
             }
             "write128" => {
-                let low = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
-                let high = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
+                let high = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
+                let low = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
                 let value = ((high as u128) << 64) | (low as u128);
+
                 io_write128_stub(bus_ptr, addr, low, high);
                 trace!(
                     "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",

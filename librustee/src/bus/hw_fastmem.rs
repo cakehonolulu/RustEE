@@ -2,6 +2,7 @@ use super::tlb::{Tlb, TlbEntry, mask_to_page_size};
 use super::{Bus, HW_BASE};
 use crate::bus::HW_LENGTH;
 use std::ffi::OsStr;
+use std::ops::Add;
 
 #[cfg(unix)]
 use nix::fcntl::{OFlag, open};
@@ -968,8 +969,8 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_read128(&mut self, addr: u32) -> u128 {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *const u128;
-            core::ptr::read_volatile(host_ptr)
+            let raw = core::ptr::read_volatile(self.hw_base.add(addr as usize) as *const u128);
+            raw.rotate_right(64)
         }
     }
 
