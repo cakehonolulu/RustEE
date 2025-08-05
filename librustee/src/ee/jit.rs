@@ -3,7 +3,7 @@ use crate::bus::tlb::TlbEntry;
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{AbiParam, BlockArg, InstBuilder, MemFlags, Value, types};
+use cranelift_codegen::ir::{types, AbiParam, BlockArg, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Value};
 use cranelift_codegen::settings::Configurable;
 use cranelift_codegen::{isa, settings};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -238,7 +238,7 @@ impl JIT {
 
         builder.symbol("__bus_read64", __bus_read64 as *const u8);
 
-        builder.symbol("__bus_read128", __bus_read64 as *const u8);
+        builder.symbol("__bus_read128", __bus_read128 as *const u8);
 
         builder.symbol("__bus_tlbwi", __bus_tlbwi as *const u8);
 
@@ -326,9 +326,8 @@ impl JIT {
         let mut load128_sig = module.make_signature();
         load128_sig.params.push(AbiParam::new(types::I64));
         load128_sig.params.push(AbiParam::new(types::I32));
-        load128_sig.returns.push(AbiParam::new(types::I64));
-        load128_sig.returns.push(AbiParam::new(types::I64));
-
+        load128_sig.params.push(AbiParam::new(types::I64));
+        load128_sig.params.push(AbiParam::new(types::I64));
         let bus_read128_func = module
             .declare_function("__bus_read128", Linkage::Import, &load128_sig)
             .expect("Failed to declare __bus_read128");
@@ -2818,9 +2817,15 @@ impl JIT {
             .module
             .declare_func_in_func(self.bus_read128_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, aligned_addr32]);
-        let low = builder.inst_results(call)[0];
-        let high = builder.inst_results(call)[1];
+        let ss_lo = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let ss_hi = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let ptr_lo = builder.ins().stack_addr(types::I64, ss_lo, 0);
+        let ptr_hi = builder.ins().stack_addr(types::I64, ss_hi, 0);
+
+        builder.ins().call(callee, &[bus_val, aligned_addr32, ptr_lo, ptr_hi]);
+
+        let low  = builder.ins().load(types::I64, MemFlags::new(), ptr_lo, 0);
+        let high = builder.ins().load(types::I64, MemFlags::new(), ptr_hi, 0);
 
         let low_ext = builder.ins().uextend(types::I128, low);
         let high_ext = builder.ins().uextend(types::I128, high);

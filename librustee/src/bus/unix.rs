@@ -404,8 +404,8 @@ fn generic_segv_handler<H: ArchHandler>(
                                         let mut high: u64 = 0;
                                         io_read128_stub(bus_ptr, addr, &mut low, &mut high);
 
-                                        uc.uc_mcontext.gregs[libc::REG_RAX as usize] = low as i64;
-                                        uc.uc_mcontext.gregs[libc::REG_RDX as usize] = high as i64;
+                                        uc.uc_mcontext.gregs[libc::REG_RDX as usize] = low as i64;
+                                        uc.uc_mcontext.gregs[libc::REG_RCX as usize] = high as i64;
 
                                         trace!(
                                             "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
