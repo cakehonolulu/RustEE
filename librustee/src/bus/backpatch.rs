@@ -152,16 +152,14 @@ pub extern "C" fn io_read64_stub(bus: *mut Bus, addr: u32) -> u64 {
     }
 }
 
-pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32, lo: *mut u64, hi: *mut u64) {
+pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32) -> u128 {
     unsafe {
         if bus.is_null() {
             error!("Null bus pointer in io_read128_stub: addr=0x{:08X}", addr);
             panic!("Null bus pointer in io_read128_stub");
         }
         let bus = &mut *bus;
-        let value: u128 = bus.io_read128(addr);
-        *lo = value as u64;
-        *hi = (value >> 64) as u64;
+        bus.io_read128(addr)
     }
 }
 

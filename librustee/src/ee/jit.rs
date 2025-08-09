@@ -3,7 +3,7 @@ use crate::bus::tlb::TlbEntry;
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{types, AbiParam, BlockArg, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Value};
+use cranelift_codegen::ir::{AbiParam, BlockArg, InstBuilder, MemFlags, Value, types, StackSlotData, StackSlotKind};
 use cranelift_codegen::settings::Configurable;
 use cranelift_codegen::{isa, settings};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -90,34 +90,29 @@ pub extern "C" fn __write_cop0(cpu_ptr: *mut EE, index: u32, value: u32) {
 }
 
 pub extern "C" fn __bus_write8(bus: *mut Bus, addr: u32, value: u8) {
-    unsafe {
-        ((*bus).write8)(&mut *bus, addr, value);
-    }
+    unsafe { ((*bus).write8)(&mut *bus, addr, value); }
 }
 
 pub extern "C" fn __bus_write16(bus: *mut Bus, addr: u32, value: u16) {
-    unsafe {
-        ((*bus).write16)(&mut *bus, addr, value);
-    }
+    unsafe { ((*bus).write16)(&mut *bus, addr, value); }
 }
 
 pub extern "C" fn __bus_write32(bus: *mut Bus, addr: u32, value: u32) {
-    unsafe {
-        ((*bus).write32)(&mut *bus, addr, value);
-    }
+    unsafe { ((*bus).write32)(&mut *bus, addr, value); }
 }
 
 pub extern "C" fn __bus_write64(bus: *mut Bus, addr: u32, value: u64) {
-    unsafe {
-        ((*bus).write64)(&mut *bus, addr, value);
-    }
+    unsafe { ((*bus).write64)(&mut *bus, addr, value); }
 }
 
-pub extern "C" fn __bus_write128(bus: *mut Bus, addr: u32, lo: u64, hi: u64) {
+pub extern "C" fn __bus_write128(
+    bus: *mut Bus,
+    addr: u32,
+    lo:  u64,
+    hi:  u64,
+) {
     let value = (hi as u128) << 64 | (lo as u128);
-    unsafe {
-        ((*bus).write128)(&mut *bus, addr, value);
-    }
+    unsafe { ((*bus).write128)(&mut *bus, addr, value); }
 }
 
 pub extern "C" fn __bus_read8(bus: *mut Bus, addr: u32) -> u8 {
@@ -136,11 +131,21 @@ pub extern "C" fn __bus_read64(bus: *mut Bus, addr: u32) -> u64 {
     unsafe { ((*bus).read64)(&mut *bus, addr) }
 }
 
-pub extern "C" fn __bus_read128(bus: *mut Bus, addr: u32, lo: *mut u64, hi: *mut u64) {
+pub extern "C" fn __bus_read128(
+    bus: *mut Bus,
+    addr: u32,
+    lo: *mut u64,
+    hi: *mut u64,
+) {
     let value: u128 = unsafe { ((*bus).read128)(&mut *bus, addr) };
+
     unsafe {
-        *lo = value as u64;
-        *hi = (value >> 64) as u64;
+        if !lo.is_null() {
+            *lo = value as u64;
+        }
+        if !hi.is_null() {
+            *hi = (value >> 64) as u64;
+        }
     }
 }
 
@@ -328,6 +333,7 @@ impl JIT {
         load128_sig.params.push(AbiParam::new(types::I32));
         load128_sig.params.push(AbiParam::new(types::I64));
         load128_sig.params.push(AbiParam::new(types::I64));
+
         let bus_read128_func = module
             .declare_function("__bus_read128", Linkage::Import, &load128_sig)
             .expect("Failed to declare __bus_read128");
@@ -526,9 +532,7 @@ impl JIT {
         let mut breakpoint = false;
         let mut total_cycles = 0;
         let mut current_pc = pc;
-        let pc_addr = builder
-            .ins()
-            .iconst(types::I64, &mut self.cpu.pc as *mut u32 as i64);
+        let pc_addr = builder.ins().iconst(types::I64, &mut self.cpu.pc as *mut u32 as i64);
 
         loop {
             if self.cpu.has_breakpoint(current_pc) {
@@ -1563,9 +1567,7 @@ impl JIT {
 
         let rd_addr = Self::ptr_add(builder, self.cpu.registers.as_mut_ptr() as i64, rd, 16);
 
-        let lo_ptr_val = builder
-            .ins()
-            .iconst(types::I64, &mut self.cpu.lo as *mut u128 as i64);
+        let lo_ptr_val = builder.ins().iconst(types::I64, &mut self.cpu.lo as *mut u128 as i64);
         let lo_val = builder
             .ins()
             .load(types::I128, MemFlags::new(), lo_ptr_val, 0);
@@ -1972,9 +1974,7 @@ impl JIT {
         let rd = ((opcode >> 11) & 0x1F) as i64;
         let rd_addr = Self::ptr_add(builder, self.cpu.registers.as_mut_ptr() as i64, rd, 16);
 
-        let hi_ptr_val = builder
-            .ins()
-            .iconst(types::I64, &mut self.cpu.hi as *mut u128 as i64);
+        let hi_ptr_val = builder.ins().iconst(types::I64, &mut self.cpu.hi as *mut u128 as i64);
         let hi_val = builder
             .ins()
             .load(types::I128, MemFlags::new(), hi_ptr_val, 0);
@@ -2817,18 +2817,27 @@ impl JIT {
             .module
             .declare_func_in_func(self.bus_read128_func, builder.func);
 
-        let ss_lo = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let ss_hi = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let ptr_lo = builder.ins().stack_addr(types::I64, ss_lo, 0);
-        let ptr_hi = builder.ins().stack_addr(types::I64, ss_hi, 0);
+        let lo_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8,
+            3,
+        ));
+        let hi_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8,
+            3,
+        ));
 
-        builder.ins().call(callee, &[bus_val, aligned_addr32, ptr_lo, ptr_hi]);
+        let lo_addr = builder.ins().stack_addr(types::I64, lo_slot, 0);
+        let hi_addr = builder.ins().stack_addr(types::I64, hi_slot, 0);
 
-        let low  = builder.ins().load(types::I64, MemFlags::new(), ptr_lo, 0);
-        let high = builder.ins().load(types::I64, MemFlags::new(), ptr_hi, 0);
+        builder.ins().call(callee, &[bus_val, aligned_addr32, lo_addr, hi_addr]);
 
-        let low_ext = builder.ins().uextend(types::I128, low);
-        let high_ext = builder.ins().uextend(types::I128, high);
+        let lo_loaded = builder.ins().load(types::I64, MemFlags::new(), lo_addr, 0);
+        let hi_loaded = builder.ins().load(types::I64, MemFlags::new(), hi_addr, 0);
+
+        let low_ext = builder.ins().uextend(types::I128, lo_loaded);
+        let high_ext = builder.ins().uextend(types::I128, hi_loaded);
         let shifted_high = builder.ins().ishl_imm(high_ext, 64);
         let value = builder.ins().bor(shifted_high, low_ext);
 
@@ -3644,9 +3653,11 @@ impl JIT {
         // --- Sideload check ---
         builder.switch_to_block(sideload_block);
         let incoming_epc = builder.block_params(sideload_block)[0];
-        let sideload_ptr = builder
-            .ins()
-            .iconst(types::I64, &self.cpu.sideload_elf as *const bool as i64);
+        let sideload_ptr =
+            builder.ins().iconst(
+                types::I64,
+                &self.cpu.sideload_elf as *const bool as i64
+            );
         let sideload_val = builder
             .ins()
             .load(types::I8, MemFlags::trusted(), sideload_ptr, 0);
@@ -3670,9 +3681,10 @@ impl JIT {
         builder
             .ins()
             .store(MemFlags::trusted(), zero_i8, sideload_ptr, 0);
-        let entry_point_ptr = builder
-            .ins()
-            .iconst(types::I64, &self.cpu.elf_entry_point as *const u32 as i64);
+        let entry_point_ptr = builder.ins().iconst(
+            types::I64,
+            &self.cpu.elf_entry_point as *const u32 as i64,
+        );
         let entry_point = builder
             .ins()
             .load(types::I32, MemFlags::trusted(), entry_point_ptr, 0);

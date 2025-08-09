@@ -1,5 +1,7 @@
+use capstone::prelude::ArchDetail;
 use std::ffi::c_void;
 use std::io::{self, ErrorKind};
+use std::mem::offset_of;
 use std::ptr;
 use std::sync::atomic::Ordering;
 use tracing::{debug, error, info, trace};
@@ -14,6 +16,9 @@ use windows_sys::Win32::System::{
     };
 
 use backtrace::resolve;
+use capstone::arch::{BuildsCapstone, DetailsArchInsn};
+use capstone::{arch, Capstone, RegId};
+use capstone::arch::x86::X86Reg;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use crate::bus::backpatch::{io_read128_stub, io_read16_stub, io_read64_stub, io_read8_stub, io_write128_stub, io_write16_stub, io_write64_stub, io_write8_stub};
@@ -40,6 +45,188 @@ unsafe fn capture_raw_backtrace(skip: u32, max_frames: u32) -> Vec<*mut c_void> 
 unsafe extern "system" fn veh_handler(info: *mut EXCEPTION_POINTERS) -> i32 { unsafe {
     generic_exception_handler::<CurrentArchHandler>(info)
 }}
+
+
+#[derive(Debug, Clone, Copy)]
+enum RegisterId {
+    Rax,
+    Rcx,
+    Rdx,
+    R8,
+    R9,
+}
+
+const N_WRITES: usize = 5;
+
+static mut REGISTER_MAP: [Option<RegisterId>; N_WRITES] = [None; N_WRITES];
+
+static mut REGISTER_PAIR: Option<(RegisterId, RegisterId)> = None;
+
+fn map_cs_reg(cs_reg: u16) -> Option<RegisterId> {
+    use capstone::arch::x86::X86Reg as X;
+    match cs_reg {
+        x if x == X::X86_REG_RAX as u16 => Some(RegisterId::Rax),
+        x if x == X::X86_REG_RCX as u16 || x == X::X86_REG_ECX as u16 || x == X::X86_REG_CX as u16 || x == X::X86_REG_CL as u16 => Some(RegisterId::Rcx),
+        x if x == X::X86_REG_RDX as u16 || x == X::X86_REG_EDX as u16 => Some(RegisterId::Rdx),
+        x if x == X::X86_REG_R8  as u16 || x == X::X86_REG_R8D as u16 => Some(RegisterId::R8),
+        x if x == X::X86_REG_R9  as u16 || x == X::X86_REG_R9D as u16 => Some(RegisterId::R9),
+        _ => None,
+    }
+}
+
+fn find_memory_access_register(
+    cs: &Capstone,
+    func_ptr: *const c_void,
+    is_128: bool,
+) -> Option<RegisterId> {
+    let addr = func_ptr as u64;
+    let code_size = 150usize;
+    let code = unsafe { std::slice::from_raw_parts(addr as *const u8, code_size) };
+
+    let instructions = cs.disasm_all(code, addr).expect("Disassembly failed");
+
+    if is_128 {
+        let mut low_reg: Option<RegisterId> = None;
+        let mut high_reg: Option<RegisterId> = None;
+
+        for insn in instructions
+            .iter()
+            .rev()
+            .skip_while(|i| i.mnemonic().map_or(true, |m| m != "ret"))
+            .skip(1)
+        {
+            if let Ok(detail) = cs.insn_detail(&insn) {
+                if let capstone::arch::ArchDetail::X86Detail(x86) = detail.arch_detail() {
+                    let ops: Vec<_> = x86.operands().collect();
+
+                    if insn.mnemonic() == Some("mov") && ops.len() == 2 {
+                        trace!(
+                            "insn {:#x}: found mov (len={} bytes={:x?})",
+                            insn.address(),
+                            ops.len(),
+                            insn.bytes()
+                        );
+
+                        use capstone::arch::x86::X86OperandType;
+
+                        if let X86OperandType::Reg(src_cs) = ops[0].op_type {
+                            if let X86OperandType::Mem(mem) = ops[1].op_type {
+                                if mem.base().0 != 0 {
+                                    let src_name = cs.reg_name(src_cs).unwrap_or("??".parse().unwrap());
+                                    let base_name = cs.reg_name(mem.base()).unwrap_or("??".parse().unwrap());
+                                    trace!(
+                                        "mov detected: src={} -> mem[{} + {:#x}]",
+                                        src_name,
+                                        base_name,
+                                        mem.disp()
+                                    );
+
+                                    if let Some(src) = map_cs_reg(src_cs.0) {
+                                        if mem.disp() == 0 {
+                                            trace!("setting low_reg = {} ({:?})", src_name, src);
+                                            low_reg = Some(src);
+                                        } else if mem.disp() == 8 {
+                                            trace!("setting high_reg = {} ({:?})", src_name, src);
+                                            high_reg = Some(src);
+                                        }
+
+                                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
+                                            unsafe { REGISTER_PAIR = Some((l, h)); }
+                                            trace!("found 128-bit pair early: low={:?}, high={:?}; REGISTER_PAIR set", l, h);
+                                            return Some(l);
+                                        }
+                                    } else {
+                                        panic!("unmapped src reg: {}", src_name);
+                                    }
+                                }
+                            }
+                        }
+                        else if let X86OperandType::Mem(mem) = ops[0].op_type {
+                            if let X86OperandType::Reg(src_cs) = ops[1].op_type {
+                                if mem.base().0 != 0 {
+                                    let src_name = cs.reg_name(src_cs).unwrap_or("??".parse().unwrap());
+                                    let base_name = cs.reg_name(mem.base()).unwrap_or("??".parse().unwrap());
+                                    trace!(
+                                        "mov detected (rev): src={} -> mem[{} + {:#x}]",
+                                        src_name,
+                                        base_name,
+                                        mem.disp()
+                                    );
+
+                                    if let Some(src) = map_cs_reg(src_cs.0) {
+                                        if mem.disp() == 0 {
+                                            trace!("setting low_reg = {} ({:?})", src_name, src);
+                                            low_reg = Some(src);
+                                        } else if mem.disp() == 8 {
+                                            trace!("setting high_reg = {} ({:?})", src_name, src);
+                                            high_reg = Some(src);
+                                        }
+
+                                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
+                                            unsafe { REGISTER_PAIR = Some((l, h)); }
+                                            trace!("found 128-bit pair early: low={:?}, high={:?}; REGISTER_PAIR set", l, h);
+                                            return Some(l);
+                                        }
+                                    } else {
+                                        panic!("unmapped src reg (rev): {}", src_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        panic!(
+            "no 128-bit pair found (low={:?}, high={:?}) for function at {:#x}",
+            low_reg, high_reg, addr
+        );
+    }
+
+    for insn in instructions
+        .iter()
+        .rev()
+        .skip_while(|i| i.mnemonic().map_or(true, |m| m != "ret"))
+        .skip(1)
+    {
+        if let Ok(detail) = cs.insn_detail(&insn) {
+            if let capstone::arch::ArchDetail::X86Detail(x86) = detail.arch_detail() {
+                let ops: Vec<_> = x86.operands().collect();
+
+                if insn.mnemonic() == Some("mov") && ops.len() == 2 {
+                    trace!(
+                        "insn {:#x}: found mov (len={} bytes={:x?}) op_str='{}'",
+                        insn.address(),
+                        ops.len(),
+                        insn.bytes(),
+                        insn.op_str().unwrap_or("")
+                    );
+
+                    use capstone::arch::x86::X86OperandType;
+
+                    for op in ops.iter() {
+                        if let X86OperandType::Reg(regop) = op.op_type {
+                            if regop.0 != 0 {
+                                let reg_name = cs.reg_name(regop).unwrap_or("??".parse().unwrap());
+
+                                if let Some(mapped) = map_cs_reg(regop.0) {
+                                    trace!("mapped reg {} -> {:?}", reg_name, mapped);
+                                    return Some(mapped);
+                                } else {
+                                    panic!("encountered unmapped register: {}", reg_name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    panic!("no single-register mov found for function at {:#x}", addr);
+    None
+}
 
 unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mut EXCEPTION_POINTERS) -> i32 { unsafe {
     if info.is_null() {
@@ -252,88 +439,83 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                         let addr = fault_addr as u32;
 
                         if let Some(access) = access_type {
-                        match access.as_str() {
-                            "write8" => {
-                                #[cfg(debug_assertions)]
-                                let value: u8 = (*ctx).Rcx as u8;
+                            match access.as_str() {
+                                "write8" => {
+                                    let reg_id = REGISTER_MAP[0].expect("no register cached");
+                                    let value = get_register_value(ctx, reg_id) as u8;
 
-                                #[cfg(not(debug_assertions))]
-                                let value: u8 = (*ctx).R8 as u8;
-                                io_write8_stub(bus_ptr, addr, value);
-                                trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
-                            }
-                            "write16" => {
-                                #[cfg(debug_assertions)]
-                                let value: u16 = (*ctx).Rcx as u16;
+                                    io_write8_stub(bus_ptr, addr, value);
+                                    trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                                }
+                                "write16" => {
+                                    let reg_id = REGISTER_MAP[1].expect("no register cached");
+                                    let value = get_register_value(ctx, reg_id) as u16;
 
-                                #[cfg(not(debug_assertions))]
-                                let value: u16 = (*ctx).R8 as u16;
-                                io_write16_stub(bus_ptr, addr, value);
-                                trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
-                            }
-                            "write32" => {
-                                #[cfg(debug_assertions)]
-                                let value: u32 = (*ctx).Rcx as u32;
+                                    io_write16_stub(bus_ptr, addr, value);
+                                    trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                                }
+                                "write32" => {
+                                    let reg_id = REGISTER_MAP[2].expect("no register cached");
+                                    let value = get_register_value(ctx, reg_id) as u32;
 
-                                #[cfg(not(debug_assertions))]
-                                let value: u32 = (*ctx).R8 as u32;
-                                io_write32_stub(bus_ptr, addr, value);
-                                trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
-                            }
-                            "write64" => {
-                                #[cfg(debug_assertions)]
-                                let value: u64 = (*ctx).Rcx as u64;
+                                    io_write32_stub(bus_ptr, addr, value);
+                                    trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                                }
+                                "write64" => {
+                                    let reg_id = REGISTER_MAP[3].expect("no register cached");
+                                    let value = get_register_value(ctx, reg_id) as u64;
 
-                                #[cfg(not(debug_assertions))]
-                                let value: u64 = (*ctx).R8 as u64;
-                                io_write64_stub(bus_ptr, addr, value);
-                                trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
-                            }
-                            "write128" => {
-                                let low = (*ctx).R8 as u64;
-                                let high = (*ctx).R9 as u64;
-                                let value = ((high as u128) << 64) | (low as u128);
-                                io_write128_stub(bus_ptr, addr, low, high);
-                                trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
-                            }
-                            "read8" => {
-                                let value = io_read8_stub(bus_ptr, addr);
-                                (*ctx).Rax = value as u64;
-                                trace!("Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
-                            }
-                            "read16" => {
-                                let value = io_read16_stub(bus_ptr, addr);
-                                (*ctx).Rax = value as u64;
-                                trace!("Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
-                            }
-                            "read32" => {
-                                let value = io_read32_stub(bus_ptr, addr);
-                                (*ctx).Rax = value as u64;
-                                trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
-                            }
-                            "read64" => {
-                                let value = io_read64_stub(bus_ptr, addr);
-                                (*ctx).Rax = value as u64;
-                                trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
-                            }
-                            "read128" => {
-                                let mut low: u64 = 0;
-                                let mut high: u64 = 0;
-                                io_read128_stub(bus_ptr, addr, &mut low, &mut high);
+                                    io_write64_stub(bus_ptr, addr, value);
+                                    trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                                }
+                                "write128" => {
+                                    let (low_u64, high_u64) = unsafe {
+                                        if let Some((low_reg, high_reg)) = REGISTER_PAIR {
+                                            (get_register_value(ctx, low_reg) as u64, get_register_value(ctx, high_reg) as u64)
+                                        } else {
+                                            panic!("Failed to detect register pair");
+                                        }
+                                    };
+                                    let value = ((high_u64 as u128) << 64) | (low_u64 as u128);
+                                    io_write128_stub(bus_ptr, addr, low_u64, high_u64);
+                                    trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                                }
+                                "read8" => {
+                                    let value = io_read8_stub(bus_ptr, addr);
+                                    (*ctx).Rax = value as u64;
+                                    trace!("Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                                }
+                                "read16" => {
+                                    let value = io_read16_stub(bus_ptr, addr);
+                                    (*ctx).Rax = value as u64;
+                                    trace!("Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                                }
+                                "read32" => {
+                                    let value = io_read32_stub(bus_ptr, addr);
+                                    (*ctx).Rax = value as u64;
+                                    trace!("Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                                }
+                                "read64" => {
+                                    let value = io_read64_stub(bus_ptr, addr);
+                                    (*ctx).Rax = value as u64;
+                                    trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
+                                }
+                                "read128" => {
+                                    let value = io_read128_stub(bus_ptr, addr);
 
-                                (*ctx).Rax = low;
-                                (*ctx).Rdx = high;
+                                    (*ctx).Rax = value as u64;
+                                    (*ctx).Rdx = (value >> 64) as u64;
 
-                                trace!(
-                                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
-                                    bus_ptr, addr, low, high
-                                );
+                                    trace!(
+                                        "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> value=0x{:x}",
+                                        bus_ptr, addr, value
+                                    );
+                                }
+                                _ => {
+                                    error!("Unknown access type: {}", access);
+                                    return EXCEPTION_CONTINUE_SEARCH;
+                                }
                             }
-                            _ => {
-                                error!("Unknown access type: {}", access);
-                                return EXCEPTION_CONTINUE_SEARCH;
-                            }
-                        }
                     }
 
                     trace!("Patched at 0x{:x}", movabs_addr);
@@ -357,46 +539,43 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
 
         match access.as_str() {
             "write8" => {
-                #[cfg(debug_assertions)]
-                let value: u8 = (*ctx).Rcx as u8;
+                let reg_id = REGISTER_MAP[0].expect("no register cached");
+                let value = get_register_value(ctx, reg_id) as u8;
 
-                #[cfg(not(debug_assertions))]
-                let value: u8 = (*ctx).R8 as u8;
                 io_write8_stub(bus_ptr, addr, value);
-                trace!("Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
+                trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write16" => {
-                #[cfg(debug_assertions)]
-                let value: u16 = (*ctx).Rcx as u16;
+                let reg_id = REGISTER_MAP[1].expect("no register cached");
+                let value = get_register_value(ctx, reg_id) as u16;
 
-                #[cfg(not(debug_assertions))]
-                let value: u16 = (*ctx).R8 as u16;
                 io_write16_stub(bus_ptr, addr, value);
                 trace!("Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write32" => {
-                #[cfg(debug_assertions)]
-                let value: u32 = (*ctx).Rcx as u32;
+                let reg_id = REGISTER_MAP[2].expect("no register cached");
+                let value = get_register_value(ctx, reg_id) as u32;
 
-                #[cfg(not(debug_assertions))]
-                let value: u32 = (*ctx).R8 as u32;
                 io_write32_stub(bus_ptr, addr, value);
                 trace!("Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write64" => {
-                #[cfg(debug_assertions)]
-                let value: u64 = (*ctx).Rcx as u64;
+                let reg_id = REGISTER_MAP[3].expect("no register cached");
+                let value = get_register_value(ctx, reg_id) as u64;
 
-                #[cfg(not(debug_assertions))]
-                let value: u64 = (*ctx).R8 as u64;
                 io_write64_stub(bus_ptr, addr, value);
                 trace!("Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "write128" => {
-                let low = (*ctx).R8 as u64;
-                let high = (*ctx).R9 as u64;
-                let value = ((high as u128) << 64) | (low as u128);
-                io_write128_stub(bus_ptr, addr, low, high);
+                let (low_u64, high_u64) = unsafe {
+                    if let Some((low_reg, high_reg)) = REGISTER_PAIR {
+                        (get_register_value(ctx, low_reg) as u64, get_register_value(ctx, high_reg) as u64)
+                    } else {
+                        panic!("Failed to detect register pair");
+                    }
+                };
+                let value = ((high_u64 as u128) << 64) | (low_u64 as u128);
+                io_write128_stub(bus_ptr, addr, low_u64, high_u64);
                 trace!("Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})", bus_ptr, addr, value);
             }
             "read8" => {
@@ -420,16 +599,14 @@ unsafe fn generic_exception_handler<H: ArchHandler<Context = CONTEXT>>(info: *mu
                 trace!("Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}", bus_ptr, addr, value);
             }
             "read128" => {
-                let mut low: u64 = 0;
-                let mut high: u64 = 0;
-                io_read128_stub(bus_ptr, addr, &mut low, &mut high);
+                let value = io_read128_stub(bus_ptr, addr);
 
-                (*ctx).Rax = low;
-                (*ctx).Rdx = high;
+                (*ctx).Rax = value as u64;
+                (*ctx).Rdx = (value >> 64) as u64;
 
                 trace!(
-                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
-                    bus_ptr, addr, low, high
+                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> value=0x{:x}",
+                    bus_ptr, addr, value
                 );
             }
             _ => {
@@ -501,40 +678,13 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn fix_return_address<H: ArchHandler<Context = CONTEXT>>(
-    ctx: *mut CONTEXT,
-    patch_addr: u64,
-    ret_addr: usize,
-) {
-    let old_sp = H::get_stack_pointer(ctx) as usize;
-    let target_ret = patch_addr - 12;
-
-    debug!(
-        "old_sp = 0x{:016x}, original_ret = 0x{:016x}, target_ret = 0x{:016x}",
-        old_sp, ret_addr, target_ret
-    );
-
-    const MAX_SLOTS: usize = 512;
-    let mut found = false;
-
-    for i in 0..MAX_SLOTS {
-        let slot_addr = old_sp + i * 8;
-        let candidate: usize = unsafe { *(slot_addr as *const usize) };
-
-        if candidate.eq(&ret_addr ) {
-            debug!(
-                "Found match at slot[{}] → overwriting with 0x{:016x}",
-                i, target_ret
-            );
-            unsafe { *(slot_addr as *mut u64) = target_ret; }
-            found = true;
-            debug!("Returning to patched block...");
-            break;
-        }
-    }
-
-    if !found {
-        panic!("No matching slot found in first {} QWORDs", MAX_SLOTS);
+unsafe fn get_register_value(ctx: *const CONTEXT, reg_id: RegisterId) -> u64 {
+    match reg_id {
+        RegisterId::Rax => (*ctx).Rax,
+        RegisterId::Rcx => (*ctx).Rcx,
+        RegisterId::Rdx => (*ctx).Rdx,
+        RegisterId::R8 => (*ctx).R8,
+        RegisterId::R9 => (*ctx).R9,
     }
 }
 
@@ -543,7 +693,32 @@ pub fn install_handler() -> io::Result<()> {
         debug!("Handler already installed, skipping");
         return Ok(());
     }
-    
+
+    let cs = Capstone::new()
+        .x86()
+        .mode(arch::x86::ArchMode::Mode64)
+        .detail(true)
+        .build()
+        .expect("Failed to create Capstone object");
+
+    let write_functions = [
+        (Bus::hw_write8 as *const c_void, 0),
+        (Bus::hw_write16 as *const c_void, 1),
+        (Bus::hw_write32 as *const c_void, 2),
+        (Bus::hw_write64 as *const c_void, 3),
+        (Bus::hw_write128 as *const c_void, 4),
+    ];
+
+    for (func_ptr, index) in write_functions {
+        if let Some(reg) = find_memory_access_register(&cs, func_ptr, index == 4) {
+            unsafe {
+                REGISTER_MAP[index] = Some(reg);
+            }
+        } else {
+            error!("Failed to find memory access register for function at {:p}", func_ptr);
+        }
+    }
+
     let handle = unsafe { AddVectoredExceptionHandler(1, Some(veh_handler)) };
     if handle.is_null() {
         return Err(io::Error::new(

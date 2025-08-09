@@ -187,7 +187,6 @@ impl Bus {
 
         match mode {
             BusMode::HardwareFastMem => unsafe {
-                hw_fastmem::init_hardware_fastmem(&mut bus);
                 bus.read8 = Bus::hw_read8;
                 bus.read16 = Bus::hw_read16;
                 bus.read32 = Bus::hw_read32;
@@ -198,9 +197,9 @@ impl Bus {
                 bus.write32 = Bus::hw_write32;
                 bus.write64 = Bus::hw_write64;
                 bus.write128 = Bus::hw_write128;
+                hw_fastmem::init_hardware_fastmem(&mut bus);
             },
             BusMode::SoftwareFastMem => {
-                sw_fastmem::init_software_fastmem(&mut bus);
                 bus.read8 = Bus::sw_fmem_read8;
                 bus.read16 = Bus::sw_fmem_read16;
                 bus.read32 = Bus::sw_fmem_read32;
@@ -211,9 +210,9 @@ impl Bus {
                 bus.write32 = Bus::sw_fmem_write32;
                 bus.write64 = Bus::sw_fmem_write64;
                 bus.write128 = Bus::sw_fmem_write128;
+                sw_fastmem::init_software_fastmem(&mut bus);
             }
             BusMode::Ranged => {
-                ranged::init_ranged_tlb_mappings(&mut bus);
                 bus.read8 = Bus::ranged_read8;
                 bus.read16 = Bus::ranged_read16;
                 bus.read32 = Bus::ranged_read32;
@@ -224,6 +223,7 @@ impl Bus {
                 bus.write32 = Bus::ranged_write32;
                 bus.write64 = Bus::ranged_write64;
                 bus.write128 = Bus::ranged_write128;
+                ranged::init_ranged_tlb_mappings(&mut bus);
             }
         }
 
