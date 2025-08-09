@@ -17,7 +17,7 @@ pub struct CurrentArchHandler;
 
 pub trait ArchHandler {
     type Context;
-    type Register: Clone + PartialEq;
+    type Register: Clone + PartialEq + Copy + std::fmt::Debug;
 
     fn create_disassembler() -> Result<Capstone, capstone::Error>;
     fn encode_stub_call(reg: &Self::Register, stub_addr: u64) -> Option<Vec<u8>>;
@@ -33,6 +33,8 @@ pub trait ArchHandler {
     fn register_name(reg: &Self::Register) -> &'static str;
     fn get_helper_pattern() -> &'static [&'static str];
     fn get_call_instruction() -> &'static str;
+    fn get_register_value(ctx: *const Self::Context, reg_id: Self::Register) -> u64;
+    fn set_register_value(ctx: *mut Self::Context, reg_id: Self::Register, value: u64);
 }
 
 pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
@@ -53,10 +55,10 @@ pub extern "C" fn io_write16_stub(bus: *mut Bus, addr: u32, value: u16) {
     unsafe {
         if bus.is_null() {
             error!(
-                "Null bus pointer in io_write32_stub: addr=0x{:08X}, value=0x{:08X}",
+                "Null bus pointer in io_write16_stub: addr=0x{:08X}, value=0x{:04X}",
                 addr, value
             );
-            panic!("Null bus pointer in io_write32_stub");
+            panic!("Null bus pointer in io_write16_stub");
         }
         let bus = &mut *bus;
         bus.io_write16(addr, value);
@@ -81,7 +83,7 @@ pub extern "C" fn io_write64_stub(bus: *mut Bus, addr: u32, value: u64) {
     unsafe {
         if bus.is_null() {
             error!(
-                "Null bus pointer in io_write64_stub: addr=0x{:08X}, value=0x{:08X}",
+                "Null bus pointer in io_write64_stub: addr=0x{:08X}, value=0x{:016X}",
                 addr, value
             );
             panic!("Null bus pointer in io_write64_stub");
@@ -167,9 +169,8 @@ pub extern "C" fn io_read128_stub(bus: *mut Bus, addr: u32) -> u128 {
 pub mod x86_64_impl {
     use super::*;
     use capstone::arch::x86::ArchMode;
-    
 
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone, PartialEq, Copy, Debug)]
     pub enum X86Register {
         Rax,
         Rcx,
@@ -197,12 +198,6 @@ pub mod x86_64_impl {
             X86Register::R9 => vec![0x49, 0xB9],  // movabs r9, imm64
             X86Register::R10 => vec![0x49, 0xBA], // movabs r10, imm64
             X86Register::R11 => vec![0x49, 0xBB], // movabs r11, imm64
-            _ => {
-                panic!(
-                    "Unsupported register for stub call: {}",
-                    register_name_impl(reg)
-                )
-            }
         };
 
         buf.extend_from_slice(&stub_addr.to_le_bytes());
@@ -220,7 +215,7 @@ pub mod x86_64_impl {
             "r9" => Some(X86Register::R9),
             "r10" => Some(X86Register::R10),
             "r11" => Some(X86Register::R11),
-            _ => panic!("Unsupported register: {}", operand),
+            _ => None,
         }
     }
 
@@ -323,6 +318,28 @@ impl ArchHandler for CurrentArchHandler {
     fn get_call_instruction() -> &'static str {
         x86_64_impl::get_call_instruction_impl()
     }
+
+    fn get_register_value(ctx: *const Self::Context, reg_id: Self::Register) -> u64 {
+        unsafe { (*ctx).uc_mcontext.gregs[match reg_id {
+            x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
+            x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
+            x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
+            x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
+            x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
+            _ => panic!("Unsupported register for value access: {:?}", reg_id),
+        }] as u64 }
+    }
+
+    fn set_register_value(ctx: *mut Self::Context, reg_id: Self::Register, value: u64) {
+        unsafe { (*ctx).uc_mcontext.gregs[match reg_id {
+            x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
+            x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
+            x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
+            x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
+            x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
+            _ => panic!("Unsupported register for value access: {:?}", reg_id),
+        }] = value as i64; }
+    }
 }
 
 #[cfg(windows)]
@@ -389,5 +406,136 @@ impl ArchHandler for CurrentArchHandler {
 
     fn get_call_instruction() -> &'static str {
         x86_64_impl::get_call_instruction_impl()
+    }
+
+    fn get_register_value(ctx: *const Self::Context, reg_id: Self::Register) -> u64 {
+        unsafe {
+            match reg_id {
+                x86_64_impl::X86Register::Rax => (*ctx).Rax,
+                x86_64_impl::X86Register::Rcx => (*ctx).Rcx,
+                x86_64_impl::X86Register::Rdx => (*ctx).Rdx,
+                x86_64_impl::X86Register::R8 => (*ctx).R8,
+                x86_64_impl::X86Register::R9 => (*ctx).R9,
+                _ => panic!("Unsupported register for value access: {:?}", reg_id),
+            }
+        }
+    }
+
+    fn set_register_value(ctx: *mut Self::Context, reg_id: Self::Register, value: u64) {
+        unsafe {
+            match reg_id {
+                x86_64_impl::X86Register::Rax => (*ctx).Rax = value,
+                x86_64_impl::X86Register::Rcx => (*ctx).Rcx = value,
+                x86_64_impl::X86Register::Rdx => (*ctx).Rdx = value,
+                x86_64_impl::X86Register::R8 => (*ctx).R8 = value,
+                x86_64_impl::X86Register::R9 => (*ctx).R9 = value,
+                _ => panic!("Unsupported register for value access: {:?}", reg_id),
+            }
+        }
+    }
+}
+
+const N_WRITES: usize = 5;
+pub(crate) static mut REGISTER_MAP: [Option<x86_64_impl::X86Register>; N_WRITES] = [None; N_WRITES];
+pub(crate) static mut REGISTER_PAIR: Option<(x86_64_impl::X86Register, x86_64_impl::X86Register)> = None;
+
+pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
+    ctx: *mut H::Context,
+    access: &str,
+    fault_addr: u32,
+) {
+    let bus_ptr = super::BUS_PTR as *mut Bus;
+    let addr = fault_addr;
+
+    match access {
+        "write8" => {
+            let reg_id = REGISTER_MAP[0].expect("no register cached");
+            let value = H::get_register_value(ctx, reg_id) as u8;
+            io_write8_stub(bus_ptr, addr, value);
+            trace!(
+                "Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                bus_ptr, addr, value
+            );
+        }
+        "write16" => {
+            let reg_id = REGISTER_MAP[1].expect("no register cached");
+            let value = H::get_register_value(ctx, reg_id) as u16;
+            io_write16_stub(bus_ptr, addr, value);
+            trace!(
+                "Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                bus_ptr, addr, value
+            );
+        }
+        "write32" => {
+            let reg_id = REGISTER_MAP[2].expect("no register cached");
+            let value = H::get_register_value(ctx, reg_id) as u32;
+            io_write32_stub(bus_ptr, addr, value);
+            trace!(
+                "Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                bus_ptr, addr, value
+            );
+        }
+        "write64" => {
+            let reg_id = REGISTER_MAP[3].expect("no register cached");
+            let value = H::get_register_value(ctx, reg_id);
+            io_write64_stub(bus_ptr, addr, value);
+            trace!(
+                "Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                bus_ptr, addr, value
+            );
+        }
+        "write128" => {
+            let (low_reg, high_reg) = REGISTER_PAIR.expect("no register pair cached");
+            let low_u64 = H::get_register_value(ctx, low_reg);
+            let high_u64 = H::get_register_value(ctx, high_reg);
+            let value = ((high_u64 as u128) << 64) | (low_u64 as u128);
+            io_write128_stub(bus_ptr, addr, low_u64, high_u64);
+            trace!(
+                "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
+                bus_ptr, addr, value
+            );
+        }
+        "read8" => {
+            let value = io_read8_stub(bus_ptr, addr);
+            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            trace!(
+                "Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                bus_ptr, addr, value
+            );
+        }
+        "read16" => {
+            let value = io_read16_stub(bus_ptr, addr);
+            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            trace!(
+                "Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                bus_ptr, addr, value
+            );
+        }
+        "read32" => {
+            let value = io_read32_stub(bus_ptr, addr);
+            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            trace!(
+                "Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                bus_ptr, addr, value
+            );
+        }
+        "read64" => {
+            let value = io_read64_stub(bus_ptr, addr);
+            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value);
+            trace!(
+                "Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                bus_ptr, addr, value
+            );
+        }
+        "read128" => {
+            let value = io_read128_stub(bus_ptr, addr);
+            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            H::set_register_value(ctx, x86_64_impl::X86Register::Rdx, (value >> 64) as u64);
+            trace!(
+                "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
+                bus_ptr, addr, value
+            );
+        }
+        _ => error!("Unknown access type: {}", access),
     }
 }
