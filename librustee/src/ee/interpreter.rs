@@ -6,6 +6,7 @@ use crate::ee::EE;
 use std::fs;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 use tracing::{debug, error};
 
 pub struct Interpreter {
@@ -1736,10 +1737,10 @@ impl Interpreter {
         let status = self.cpu.read_cop0_register(12); // Status register
         let erl = (status >> 2) & 0x1; // Bit 2
         if erl == 1 {
-            self.cpu.pc = self.cpu.read_cop0_register(30); // ErrorEPC
+            *self.cpu.pc.write().unwrap() = self.cpu.read_cop0_register(30); // ErrorEPC
             self.cpu.write_cop0_register(12, status & !(1 << 2)); // Clear ERL
         } else {
-            self.cpu.pc = self.cpu.read_cop0_register(14); // EPC
+            *self.cpu.pc.write().unwrap() = self.cpu.read_cop0_register(14); // EPC
             self.cpu.write_cop0_register(12, status & !(1 << 1)); // Clear EXL
         }
 
@@ -1750,7 +1751,7 @@ impl Interpreter {
             self.cpu.load_elf(&elf_bytes);
 
             self.cpu.sideload_elf = false;
-            self.cpu.pc = self.cpu.elf_entry_point;
+            *self.cpu.pc.write().unwrap() = self.cpu.elf_entry_point;
         }
     }
 
@@ -1775,9 +1776,10 @@ impl Interpreter {
 
 impl EmulationBackend<EE> for Interpreter {
     fn step(&mut self) {
-        if self.cpu.has_breakpoint(self.cpu.pc) {
-            debug!("Breakpoint hit at 0x{:08X}", self.cpu.pc);
-            self.cpu.remove_breakpoint(self.cpu.pc);
+        if self.cpu.has_breakpoint(*self.cpu.pc.read().unwrap()) {
+            debug!("Breakpoint hit at 0x{:08X}", *self.cpu.pc.read().unwrap());
+            let pc_value = *self.cpu.pc.read().unwrap();
+            self.cpu.remove_breakpoint(pc_value);
             return;
         }
 
@@ -1790,11 +1792,16 @@ impl EmulationBackend<EE> for Interpreter {
 
     fn run(&mut self) {
         loop {
+            if self.cpu.is_paused.load(Ordering::SeqCst) {
+                std::thread::park();
+            }
+
             self.step();
 
-            if self.cpu.has_breakpoint(self.cpu.pc) {
-                debug!("Breakpoint hit at 0x{:08X}", self.cpu.pc);
-                self.cpu.remove_breakpoint(self.cpu.pc);
+            if self.cpu.has_breakpoint(*self.cpu.pc.read().unwrap()) {
+                debug!("Breakpoint hit at 0x{:08X}", *self.cpu.pc.read().unwrap());
+                let pc_value = *self.cpu.pc.read().unwrap();
+                self.cpu.remove_breakpoint(pc_value);
                 break;
             }
         }

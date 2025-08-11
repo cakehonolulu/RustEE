@@ -7,6 +7,7 @@ use crate::cpu::CPU;
 use crate::ee::vu::VU;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::AtomicBool;
 
 pub mod dmac;
 pub mod intc;
@@ -28,29 +29,30 @@ const EE_RESET_VEC: u32 = 0xBFC00000;
 
 pub struct EE {
     bus: Arc<Mutex<Box<Bus>>>,
-    pub pc: u32,
-    pub registers: [u128; 32],
+    pub pc: Arc<RwLock<u32>>,
+    pub registers: Arc<RwLock<[u128; 32]>>,
     pub cop0_registers: Arc<RwLock<[u32; 32]>>,
-    pub lo: u128,
-    pub hi: u128,
+    pub lo: Arc<RwLock<u128>>,
+    pub hi: Arc<RwLock<u128>>,
     breakpoints: HashSet<u32>,
-    pub fpu_registers: [u32; 32],
+    pub fpu_registers: Arc<RwLock<[u32; 32]>>,
     vu0: VU,
     vu1: VU,
     pub sideload_elf: bool,
     elf_entry_point: u32,
     pub elf_path: String,
+    pub is_paused: Arc<AtomicBool>,
 }
 
 impl Clone for EE {
     fn clone(&self) -> EE {
         EE {
             bus: Arc::clone(&self.bus),
-            pc: self.pc,
+            pc: self.pc.clone(),
             registers: self.registers.clone(),
             cop0_registers: Arc::clone(&self.cop0_registers),
-            lo: self.lo,
-            hi: self.hi,
+            lo: self.lo.clone(),
+            hi: self.hi.clone(),
             breakpoints: self.breakpoints.clone(),
             fpu_registers: self.fpu_registers.clone(),
             vu0: self.vu0.clone(),
@@ -58,6 +60,7 @@ impl Clone for EE {
             sideload_elf: self.sideload_elf,
             elf_entry_point: self.elf_entry_point,
             elf_path: self.elf_path.clone(),
+            is_paused: self.is_paused.clone(),
         }
     }
 }
@@ -67,38 +70,39 @@ impl EE {
         cop0_registers.write().unwrap()[15] = 0x59;
 
         let ee = EE {
-            pc: EE_RESET_VEC,
-            registers: [0; 32],
+            pc: Arc::new(RwLock::new(EE_RESET_VEC)),
+            registers: Arc::new(RwLock::new([0u128; 32])),
             cop0_registers,
-            lo: 0,
-            hi: 0,
+            lo: Arc::new(RwLock::new(0u128)),
+            hi: Arc::new(RwLock::new(0u128)),
             bus,
             breakpoints: HashSet::new(),
-            fpu_registers: [0; 32],
+            fpu_registers: Arc::new(RwLock::new([0u32; 32])),
             vu0: VU::new(4 * 1024, 4 * 1024),
             vu1: VU::new(16 * 1024, 16 * 1024),
             sideload_elf: false,
             elf_entry_point: 0,
             elf_path: "".to_string(),
+            is_paused: Arc::new(AtomicBool::new(true)),
         };
 
         ee
     }
 
     pub fn read_fpu_register_as_u32(&self, index: usize) -> u32 {
-        self.fpu_registers[index]
+        self.fpu_registers.read().unwrap()[index]
     }
 
     pub fn read_fpu_register_as_f32(&self, index: usize) -> f32 {
-        f32::from_bits(self.fpu_registers[index])
+        f32::from_bits(self.fpu_registers.read().unwrap()[index])
     }
 
     pub fn write_fpu_register_from_u32(&mut self, index: usize, value: u32) {
-        self.fpu_registers[index] = value;
+        self.fpu_registers.write().unwrap()[index] = value;
     }
 
     pub fn write_fpu_register_from_f32(&mut self, index: usize, value: f32) {
-        self.fpu_registers[index] = value.to_bits();
+        self.fpu_registers.write().unwrap()[index] = value.to_bits();
     }
 
     pub fn load_elf(&mut self, elf_data: &[u8]) {
@@ -189,67 +193,69 @@ impl CPU for EE {
     type RegisterType = u128;
 
     fn pc(&self) -> u32 {
-        self.pc
+        *self.pc.read().unwrap()
     }
 
     fn set_pc(&mut self, value: u32) {
-        self.pc = value;
+        *self.pc.write().unwrap() = value;
     }
 
     fn read_register(&self, index: usize) -> Self::RegisterType {
-        self.registers[index]
+        self.registers.read().unwrap()[index]
     }
 
     fn read_hi(&self) -> Self::RegisterType {
-        self.hi
+        *self.hi.read().unwrap()
     }
 
     fn read_lo(&self) -> Self::RegisterType {
-        self.lo
+        *self.lo.read().unwrap()
     }
 
     fn read_register8(&self, index: usize) -> u8 {
-        self.registers[index] as u8
+        self.registers.read().unwrap()[index] as u8
     }
 
     fn read_register32(&self, index: usize) -> u32 {
-        self.registers[index] as u32
+        self.registers.read().unwrap()[index] as u32
     }
 
     fn read_register64(&self, index: usize) -> u64 {
-        self.registers[index] as u64
+        self.registers.read().unwrap()[index] as u64
     }
 
     fn write_hi0(&mut self, low: u64) {
+        let mut guard = self.hi.write().unwrap();
         let high_mask = !((1u128 << 64) - 1);
-        self.hi = (self.hi & high_mask) | (low as u128);
+        *guard = (*guard & high_mask) | (low as u128);
     }
 
     fn write_hi(&mut self, value: Self::RegisterType) {
-        self.hi = value;
+        *self.hi.write().unwrap() = value;
     }
 
     fn write_lo0(&mut self, low: u64) {
+        let mut guard = self.lo.write().unwrap();
         let high_mask = !((1u128 << 64) - 1);
-        self.lo = (self.lo & high_mask) | (low as u128);
+        *guard = (*guard & high_mask) | (low as u128);
     }
 
     fn write_lo(&mut self, value: Self::RegisterType) {
-        self.lo = value;
+        *self.lo.write().unwrap() = value;
     }
 
     fn write_register(&mut self, index: usize, value: Self::RegisterType) {
-        self.registers[index] = value;
+        self.registers.write().unwrap()[index] = value;
     }
 
     fn write_register32(&mut self, index: usize, value: u32) {
-        let upper_bits = self.registers[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
-        self.registers[index] = upper_bits | (value as u128);
+        let upper_bits = self.registers.read().unwrap()[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        self.registers.write().unwrap()[index] = upper_bits | (value as u128);
     }
 
     fn write_register64(&mut self, index: usize, value: u64) {
-        let upper_bits = self.registers[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
-        self.registers[index] = upper_bits | (value as u128);
+        let upper_bits = self.registers.read().unwrap()[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        self.registers.write().unwrap()[index] = upper_bits | (value as u128);
     }
 
     fn read_cop0_register(&self, index: usize) -> u32 {
@@ -327,7 +333,7 @@ impl CPU for EE {
     #[inline(always)]
     fn fetch(&mut self) -> u32 {
         let mut bus = self.bus.lock().unwrap();
-        (bus.read32)(&mut *bus, self.pc)
+        (bus.read32)(&mut *bus, *self.pc.read().unwrap())
     }
 
     #[inline(always)]

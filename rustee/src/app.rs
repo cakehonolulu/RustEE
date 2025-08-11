@@ -13,6 +13,7 @@ use librustee::cpu::EmulationBackend;
 use librustee::ee::{EE, Interpreter, JIT};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -154,7 +155,6 @@ pub struct App {
     instance: wgpu::Instance,
     state: Option<AppState>,
     window: Option<Arc<Window>>,
-    ee_backend: Box<dyn EmulationBackend<EE>>,
     ee: Arc<Mutex<EE>>,
     bus: Arc<Mutex<Box<Bus>>>,
     last_frame_time: Instant,
@@ -173,27 +173,32 @@ pub struct App {
     ram_view_addr: u32,
     ram_view_len: usize,
     tlb_view_open: bool,
+    emulation_thread: Option<std::thread::JoinHandle<()>>,
+    is_paused: Arc<AtomicBool>,
 }
 
 impl App {
     pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String) -> Self {
-        let ee_backend: Box<dyn EmulationBackend<EE>> = match backend.as_str() {
+        let is_paused = ee.lock().unwrap().is_paused.clone();
+        let cloned_ee = ee.lock().unwrap().clone();
+        let mut emu_backend: Box<dyn EmulationBackend<EE> + Send> = match backend.as_str() {
             "interpreter" => {
-                let cloned_ee = ee.lock().unwrap().clone();
                 Box::new(Interpreter::new(cloned_ee))
             }
             "jit" => {
-                let cloned_ee = Box::new(ee.lock().unwrap().clone());
-                Box::new(JIT::new(*cloned_ee))
+                Box::new(JIT::new(cloned_ee))
             }
             _ => panic!("Unsupported backend: {}", backend),
         };
+
+        let emulation_thread = std::thread::spawn(move || {
+            emu_backend.run();
+        });
 
         App {
             instance: egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default()),
             state: None,
             window: None,
-            ee_backend,
             ee,
             bus,
             last_frame_time: Instant::now(),
@@ -212,6 +217,8 @@ impl App {
             ram_view_addr: 0x0000_0000,
             ram_view_len: 256, // show 256 bytes by default
             tlb_view_open: false,
+            emulation_thread: Some(emulation_thread),
+            is_paused,
         }
     }
 
@@ -298,8 +305,8 @@ impl App {
             state.egui_renderer.begin_frame(window);
 
             egui::Window::new("EE CPU State").show(state.egui_renderer.context(), |ui| {
-                if let Ok(ee) = self.ee_backend.get_cpu().lock() {
-                    for (i, &value) in ee.registers.iter().enumerate() {
+                if let Ok(ee) = self.ee.lock() {
+                    for (i, &value) in ee.registers.read().unwrap().iter().enumerate() {
                         if let Some(prev_value) = self.prev_ee_registers.get(&i) {
                             if *prev_value != value {
                                 self.change_ee_timers.insert(i, 1.0);
@@ -354,7 +361,7 @@ impl App {
                                             });
                                         })
                                         .body(|mut body| {
-                                            for (i, &value) in ee.registers.iter().enumerate() {
+                                            for (i, &value) in ee.registers.read().unwrap().iter().enumerate() {
                                                 let name = [
                                                     "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3",
                                                     "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
@@ -408,7 +415,7 @@ impl App {
                                                 row.col(|ui| {
                                                     ui.colored_label(
                                                         egui::Color32::WHITE,
-                                                        format!("{:#034X}", ee.hi),
+                                                        format!("{:#034X}", *ee.hi.read().unwrap()),
                                                     );
                                                 });
                                             });
@@ -419,7 +426,7 @@ impl App {
                                                 row.col(|ui| {
                                                     ui.colored_label(
                                                         egui::Color32::WHITE,
-                                                        format!("{:#034X}", ee.lo),
+                                                        format!("{:#034X}", *ee.lo.read().unwrap()),
                                                     );
                                                 });
                                             });
@@ -430,7 +437,7 @@ impl App {
                                                 row.col(|ui| {
                                                     ui.colored_label(
                                                         egui::Color32::WHITE,
-                                                        format!("{:#010X}", ee.pc),
+                                                        format!("{:#010X}", *ee.pc.read().unwrap()),
                                                     );
                                                 });
                                             });
@@ -514,11 +521,12 @@ impl App {
 
             egui::TopBottomPanel::bottom("EE Taskbar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Step").clicked() {
-                        self.ee_backend.step();
-                    }
-                    if ui.button("Run").clicked() {
-                        self.ee_backend.run();
+                    if ui.button(if self.is_paused.load(Ordering::SeqCst) { "Run" } else { "Pause" }).clicked() {
+                        let paused = self.is_paused.load(Ordering::SeqCst);
+                        self.is_paused.store(!paused, Ordering::SeqCst);
+                        if paused {
+                            self.emulation_thread.as_ref().unwrap().thread().unpark();
+                        }
                     }
                     if ui.button("Reset").clicked() {
                         // Reset logic
@@ -746,12 +754,12 @@ impl App {
             }
 
             if self.disassembly_open {
-                if let Ok(mut ee) = self.ee_backend.get_cpu().lock() {
+                if let Ok(mut ee) = self.ee.lock() {
                     if self.follow_pc {
-                        self.disassembly_start_addr = ee.pc;
+                        self.disassembly_start_addr = *ee.pc.read().unwrap();
                     }
 
-                    let pc = ee.pc;
+                    let pc = *ee.pc.write().unwrap();
                     let num_instructions = 16;
                     let mut bytes = Vec::new();
                     for offset in 0..num_instructions {
@@ -775,7 +783,7 @@ impl App {
                             egui::ScrollArea::both()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    let current_pc = ee.pc as u64;
+                                    let current_pc = *ee.pc.read().unwrap() as u64;
                                     let style = ui.style();
                                     let mono_font: FontId =
                                         style.text_styles[&TextStyle::Monospace].clone();
