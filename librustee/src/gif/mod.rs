@@ -1,4 +1,6 @@
+use std::process::exit;
 use tracing::{error, trace};
+use crate::Bus;
 
 /// Base address for GIF I/O registers
 pub const GIF_BASE: u32 = 0x1000_3000;
@@ -35,12 +37,135 @@ pub struct GIF {
     p3cnt: u32,
     /// GIF_P3TAG: PATH3 GIFtag when interrupted
     p3tag: u32,
+    state: State,
+    current_gif_addr: u32,
+    q_bits: u32,
+    current_gif_tag: u128,
+
+    nloop: u32,
+    current_nloop: u32,
+    nregs: u8,
+    regs: u64,
+    regs_left: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum State {
+    #[default]
+    Idle,
+    ProcessingPacked,
+    ProcessingImage,
 }
 
 impl GIF {
     /// Create a new GIF I/O block with all registers zeroed
     pub fn new() -> Self {
         GIF::default()
+    }
+
+    pub fn is_path3_masked(&self) -> bool {
+        (self.mode & 0x1) != 0
+    }
+
+    pub fn write_dmac_data(&mut self, bus: &mut Bus, data: u128, madr: &mut u32, qwc: &mut u32, chain: bool) {
+        match self.state {
+            State::Idle => {
+                self.current_gif_addr = *madr;
+
+                self.q_bits = 0x3f800000u32;
+
+                let low = data as u64;
+
+                self.nloop = (low & 0x7FFF) as u32; // bits 0-14
+                let eop = ((low >> 15) & 0x1) != 0; // bit 15
+                let enable_prim = ((low >> 46) & 0x1) != 0; // bit 46
+                let prim = ((low >> 47) & 0x7FF) as u32; // bits 47-57
+                let format = ((low >> 58) & 0x3) as u8; // bits 58-59
+                let mut nregs = ((low >> 60) & 0xF) as u8; // bits 60-63
+                if nregs == 0 {
+                    nregs = 16;
+                }
+                let regs = ((data >> 64) & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
+
+                self.current_gif_tag = data;
+                self.nregs = nregs;
+                self.regs = regs;
+                self.regs_left = nregs;
+                self.current_nloop = self.nloop;
+
+                if self.nloop == 0 {
+                    trace!("GIF: NLOOP == 0 -> tag ignored (only EOP may matter).");
+                    return;
+                }
+
+                if enable_prim {
+                    bus.gs.write_internal_reg(0, prim as u64);
+                }
+
+                match format {
+                    0 => {
+                        self.state = State::ProcessingPacked;
+                        trace!("GIF: switching to ProcessingPacked");
+                    }
+                    2 | 3 => {
+                        self.state = State::ProcessingImage;
+                        trace!("GIF: switching to ProcessingImage");
+                    }
+                    other => {
+                        panic!("Unsupported GIF data format: {} (tag low: 0x{:016X})", other, low);
+                    }
+                }
+            }
+
+            State::ProcessingPacked => {
+                self.current_gif_addr += 16;
+
+                let reg_offset = (self.nregs - self.regs_left) << 2;
+
+                let reg = ((self.regs >> reg_offset) & 0xF) as u8;
+
+                let data = (bus.read128)(bus, self.current_gif_addr);
+
+                bus.gs.write_packed_gif_data(reg, data, self.q_bits);
+
+                self.regs_left -= 1;
+
+                if self.regs_left == 0 {
+                    self.regs_left = self.nregs;
+                    self.current_nloop -= 1;
+                }
+
+                if self.current_nloop == 0 {
+                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0
+                    {
+                    }
+                    else
+                    {
+                        self.ctrl |= 0x1;
+                    }
+
+                    self.state = State::Idle;
+                }
+            }
+
+            State::ProcessingImage => {
+                bus.gs.write_hwreg(data as u64);
+                bus.gs.write_hwreg((data >> 64) as u64);
+
+                self.current_nloop -= 1;
+
+                if self.current_nloop == 0 {
+                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0
+                    {
+                    }
+                    else
+                    {
+                        self.ctrl |= 0x1;
+                    }
+                    self.state = State::Idle;
+                }
+            }
+        }
     }
 
     /// Write a 32-bit value to a GIF register

@@ -1,7 +1,7 @@
 pub mod bios;
 
 use bios::BIOS;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
@@ -18,7 +18,7 @@ mod rdram;
 mod sw_fastmem;
 pub mod tlb;
 
-use crate::ee::dmac::EEDMAC;
+use crate::ee::dmac::{DmaChannel, EEDMAC};
 use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
 use crate::ee::timer::Timers;
@@ -27,6 +27,7 @@ use crate::gs::GS;
 use crate::ipu::IPU;
 use crate::sif::SIF;
 use crate::vif::{VIF, VIF0_BASE, VIF1_BASE};
+use crate::ee::dmac::{GIF_BASE,ChannelType};
 
 use tlb::{OperatingMode, Tlb};
 
@@ -103,8 +104,8 @@ pub struct Bus {
     ee_timer: Timers,
     ee_dmac: EEDMAC,
     sif: SIF,
-    gif: GIF,
-    gs: GS,
+    pub(crate) gif: GIF,
+    pub(crate) gs: GS,
     vif0: VIF,
     vif1: VIF,
     ipu: IPU,
@@ -296,10 +297,18 @@ impl Bus {
                 self.vif1.write32(addr, value);
             }
             0x10008000..=0x1000D4FF => {
-                self.ee_dmac.write_register(addr, value);
+                let triggered_channel = self.ee_dmac.write_register(addr, value);
+
+                if let Some(channel_type) = triggered_channel {
+                    self.service_dma_channel(channel_type);
+                }
             }
             0x1000E000..=0x1000E050 => {
-                self.ee_dmac.write_register(addr, value);
+                let triggered_channel = self.ee_dmac.write_register(addr, value);
+
+                if let Some(channel_type) = triggered_channel {
+                    self.service_dma_channel(channel_type);
+                }
             }
             0x1000F000 | 0x1000F010 => {
                 self.ee_intc.write32(addr, value);
@@ -325,8 +334,13 @@ impl Bus {
                 // ?
             }
             0x1000F520 | 0x1000F590 => {
-                self.ee_dmac.write_register(addr, value);
+                let triggered_channel = self.ee_dmac.write_register(addr, value);
+
+                if let Some(channel_type) = triggered_channel {
+                    self.service_dma_channel(channel_type);
+                }
             }
+            0x12001000 => self.gs.write64(addr, value as u64),
             0x1F80141C => self.dev9_delay3 = value,
             _ => {
                 panic!(
@@ -432,6 +446,7 @@ impl Bus {
             0x1000F400 | 0x1000F410 => 0,
             0x1000F430 | 0x1000F440 => self.rdram.read(addr),
             0x1000F520 | 0x1000F590 => self.ee_dmac.read_register(addr),
+            0x12001000 => self.gs.read64(addr) as u32,
             0x1C0003C0 => 0,
             0x1F80141C => self.dev9_delay3,
             _ => {
@@ -457,5 +472,89 @@ impl Bus {
                 panic!("Invalid IO read128: addr=0x{:08X}", addr);
             }
         }
+    }
+
+    fn service_dma_channel(&mut self, channel_type: ChannelType) {
+        let base_addr = match channel_type {
+            ChannelType::Gif => GIF_BASE,
+            ChannelType::Sif0 => { debug!("Unimplemented SIF0 DMA transfer"); return; },
+            _ => {
+                todo!("Implement DMA step for {:?}", channel_type);
+            }
+        };
+
+        match channel_type {
+            ChannelType::Gif => self.dma_step_gif(base_addr),
+            _ => todo!("Implement DMA step for {:?}", channel_type),
+        }
+
+        if let Some(ch) = self.ee_dmac.channels.get_mut(&base_addr) {
+            ch.chcr &= !0x100;
+        }
+    }
+
+    fn dma_step_gif(&mut self, base_addr: u32) {
+        trace!("Starting GIF DMA transfer");
+
+        let transfer_mode = {
+            let ch = self.ee_dmac.channels.get(&base_addr)
+                .expect("GIF channel missing");
+            (ch.chcr >> 2) & 0x3
+        };
+
+        match transfer_mode {
+            0 => {
+                self.process_burst_mode(base_addr);
+            }
+            1 => {
+                self.process_chain_mode(base_addr);
+            }
+            2 => {
+                todo!("Unimplemented Interleave mode transfer for GIF DMA");
+            }
+            _ => {
+                panic!("Unknown GIF DMA transfer mode: {}", transfer_mode);
+            }
+        }
+    }
+
+    fn process_burst_mode(&mut self, base_addr: u32) {
+        loop {
+            let (mut madr, mut qwc) = {
+                let ch = self.ee_dmac.channels.get(&base_addr)
+                    .expect("GIF channel missing");
+                (ch.madr, ch.qwc)
+            };
+
+            if qwc == 0 {
+                break;
+            }
+
+            let data: u128 = (self.read128)(self, madr);
+
+            if !self.gif.is_path3_masked() {
+                let gif_ptr: *mut GIF = &mut self.gif;
+                unsafe {
+                    (*gif_ptr).write_dmac_data(self, data, &mut madr, &mut qwc, false);
+                }
+            } else {
+                debug!("Burst mode PATH3 masked; ignoring GIF FIFO write");;
+            }
+
+            madr = madr.wrapping_add(16);
+            qwc = qwc.saturating_sub(1);
+
+            {
+                let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
+                    .expect("GIF channel missing (mut)");
+                ch_mut.madr = madr;
+                ch_mut.qwc = qwc;
+            }
+        }
+    }
+
+    fn process_chain_mode(&mut self, base_addr: u32) {
+        // TODO: Implement chain mode transfer logic for GIF
+        todo!("Implement GIF chain mode transfer");
     }
 }

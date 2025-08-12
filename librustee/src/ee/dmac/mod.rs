@@ -38,9 +38,9 @@ pub enum ChannelType {
 
 #[derive(Debug)]
 pub struct DmaChannel {
-    chcr: u32,
-    madr: u32,
-    qwc: u32,
+    pub(crate) chcr: u32,
+    pub(crate) madr: u32,
+    pub(crate) qwc: u32,
     tadr: u32,
     asr0: Option<u32>,
     asr1: Option<u32>,
@@ -82,7 +82,6 @@ impl DmaChannel {
         match offset {
             CHCR_OFFSET => {
                 self.chcr = (value & 0xFFFF) | (self.chcr & 0xFFFF_0000);
-                self.dma_step();
             }
             MADR_OFFSET => {
                 self.madr = value & !0xF;
@@ -120,78 +119,13 @@ impl DmaChannel {
         }
     }
 
-    pub fn dma_step(&mut self) {
-        if self.chcr & 0x100 != 0 {
-            match self.channel_type {
-                ChannelType::Vif0 => self.step_vif0(),
-                ChannelType::Vif1 => self.step_vif1(),
-                ChannelType::Gif => self.step_gif(),
-                ChannelType::IpuFrom => self.step_ipu_from(),
-                ChannelType::IpuTo => self.step_ipu_to(),
-                ChannelType::Sif0 => self.step_sif0(),
-                ChannelType::Sif1 => self.step_sif1(),
-                ChannelType::Sif2 => self.step_sif2(),
-                ChannelType::SprFrom => self.step_spr_from(),
-                ChannelType::SprTo => self.step_spr_to(),
-            }
-        }
-    }
-
-    fn step_vif0(&mut self) {
-        // TODO: Implement VIF0-specific DMA transfer logic (e.g., normal/chain/interleave modes,
-        // data transfer to VIF0 peripheral, update registers, handle interrupts, etc.)
-        // This would typically involve accessing memory/peripherals, which are not present here.
-        todo!("Implement VIF0 DMA step");
-    }
-
-    fn step_vif1(&mut self) {
-        // TODO: Implement VIF1-specific DMA transfer logic
-        todo!("Implement VIF1 DMA step");
-    }
-
-    fn step_gif(&mut self) {
-        // TODO: Implement GIF-specific DMA transfer logic
-        todo!("Implement GIF DMA step");
-    }
-
-    fn step_ipu_from(&mut self) {
-        // TODO: Implement IPU_FROM-specific DMA transfer logic
-        todo!("Implement IPU_FROM DMA step");
-    }
-
-    fn step_ipu_to(&mut self) {
-        // TODO: Implement IPU_TO-specific DMA transfer logic
-        todo!("Implement IPU_TO DMA step");
-    }
-
-    fn step_sif0(&mut self) {
-        // TODO: Implement SIF0-specific DMA transfer logic
-        debug!("Implement SIF0 DMA step");
-    }
-
-    fn step_sif1(&mut self) {
-        // TODO: Implement SIF1-specific DMA transfer logic
-        todo!("Implement SIF1 DMA step");
-    }
-
-    fn step_sif2(&mut self) {
-        // TODO: Implement SIF2-specific DMA transfer logic
-        todo!("Implement SIF2 DMA step");
-    }
-
-    fn step_spr_from(&mut self) {
-        // TODO: Implement SPR_FROM-specific DMA transfer logic
-        todo!("Implement SPR_FROM DMA step");
-    }
-
-    fn step_spr_to(&mut self) {
-        // TODO: Implement SPR_TO-specific DMA transfer logic
-        todo!("Implement SPR_TO DMA step");
+    pub fn is_running(&self) -> bool {
+        (self.chcr & 0x100) != 0
     }
 }
 
 pub struct EEDMAC {
-    channels: HashMap<u32, DmaChannel>,
+    pub(crate) channels: HashMap<u32, DmaChannel>,
     d_ctrl: u32,
     d_stat: u32,
     d_pcr: u32,
@@ -227,12 +161,16 @@ impl EEDMAC {
         }
     }
 
-    pub fn write_register(&mut self, addr: u32, value: u32) {
+    pub fn write_register(&mut self, addr: u32, value: u32) -> Option<ChannelType> {
         let base = addr & 0xFFFF_F000;
         let offset = addr & 0xFF;
 
         if let Some(ch) = self.channels.get_mut(&base) {
             ch.write32(offset, value);
+
+            if offset == CHCR_OFFSET && ch.is_running() {
+                return Some(ch.channel_type);
+            }
         } else {
             match addr {
                 0x1000_E000 => self.d_ctrl = value,
@@ -245,6 +183,8 @@ impl EEDMAC {
                 _ => error!("Invalid DMAC write address: {:#X}", addr),
             }
         }
+
+        None
     }
 
     pub fn read_register(&self, addr: u32) -> u32 {
