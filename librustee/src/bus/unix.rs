@@ -1,15 +1,15 @@
 use crate::bus::BUS_PTR;
 use crate::bus::backpatch::{
-    io_read8_stub, io_read16_stub, io_read64_stub, io_read128_stub, io_write8_stub,
-    io_write16_stub, io_write64_stub, io_write128_stub,
+    execute_stub, find_memory_access_register, io_read128_stub, io_read16_stub, io_read64_stub, io_read8_stub, io_write128_stub, io_write16_stub, io_write64_stub, io_write8_stub, x86_64_impl
 };
 use crate::bus::unix::libc::ucontext_t;
 use backtrace::Backtrace;
+use capstone::arch::BuildsCapstone;
+use capstone::{arch, Capstone};
 use nix::libc;
 use nix::sys::mman::{ProtFlags, mprotect};
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use std::io;
-use std::ops::Add;
 use std::os::raw::{c_int, c_void};
 use std::sync::atomic::Ordering;
 use tracing::{debug, error, info, trace};
@@ -36,7 +36,9 @@ extern "C" fn segv_handler(signum: c_int, info: *mut libc::siginfo_t, ctx: *mut 
     generic_segv_handler::<CurrentArchHandler>(signum, info, ctx)
 }
 
-fn generic_segv_handler<H: ArchHandler>(
+fn generic_segv_handler<
+    H: ArchHandler<Context = ucontext_t, Register = x86_64_impl::X86Register>
+>(
     signum: c_int,
     info: *mut libc::siginfo_t,
     ctx: *mut H::Context,
@@ -270,7 +272,7 @@ fn generic_segv_handler<H: ArchHandler>(
                 }
 
                 for &(mov_off, mov_reg) in &mov_hits {
-                    for &(call_off, call_reg, call_len) in &call_hits {
+                    for &(_, call_reg, _) in &call_hits {
                         if mov_reg == call_reg {
                             let movabs_addr = buf_start + mov_off;
                             let reg = H::parse_register_from_operand(mov_reg).unwrap();
@@ -288,134 +290,7 @@ fn generic_segv_handler<H: ArchHandler>(
                             }
 
                             if let Some(access) = access_type {
-                                let bus_ptr = unsafe { BUS_PTR } as *mut Bus;
-                                let addr = fault_addr;
-
-                                match access {
-                                    "write8" => {
-                                        #[cfg(debug_assertions)]
-                                        let value: u8 =
-                                            uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u8;
-
-                                        #[cfg(not(debug_assertions))]
-                                        let value: u8 =
-                                            uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u8;
-                                        io_write8_stub(bus_ptr, addr, value);
-                                        trace!(
-                                            "Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "write16" => {
-                                        #[cfg(debug_assertions)]
-                                        let value: u16 =
-                                            uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u16;
-
-                                        #[cfg(not(debug_assertions))]
-                                        let value: u16 =
-                                            uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u16;
-                                        io_write16_stub(bus_ptr, addr, value);
-                                        trace!(
-                                            "Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "write32" => {
-                                        #[cfg(debug_assertions)]
-                                        let value: u32 =
-                                            uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u32;
-
-                                        #[cfg(not(debug_assertions))]
-                                        let value: u32 =
-                                            uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u32;
-                                        io_write32_stub(bus_ptr, addr, value);
-                                        trace!(
-                                            "Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "write64" => {
-                                        #[cfg(debug_assertions)]
-                                        let value: u64 =
-                                            uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
-
-                                        #[cfg(not(debug_assertions))]
-                                        let value: u64 =
-                                            uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
-                                        io_write64_stub(bus_ptr, addr, value);
-                                        trace!(
-                                            "Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "write128" => {
-                                        #[cfg(debug_assertions)]
-                                        let high: u64 =
-                                            uc.uc_mcontext.gregs[libc::REG_R8 as usize] as u64;
-
-                                        #[cfg(not(debug_assertions))]
-                                        let high: u64 =
-                                            uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
-
-                                        let low =
-                                            uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
-                                        let value = ((high as u128) << 64) | (low as u128);
-
-                                        io_write128_stub(bus_ptr, addr, low, high);
-                                        trace!(
-                                            "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "read8" => {
-                                        let value = io_read8_stub(bus_ptr, addr);
-                                        uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                                        trace!(
-                                            "Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "read16" => {
-                                        let value = io_read16_stub(bus_ptr, addr);
-                                        uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                                        trace!(
-                                            "Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "read32" => {
-                                        let value = io_read32_stub(bus_ptr, addr);
-                                        uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                                        trace!(
-                                            "Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "read64" => {
-                                        let value = io_read64_stub(bus_ptr, addr);
-                                        uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                                        trace!(
-                                            "Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                                            bus_ptr, addr, value
-                                        );
-                                    }
-                                    "read128" => {
-                                        let mut low: u64 = 0;
-                                        let mut high: u64 = 0;
-                                        io_read128_stub(bus_ptr, addr, &mut low, &mut high);
-
-                                        uc.uc_mcontext.gregs[libc::REG_RDX as usize] = low as i64;
-                                        uc.uc_mcontext.gregs[libc::REG_RCX as usize] = high as i64;
-
-                                        trace!(
-                                            "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
-                                            bus_ptr, addr, low, high
-                                        );
-                                    }
-                                    _ => {
-                                        panic!("Unknown access type: {}", access);
-                                    }
-                                }
+                                unsafe { execute_stub::<H>(ctx, &access, fault_addr) };
                             }
 
                             trace!("Patched at 0x{:x}", movabs_addr);
@@ -472,119 +347,9 @@ fn generic_segv_handler<H: ArchHandler>(
     } else if let Some(access) = access_type {
         trace!("Detected interpreter fastmem access, redirecting to I/O...");
         let uc = unsafe { &mut *(ctx as *mut libc::ucontext_t) };
-        let bus_ptr = unsafe { BUS_PTR } as *mut Bus;
-        let addr = fault_addr;
         let fault_rip = uc.uc_mcontext.gregs[libc::REG_RIP as usize];
 
-        match access {
-            "write8" => {
-                #[cfg(debug_assertions)]
-                let value: u8 = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u8;
-
-                #[cfg(not(debug_assertions))]
-                let value: u8 = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u8;
-                io_write8_stub(bus_ptr, addr, value);
-                trace!(
-                    "Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                    bus_ptr, addr, value
-                );
-            }
-            "write16" => {
-                #[cfg(debug_assertions)]
-                let value: u16 = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u16;
-
-                #[cfg(not(debug_assertions))]
-                let value: u16 = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u16;
-                io_write16_stub(bus_ptr, addr, value);
-                trace!(
-                    "Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                    bus_ptr, addr, value
-                );
-            }
-            "write32" => {
-                #[cfg(debug_assertions)]
-                let value: u32 = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u32;
-
-                #[cfg(not(debug_assertions))]
-                let value: u32 = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u32;
-                io_write32_stub(bus_ptr, addr, value);
-                trace!(
-                    "Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                    bus_ptr, addr, value
-                );
-            }
-            "write64" => {
-                #[cfg(debug_assertions)]
-                let value: u64 = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
-
-                #[cfg(not(debug_assertions))]
-                let value: u64 = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
-                io_write64_stub(bus_ptr, addr, value);
-                trace!(
-                    "Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                    bus_ptr, addr, value
-                );
-            }
-            "write128" => {
-                let high = uc.uc_mcontext.gregs[libc::REG_RCX as usize] as u64;
-                let low = uc.uc_mcontext.gregs[libc::REG_RDX as usize] as u64;
-                let value = ((high as u128) << 64) | (low as u128);
-
-                io_write128_stub(bus_ptr, addr, low, high);
-                trace!(
-                    "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                    bus_ptr, addr, value
-                );
-            }
-            "read8" => {
-                let value = io_read8_stub(bus_ptr, addr);
-                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                trace!(
-                    "Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                    bus_ptr, addr, value
-                );
-            }
-            "read16" => {
-                let value = io_read16_stub(bus_ptr, addr);
-                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                trace!(
-                    "Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                    bus_ptr, addr, value
-                );
-            }
-            "read32" => {
-                let value = io_read32_stub(bus_ptr, addr);
-                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                trace!(
-                    "Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                    bus_ptr, addr, value
-                );
-            }
-            "read64" => {
-                let value = io_read64_stub(bus_ptr, addr);
-                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = value as i64;
-                trace!(
-                    "Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                    bus_ptr, addr, value
-                );
-            }
-            "read128" => {
-                let mut low: u64 = 0;
-                let mut high: u64 = 0;
-                io_read128_stub(bus_ptr, addr, &mut low, &mut high);
-
-                uc.uc_mcontext.gregs[libc::REG_RAX as usize] = low as i64;
-                uc.uc_mcontext.gregs[libc::REG_RDX as usize] = high as i64;
-
-                trace!(
-                    "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> low=0x{:x}, high=0x{:x}",
-                    bus_ptr, addr, low, high
-                );
-            }
-            _ => {
-                panic!("Unknown access type: {}", access);
-            }
-        }
+        unsafe { execute_stub::<H>(ctx, &access, fault_addr) };
 
         if let Err(e) = H::advance_instruction_pointer(ctx, &cs, fault_rip) {
             error!("Failed to advance instruction pointer: {}", e);
@@ -633,45 +398,35 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn fix_return_address<H: ArchHandler>(ctx: *mut H::Context, patch_addr: u64, patch_len: usize) {
-    let old_sp = H::get_stack_pointer(ctx) as usize;
-    let target_ret = patch_addr;
-
-    trace!(
-        "old_sp = 0x{:016x}, original_ret = 0x{:016x}, target_ret = 0x{:016x}",
-        old_sp, patch_len, target_ret
-    );
-
-    const MAX_SLOTS: usize = 512;
-    let mut found = false;
-
-    for i in 0..MAX_SLOTS {
-        let slot_addr = old_sp + i * 8;
-        let candidate: usize = unsafe { *(slot_addr as *const usize) };
-
-        if candidate.eq(&patch_len) {
-            trace!(
-                "Found match at slot[{}] → overwriting with 0x{:016x}",
-                i, target_ret
-            );
-            unsafe {
-                *(slot_addr as *mut u64) = target_ret;
-            }
-            found = true;
-            trace!("Returning to patched block...");
-            break;
-        }
-    }
-
-    if !found {
-        panic!("No matching slot found in first {} QWORDs", MAX_SLOTS);
-    }
-}
-
 pub fn install_handler() -> io::Result<()> {
     if HANDLER_INSTALLED.swap(true, Ordering::SeqCst) {
         debug!("Handler already installed, skipping");
         return Ok(());
+    }
+    
+    let cs = Capstone::new()
+        .x86()
+        .mode(arch::x86::ArchMode::Mode64)
+        .detail(true)
+        .build()
+        .expect("Failed to create Capstone object");
+
+    let write_functions = [
+        (Bus::hw_write8 as *const c_void, 0),
+        (Bus::hw_write16 as *const c_void, 1),
+        (Bus::hw_write32 as *const c_void, 2),
+        (Bus::hw_write64 as *const c_void, 3),
+        (Bus::hw_write128 as *const c_void, 4),
+    ];
+
+    for (func_ptr, index) in write_functions.iter() {
+        if let Some(reg) = find_memory_access_register(&cs, *func_ptr, *index == 4) {
+            unsafe {
+                super::backpatch::REGISTER_MAP[*index] = Some(reg);
+            }
+        } else {
+            error!("Failed to find memory access register for function at {:p}", func_ptr);
+        }
     }
 
     let handler = SigHandler::SigAction(segv_handler as extern "C" fn(_, _, *mut c_void));

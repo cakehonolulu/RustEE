@@ -1,6 +1,7 @@
+use std::ffi::c_void;
 use std::sync::atomic::AtomicBool;
 
-use capstone::Capstone;
+use capstone::{arch::DetailsArchInsn, Capstone};
 use capstone::arch::BuildsCapstone;
 use tracing::{error, trace};
 
@@ -438,6 +439,171 @@ impl ArchHandler for CurrentArchHandler {
 const N_WRITES: usize = 5;
 pub(crate) static mut REGISTER_MAP: [Option<x86_64_impl::X86Register>; N_WRITES] = [None; N_WRITES];
 pub(crate) static mut REGISTER_PAIR: Option<(x86_64_impl::X86Register, x86_64_impl::X86Register)> = None;
+
+
+pub fn map_cs_reg(cs_reg: u16) -> Option<x86_64_impl::X86Register> {
+    use capstone::arch::x86::X86Reg as X;
+    match cs_reg {
+        x if x == X::X86_REG_RAX as u16 => Some(x86_64_impl::X86Register::Rax),
+        x if x == X::X86_REG_RCX as u16 || x == X::X86_REG_ECX as u16 || x == X::X86_REG_CX as u16 || x == X::X86_REG_CL as u16 => Some(x86_64_impl::X86Register::Rcx),
+        x if x == X::X86_REG_RDX as u16 || x == X::X86_REG_EDX as u16 => Some(x86_64_impl::X86Register::Rdx),
+        x if x == X::X86_REG_R8  as u16 || x == X::X86_REG_R8D as u16 => Some(x86_64_impl::X86Register::R8),
+        x if x == X::X86_REG_R9  as u16 || x == X::X86_REG_R9D as u16 => Some(x86_64_impl::X86Register::R9),
+        _ => None,
+    }
+}
+
+pub fn find_memory_access_register(
+    cs: &Capstone,
+    func_ptr: *const c_void,
+    is_128: bool,
+) -> Option<x86_64_impl::X86Register> {
+    let addr = func_ptr as u64;
+    let code_size = 150usize;
+    let code = unsafe { std::slice::from_raw_parts(addr as *const u8, code_size) };
+
+    let instructions = cs.disasm_all(code, addr).expect("Disassembly failed");
+
+    if is_128 {
+        let mut low_reg: Option<x86_64_impl::X86Register> = None;
+        let mut high_reg: Option<x86_64_impl::X86Register> = None;
+
+        for insn in instructions
+            .iter()
+            .rev()
+            .skip_while(|i| i.mnemonic().map_or(true, |m| m != "ret"))
+            .skip(1)
+        {
+            if let Ok(detail) = cs.insn_detail(&insn) {
+                if let capstone::arch::ArchDetail::X86Detail(x86) = detail.arch_detail() {
+                    let ops: Vec<_> = x86.operands().collect();
+
+                    if insn.mnemonic() == Some("mov") && ops.len() == 2 {
+                        trace!(
+                            "insn {:#x}: found mov (len={} bytes={:x?})",
+                            insn.address(),
+                            ops.len(),
+                            insn.bytes()
+                        );
+
+                        use capstone::arch::x86::X86OperandType;
+
+                        if let X86OperandType::Reg(src_cs) = ops[0].op_type {
+                            if let X86OperandType::Mem(mem) = ops[1].op_type {
+                                if mem.base().0 != 0 {
+                                    let src_name = cs.reg_name(src_cs).unwrap_or("??".to_string());
+                                    let base_name = cs.reg_name(mem.base()).unwrap_or("??".to_string());
+                                    trace!(
+                                        "mov detected: src={} -> mem[{} + {:#x}]",
+                                        src_name,
+                                        base_name,
+                                        mem.disp()
+                                    );
+
+                                    if let Some(src) = map_cs_reg(src_cs.0) {
+                                        if mem.disp() == 0 {
+                                            trace!("setting low_reg = {} ({:?})", src_name, src);
+                                            low_reg = Some(src);
+                                        } else if mem.disp() == 8 {
+                                            trace!("setting high_reg = {} ({:?})", src_name, src);
+                                            high_reg = Some(src);
+                                        }
+
+                                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
+                                            unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
+                                            trace!("found 128-bit pair early: low={:?}, high={:?}; REGISTER_PAIR set", l, h);
+                                            return Some(l);
+                                        }
+                                    } else {
+                                        panic!("unmapped src reg: {}", src_name);
+                                    }
+                                }
+                            }
+                        } else if let X86OperandType::Mem(mem) = ops[0].op_type {
+                            if let X86OperandType::Reg(src_cs) = ops[1].op_type {
+                                if mem.base().0 != 0 {
+                                    let src_name = cs.reg_name(src_cs).unwrap_or("??".to_string());
+                                    let base_name = cs.reg_name(mem.base()).unwrap_or("??".to_string());
+                                    trace!(
+                                        "mov detected (rev): src={} -> mem[{} + {:#x}]",
+                                        src_name,
+                                        base_name,
+                                        mem.disp()
+                                    );
+
+                                    if let Some(src) = map_cs_reg(src_cs.0) {
+                                        if mem.disp() == 0 {
+                                            trace!("setting low_reg = {} ({:?})", src_name, src);
+                                            low_reg = Some(src);
+                                        } else if mem.disp() == 8 {
+                                            trace!("setting high_reg = {} ({:?})", src_name, src);
+                                            high_reg = Some(src);
+                                        }
+
+                                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
+                                            unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
+                                            trace!("found 128-bit pair early: low={:?}, high={:?}; REGISTER_PAIR set", l, h);
+                                            return Some(l);
+                                        }
+                                    } else {
+                                        panic!("unmapped src reg (rev): {}", src_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        panic!(
+            "no 128-bit pair found (low={:?}, high={:?}) for function at {:#x}",
+            low_reg, high_reg, addr
+        );
+    }
+
+    for insn in instructions
+        .iter()
+        .rev()
+        .skip_while(|i| i.mnemonic().map_or(true, |m| m != "ret"))
+        .skip(1)
+    {
+        if let Ok(detail) = cs.insn_detail(&insn) {
+            if let capstone::arch::ArchDetail::X86Detail(x86) = detail.arch_detail() {
+                let ops: Vec<_> = x86.operands().collect();
+
+                if insn.mnemonic() == Some("mov") && ops.len() == 2 {
+                    trace!(
+                        "insn {:#x}: found mov (len={} bytes={:x?}) op_str='{}'",
+                        insn.address(),
+                        ops.len(),
+                        insn.bytes(),
+                        insn.op_str().unwrap_or("")
+                    );
+
+                    use capstone::arch::x86::X86OperandType;
+
+                    for op in ops.iter() {
+                        if let X86OperandType::Reg(regop) = op.op_type {
+                            if regop.0 != 0 {
+                                let reg_name = cs.reg_name(regop).unwrap_or("??".to_string());
+
+                                if let Some(mapped) = map_cs_reg(regop.0) {
+                                    trace!("mapped reg {} -> {:?}", reg_name, mapped);
+                                    return Some(mapped);
+                                } else {
+                                    panic!("encountered unmapped register: {}", reg_name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    panic!("no single-register mov found for function at {:#x}", addr);
+}
 
 pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
     ctx: *mut H::Context,
