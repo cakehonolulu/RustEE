@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 // Register offsets within a channel
 const CHCR_OFFSET: u32 = 0x00;
@@ -22,6 +22,20 @@ pub const SIF2_BASE: u32 = 0x1000_C800;
 pub const SPR_FROM_BASE: u32 = 0x1000_D000;
 pub const SPR_TO_BASE: u32 = 0x1000_D400;
 
+#[derive(Debug, Copy, Clone)]
+pub enum ChannelType {
+    Vif0,
+    Vif1,
+    Gif,
+    IpuFrom,
+    IpuTo,
+    Sif0,
+    Sif1,
+    Sif2,
+    SprFrom,
+    SprTo,
+}
+
 #[derive(Debug)]
 pub struct DmaChannel {
     chcr: u32,
@@ -31,10 +45,11 @@ pub struct DmaChannel {
     asr0: Option<u32>,
     asr1: Option<u32>,
     sadr: Option<u32>,
+    channel_type: ChannelType,
 }
 
 impl DmaChannel {
-    pub fn new(has_asr: bool, has_sadr: bool) -> Self {
+    pub fn new(channel_type: ChannelType, has_asr: bool, has_sadr: bool) -> Self {
         DmaChannel {
             chcr: 0,
             madr: 0,
@@ -43,6 +58,7 @@ impl DmaChannel {
             asr0: if has_asr { Some(0) } else { None },
             asr1: if has_asr { Some(0) } else { None },
             sadr: if has_sadr { Some(0) } else { None },
+            channel_type,
         }
     }
 
@@ -66,6 +82,7 @@ impl DmaChannel {
         match offset {
             CHCR_OFFSET => {
                 self.chcr = (value & 0xFFFF) | (self.chcr & 0xFFFF_0000);
+                self.dma_step();
             }
             MADR_OFFSET => {
                 self.madr = value & !0xF;
@@ -102,9 +119,78 @@ impl DmaChannel {
             }
         }
     }
+
+    pub fn dma_step(&mut self) {
+        if self.chcr & 0x100 != 0 {
+            match self.channel_type {
+                ChannelType::Vif0 => self.step_vif0(),
+                ChannelType::Vif1 => self.step_vif1(),
+                ChannelType::Gif => self.step_gif(),
+                ChannelType::IpuFrom => self.step_ipu_from(),
+                ChannelType::IpuTo => self.step_ipu_to(),
+                ChannelType::Sif0 => self.step_sif0(),
+                ChannelType::Sif1 => self.step_sif1(),
+                ChannelType::Sif2 => self.step_sif2(),
+                ChannelType::SprFrom => self.step_spr_from(),
+                ChannelType::SprTo => self.step_spr_to(),
+            }
+        }
+    }
+
+    fn step_vif0(&mut self) {
+        // TODO: Implement VIF0-specific DMA transfer logic (e.g., normal/chain/interleave modes,
+        // data transfer to VIF0 peripheral, update registers, handle interrupts, etc.)
+        // This would typically involve accessing memory/peripherals, which are not present here.
+        todo!("Implement VIF0 DMA step");
+    }
+
+    fn step_vif1(&mut self) {
+        // TODO: Implement VIF1-specific DMA transfer logic
+        todo!("Implement VIF1 DMA step");
+    }
+
+    fn step_gif(&mut self) {
+        // TODO: Implement GIF-specific DMA transfer logic
+        todo!("Implement GIF DMA step");
+    }
+
+    fn step_ipu_from(&mut self) {
+        // TODO: Implement IPU_FROM-specific DMA transfer logic
+        todo!("Implement IPU_FROM DMA step");
+    }
+
+    fn step_ipu_to(&mut self) {
+        // TODO: Implement IPU_TO-specific DMA transfer logic
+        todo!("Implement IPU_TO DMA step");
+    }
+
+    fn step_sif0(&mut self) {
+        // TODO: Implement SIF0-specific DMA transfer logic
+        debug!("Implement SIF0 DMA step");
+    }
+
+    fn step_sif1(&mut self) {
+        // TODO: Implement SIF1-specific DMA transfer logic
+        todo!("Implement SIF1 DMA step");
+    }
+
+    fn step_sif2(&mut self) {
+        // TODO: Implement SIF2-specific DMA transfer logic
+        todo!("Implement SIF2 DMA step");
+    }
+
+    fn step_spr_from(&mut self) {
+        // TODO: Implement SPR_FROM-specific DMA transfer logic
+        todo!("Implement SPR_FROM DMA step");
+    }
+
+    fn step_spr_to(&mut self) {
+        // TODO: Implement SPR_TO-specific DMA transfer logic
+        todo!("Implement SPR_TO DMA step");
+    }
 }
 
-pub struct EE_Dmac {
+pub struct EEDMAC {
     channels: HashMap<u32, DmaChannel>,
     d_ctrl: u32,
     d_stat: u32,
@@ -115,21 +201,21 @@ pub struct EE_Dmac {
     d_enablew: u32,
 }
 
-impl EE_Dmac {
+impl EEDMAC {
     pub fn new() -> Self {
         let mut channels = HashMap::new();
-        channels.insert(VIF0_BASE, DmaChannel::new(true, false));
-        channels.insert(VIF1_BASE, DmaChannel::new(true, false));
-        channels.insert(GIF_BASE, DmaChannel::new(true, false));
-        channels.insert(IPU_FROM_BASE, DmaChannel::new(false, false));
-        channels.insert(IPU_TO_BASE, DmaChannel::new(false, false));
-        channels.insert(SIF0_BASE, DmaChannel::new(false, false));
-        channels.insert(SIF1_BASE, DmaChannel::new(false, false));
-        channels.insert(SIF2_BASE, DmaChannel::new(false, false));
-        channels.insert(SPR_FROM_BASE, DmaChannel::new(false, true));
-        channels.insert(SPR_TO_BASE, DmaChannel::new(false, true));
+        channels.insert(VIF0_BASE, DmaChannel::new(ChannelType::Vif0, true, false));
+        channels.insert(VIF1_BASE, DmaChannel::new(ChannelType::Vif1, true, false));
+        channels.insert(GIF_BASE, DmaChannel::new(ChannelType::Gif, true, false));
+        channels.insert(IPU_FROM_BASE, DmaChannel::new(ChannelType::IpuFrom, false, false));
+        channels.insert(IPU_TO_BASE, DmaChannel::new(ChannelType::IpuTo, false, false));
+        channels.insert(SIF0_BASE, DmaChannel::new(ChannelType::Sif0, false, false));
+        channels.insert(SIF1_BASE, DmaChannel::new(ChannelType::Sif1, false, false));
+        channels.insert(SIF2_BASE, DmaChannel::new(ChannelType::Sif2, false, false));
+        channels.insert(SPR_FROM_BASE, DmaChannel::new(ChannelType::SprFrom, false, true));
+        channels.insert(SPR_TO_BASE, DmaChannel::new(ChannelType::SprTo, false, true));
 
-        EE_Dmac {
+        EEDMAC {
             channels,
             d_ctrl: 0,
             d_stat: 0,

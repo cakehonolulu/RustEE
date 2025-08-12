@@ -18,7 +18,7 @@ mod rdram;
 mod sw_fastmem;
 pub mod tlb;
 
-use crate::ee::dmac::EE_Dmac;
+use crate::ee::dmac::EEDMAC;
 use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
 use crate::ee::timer::Timers;
@@ -101,7 +101,7 @@ pub struct Bus {
     rdram: RDRAM,
     ee_intc: INTC,
     ee_timer: Timers,
-    ee_dmac: EE_Dmac,
+    ee_dmac: EEDMAC,
     sif: SIF,
     gif: GIF,
     gs: GS,
@@ -154,7 +154,7 @@ impl Bus {
             rdram: RDRAM::new(),
             ee_intc: INTC::new(),
             ee_timer: Timers::new(),
-            ee_dmac: EE_Dmac::new(),
+            ee_dmac: EEDMAC::new(),
             sif: SIF::new(),
             gif: GIF::new(),
             gs: GS::new(),
