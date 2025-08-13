@@ -82,7 +82,7 @@ impl Scheduler {
 
             if cycles_to_run > 0 {
                 drop(bus_guard);
-                backend.run_for_cycles(cycles_to_run as u32);
+                backend.run_for_cycles(cycles_to_run);
                 bus_guard = bus_arc.lock().unwrap();
                 let bus_mut = &mut **bus_guard;
 
