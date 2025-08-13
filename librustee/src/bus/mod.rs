@@ -23,7 +23,7 @@ use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
 use crate::ee::timer::Timers;
 use crate::gif::GIF;
-use crate::gs::GS;
+use crate::gs::{GsEvent, GS};
 use crate::ipu::IPU;
 use crate::sif::SIF;
 use crate::vif::{VIF, VIF0_BASE, VIF1_BASE};
@@ -36,6 +36,7 @@ use crate::bus::rdram::RDRAM;
 use unix::install_handler;
 #[cfg(windows)]
 use windows::install_handler;
+use crate::sched::Scheduler;
 
 #[cfg(unix)]
 pub mod unix;
@@ -134,6 +135,8 @@ pub struct Bus {
     pub write32: fn(&mut Self, u32, u32),
     pub write64: fn(&mut Self, u32, u64),
     pub write128: fn(&mut Self, u32, u128),
+
+    pub scheduler: Scheduler,
 }
 
 unsafe impl Send for Bus {}
@@ -184,6 +187,7 @@ impl Bus {
             ram_fd: None,
             #[cfg(windows)]
             ram_mapping: None,
+            scheduler: Scheduler::new(),
         });
 
         match mode {
@@ -340,7 +344,20 @@ impl Bus {
                     self.service_dma_channel(channel_type);
                 }
             }
-            0x12001000 => self.gs.write64(addr, value as u64),
+            0x12001000 => {
+                let event = self.gs.write64(addr, value as u64);
+
+                match event {
+                    GsEvent::GsCsrVblankOut { delay } => {
+                        self.scheduler.add_event(delay, move |bus: &mut Bus| {
+                            bus.gs.gs_csr |= 8;
+                        });
+                    }
+
+                    GsEvent::None => {
+                    }
+                }
+            },
             0x1F80141C => self.dev9_delay3 = value,
             _ => {
                 panic!(
@@ -354,10 +371,23 @@ impl Bus {
     pub fn io_write64(&mut self, mut addr: u32, value: u64) {
         addr &= 0x1FFFFFFF;
         match addr {
-            0x12000000 | 0x12000010 | 0x12000020 | 0x12000030 | 0x12000040 | 0x12000050
-            | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090 | 0x120000A0 | 0x120000B0
-            | 0x120000C0 | 0x120000D0 | 0x120000E0 | 0x12001010 => self.gs.write64(addr, value),
-            0x12001000 => self.gs.write64(addr, value),
+            0x12000000 | 0x12000010 | 0x12000020 | 0x12000030 | 0x12000040
+            | 0x12000050 | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090
+            | 0x120000A0 | 0x120000B0 | 0x120000C0 | 0x120000D0 | 0x120000E0
+            | 0x12001010 | 0x12001000 => {
+                let event = self.gs.write64(addr, value);
+
+                match event {
+                    GsEvent::GsCsrVblankOut { delay } => {
+                        self.scheduler.add_event(delay, move |bus: &mut Bus| {
+                            bus.gs.gs_csr |= 8;
+                        });
+                    }
+
+                    GsEvent::None => {
+                    }
+                }
+            },
             _ => {
                 panic!(
                     "Invalid IO write64: addr=0x{:08X}, value=0x{:08X}",

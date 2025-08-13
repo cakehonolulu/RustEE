@@ -11,8 +11,9 @@ use librustee::Bus;
 use librustee::cpu::CPU;
 use librustee::cpu::EmulationBackend;
 use librustee::ee::{EE, Interpreter, JIT};
+use librustee::sched::Scheduler;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -174,6 +175,7 @@ pub struct App {
     ram_view_len: usize,
     tlb_view_open: bool,
     emulation_thread: Option<std::thread::JoinHandle<()>>,
+    emu_backend: Option<Box<dyn EmulationBackend<EE> + Send>>,
     is_paused: Arc<AtomicBool>,
 }
 
@@ -181,7 +183,7 @@ impl App {
     pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String) -> Self {
         let is_paused = ee.lock().unwrap().is_paused.clone();
         let cloned_ee = ee.lock().unwrap().clone();
-        let mut emu_backend: Box<dyn EmulationBackend<EE> + Send> = match backend.as_str() {
+        let emu_backend: Box<dyn EmulationBackend<EE> + Send> = match backend.as_str() {
             "interpreter" => {
                 Box::new(Interpreter::new(cloned_ee))
             }
@@ -190,10 +192,6 @@ impl App {
             }
             _ => panic!("Unsupported backend: {}", backend),
         };
-
-        let emulation_thread = std::thread::spawn(move || {
-            emu_backend.run();
-        });
 
         App {
             instance: egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default()),
@@ -217,7 +215,8 @@ impl App {
             ram_view_addr: 0x0000_0000,
             ram_view_len: 256, // show 256 bytes by default
             tlb_view_open: false,
-            emulation_thread: Some(emulation_thread),
+            emulation_thread: None,
+            emu_backend: Some(emu_backend),
             is_paused,
         }
     }
@@ -522,6 +521,14 @@ impl App {
             egui::TopBottomPanel::bottom("EE Taskbar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
                     if ui.button(if self.is_paused.load(Ordering::SeqCst) { "Run" } else { "Pause" }).clicked() {
+                        if self.emulation_thread.is_none() {
+                            let mut backend = self.emu_backend.take().unwrap();
+                            let bus_arc = self.bus.clone();
+                            let thread = std::thread::spawn(move || {
+                                Scheduler::run_main_loop(&mut *backend, bus_arc);
+                            });
+                            self.emulation_thread = Some(thread);
+                        }
                         let paused = self.is_paused.load(Ordering::SeqCst);
                         self.is_paused.store(!paused, Ordering::SeqCst);
                         if paused {

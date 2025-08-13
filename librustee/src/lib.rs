@@ -22,5 +22,7 @@ pub mod vif;
 /* Main IPU Module */
 pub mod ipu;
 
+pub mod sched;
+
 pub use bus::Bus;
 pub use bus::bios::BIOS;

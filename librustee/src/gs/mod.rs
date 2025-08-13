@@ -1,4 +1,5 @@
 use tracing::{error, trace};
+use crate::Bus;
 
 /// Base address for privileged GS registers
 pub const GS_BASE: u32 = 0x1200_0000;
@@ -24,6 +25,13 @@ const GS_CSR_OFFSET: u32 = GS_BASE + 0x1000; // GS_CSR
 const GS_IMR_OFFSET: u32 = GS_BASE + 0x1010; // GS_IMR
 const BUSDIR_OFFSET: u32 = GS_BASE + 0x1040; // BUSDIR
 const SIGLBLID_OFFSET: u32 = GS_BASE + 0x1080; // SIGLBLID
+
+#[derive(Debug)]
+pub enum GsEvent {
+    None,
+
+    GsCsrVblankOut { delay: u64 },
+}
 
 /// Privileged GS register block
 #[derive(Debug)]
@@ -90,7 +98,8 @@ impl GS {
     }
 
     /// Write a 64-bit value to a GS register
-    pub fn write64(&mut self, offset: u32, value: u64) {
+    pub fn write64(&mut self, offset: u32, value: u64) -> GsEvent {
+        let mut event: GsEvent = GsEvent::None;
         match offset {
             PMODE_OFFSET => self.pmode = value,
             SMODE1_OFFSET => self.smode1 = value,
@@ -107,14 +116,21 @@ impl GS {
             EXTDATA_OFFSET => self.extdata = value,
             EXTWRITE_OFFSET => self.extwrite = value,
             BGCOLOR_OFFSET => self.bgcolor = value,
-            GS_CSR_OFFSET => self.gs_csr = value,
+            GS_CSR_OFFSET => {
+                self.gs_csr = value;
+                event = GsEvent::GsCsrVblankOut { delay: 64000 };
+
+            }
             GS_IMR_OFFSET => self.gs_imr = value,
             BUSDIR_OFFSET => self.busdir = value,
             SIGLBLID_OFFSET => self.siglblid = value,
             _ => {
-                trace!("Invalid GS write offset: {:#X}", offset);
+                panic!("Invalid GS write offset: {:#X}", offset);
             }
+
         }
+
+        event
     }
 
     /// Read a 64-bit value from a GS register
