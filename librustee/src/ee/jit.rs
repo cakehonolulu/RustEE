@@ -3854,18 +3854,20 @@ impl EmulationBackend<EE> for JIT {
         }
     }
 
-    fn run_for_cycles(&mut self, cycles: u32) {
+    fn run_for_cycles(&mut self, cycles: u64) -> u64 {
         let mut executed_cycles = 0;
 
         while executed_cycles < cycles {
             let (breakpoint_hit, block_cycles) = self.execute(false);
 
-            executed_cycles += block_cycles;
+            executed_cycles += block_cycles as u64;
 
             if breakpoint_hit {
                 break;
             }
         }
+
+        executed_cycles
     }
 
     fn get_cpu(&self) -> Arc<Mutex<EE>> {

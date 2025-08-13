@@ -7,18 +7,13 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::{Arc, Mutex};
 use tracing::trace;
 
-/// A callback is a function that takes a mutable reference to the Bus.
-/// It must be `Send` + 'static to be stored and sent across threads.
 pub type EventCallback = Box<dyn FnOnce(&mut Bus) + Send + 'static>;
 
-/// An event to be executed at a specific cycle count.
 pub struct Event {
-    /// The absolute cycle count when this event should be triggered.
     pub cycle: u64,
     callback: EventCallback,
 }
 
-// Custom implementation of Debug to avoid showing the function pointer.
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Event")
@@ -28,9 +23,6 @@ impl std::fmt::Debug for Event {
     }
 }
 
-// Implement comparison traits for Event to use it in a min-heap (via BinaryHeap).
-// We reverse the comparison to make BinaryHeap act as a min-heap, so the
-// event with the smallest `cycle` has the highest priority.
 impl Ord for Event {
     fn cmp(&self, other: &Self) -> Ordering {
         other.cycle.cmp(&self.cycle)

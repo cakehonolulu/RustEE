@@ -1807,7 +1807,7 @@ impl EmulationBackend<EE> for Interpreter {
         }
     }
 
-    fn run_for_cycles(&mut self, cycles: u32) {
+    fn run_for_cycles(&mut self, cycles: u64) -> u64 {
         let mut executed_cycles = 0;
 
         while executed_cycles < cycles {
@@ -1816,9 +1816,11 @@ impl EmulationBackend<EE> for Interpreter {
             self.decode_execute(opcode);
 
             let instruction_cycles = self.get_instruction_cycles(opcode);
-            executed_cycles += instruction_cycles;
+            executed_cycles += instruction_cycles as u64;
             self.cycles += instruction_cycles as usize;
         }
+
+        executed_cycles
     }
 
     fn get_cpu(&self) -> Arc<Mutex<EE>> {
