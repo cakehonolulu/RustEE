@@ -1,10 +1,9 @@
 use crate::bus::Bus;
 use crate::cpu::{CPU, EmulationBackend};
 use crate::ee::EE;
-use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 use tracing::trace;
 
 pub type EventCallback = Box<dyn FnOnce(&mut Bus) + Send + 'static>;
@@ -24,13 +23,13 @@ impl std::fmt::Debug for Event {
 }
 
 impl Ord for Event {
-    fn cmp(&self, other: &Self) -> Ordering {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other.cycle.cmp(&self.cycle)
     }
 }
 
 impl PartialOrd for Event {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -62,36 +61,34 @@ impl Scheduler {
 
     pub fn run_main_loop<B: EmulationBackend<EE> + ?Sized>(
         backend: &mut B,
+        scheduler_arc: Arc<Mutex<Scheduler>>,
         bus_arc: Arc<Mutex<Box<Bus>>>,
     ) {
         loop {
-            let ee_arc = backend.get_cpu();
-            if ee_arc
-                .lock()
-                .unwrap()
-                .is_paused
-                .load(AtomicOrdering::SeqCst)
-            {
-                std::thread::park();
-            }
-
-            let mut bus_guard = bus_arc.lock().unwrap();
-            let bus = &mut **bus_guard;
-
-            let cycles_to_run = bus.scheduler.cycles_for_next_timeslice();
+            let cycles_to_run = {
+                scheduler_arc.lock().unwrap().cycles_for_next_timeslice()
+            };
 
             if cycles_to_run > 0 {
-                drop(bus_guard);
                 backend.run_for_cycles(cycles_to_run);
-                bus_guard = bus_arc.lock().unwrap();
-                let bus_mut = &mut **bus_guard;
+            }
 
-                bus_mut.scheduler.advance_cycles(cycles_to_run);
+            let callbacks = {
+                let mut scheduler = scheduler_arc.lock().unwrap();
+                scheduler.advance_cycles(cycles_to_run);
+                scheduler.drain_due_events()
+            };
 
-                let callbacks = bus_mut.scheduler.drain_due_events();
+            if !callbacks.is_empty() {
+                let mut bus = bus_arc.lock().unwrap();
                 for callback in callbacks {
-                    callback(bus_mut);
+                    callback(&mut bus);
                 }
+            }
+
+            let ee_arc = backend.get_cpu();
+            if ee_arc.lock().unwrap().is_paused.load(Ordering::SeqCst) {
+                std::thread::park();
             }
         }
     }

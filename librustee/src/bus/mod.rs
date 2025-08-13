@@ -8,7 +8,7 @@ use std::os::fd::OwnedFd;
 #[cfg(windows)]
 use std::os::windows::raw::HANDLE;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::{cell::RefCell, ptr::null_mut};
 
 pub mod backpatch;
@@ -136,13 +136,13 @@ pub struct Bus {
     pub write64: fn(&mut Self, u32, u64),
     pub write128: fn(&mut Self, u32, u128),
 
-    pub scheduler: Scheduler,
+    pub scheduler: Arc<Mutex<Scheduler>>,
 }
 
 unsafe impl Send for Bus {}
 
 impl Bus {
-    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Box<Bus> {
+    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>, scheduler: Arc<Mutex<Scheduler>>) -> Box<Bus> {
         let mut bus = Box::new(Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
@@ -187,7 +187,7 @@ impl Bus {
             ram_fd: None,
             #[cfg(windows)]
             ram_mapping: None,
-            scheduler: Scheduler::new(),
+            scheduler,
         });
 
         match mode {
@@ -349,7 +349,8 @@ impl Bus {
 
                 match event {
                     GsEvent::GsCsrVblankOut { delay } => {
-                        self.scheduler.add_event(delay, move |bus: &mut Bus| {
+                        let mut sched = self.scheduler.lock().unwrap();
+                        sched.add_event(delay, move |bus: &mut Bus| {
                             bus.gs.gs_csr |= 8;
                         });
                     }
@@ -379,7 +380,8 @@ impl Bus {
 
                 match event {
                     GsEvent::GsCsrVblankOut { delay } => {
-                        self.scheduler.add_event(delay, move |bus: &mut Bus| {
+                        let mut sched = self.scheduler.lock().unwrap();
+                        sched.add_event(delay, move |bus: &mut Bus| {
                             bus.gs.gs_csr |= 8;
                         });
                     }

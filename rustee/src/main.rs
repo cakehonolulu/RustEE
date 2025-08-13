@@ -10,6 +10,7 @@ use std::path::Path;
 
 use tracing_subscriber::EnvFilter;
 use winit::event_loop::{ControlFlow, EventLoop};
+use librustee::sched::Scheduler;
 
 mod app;
 mod egui_tools;
@@ -87,11 +88,15 @@ fn main() {
         };
 
         let cop0_registers = Arc::new(RwLock::new([0u32; 32]));
+        let scheduler = Arc::new(Mutex::new(Scheduler::new()));
+
         let bus = Arc::new(Mutex::new(Bus::new(
             bus_mode,
             bios,
             Arc::clone(&cop0_registers),
+            Arc::clone(&scheduler),
         )));
+
         let ee = Arc::new(Mutex::new(EE::new(
             Arc::clone(&bus),
             Arc::clone(&cop0_registers),
@@ -116,19 +121,23 @@ fn main() {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            pollster::block_on(run(ee.clone(), bus.clone(), backend));
+            pollster::block_on(run(ee.clone(), bus.clone(), scheduler.clone(), backend));
         }
     } else {
         panic!("No BIOS path provided!");
     }
 }
 
-async fn run(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String) {
+async fn run(
+    ee: Arc<Mutex<EE>>,
+    bus: Arc<Mutex<Box<Bus>>>,
+    scheduler: Arc<Mutex<Scheduler>>,
+    backend: String
+) {
     let event_loop = EventLoop::new().unwrap();
-
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = app::App::new(ee, bus, backend);
+    let mut app = app::App::new(ee, bus, backend, scheduler);
 
     event_loop.run_app(&mut app).expect("Failed to run app");
 }

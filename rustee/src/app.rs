@@ -177,10 +177,11 @@ pub struct App {
     emulation_thread: Option<std::thread::JoinHandle<()>>,
     emu_backend: Option<Box<dyn EmulationBackend<EE> + Send>>,
     is_paused: Arc<AtomicBool>,
+    scheduler: Arc<Mutex<Scheduler>>
 }
 
 impl App {
-    pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String) -> Self {
+    pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String, scheduler: Arc<Mutex<Scheduler>>) -> Self {
         let is_paused = ee.lock().unwrap().is_paused.clone();
         let cloned_ee = ee.lock().unwrap().clone();
         let emu_backend: Box<dyn EmulationBackend<EE> + Send> = match backend.as_str() {
@@ -218,6 +219,7 @@ impl App {
             emulation_thread: None,
             emu_backend: Some(emu_backend),
             is_paused,
+            scheduler,
         }
     }
 
@@ -524,8 +526,10 @@ impl App {
                         if self.emulation_thread.is_none() {
                             let mut backend = self.emu_backend.take().unwrap();
                             let bus_arc = self.bus.clone();
+                            let scheduler_arc = self.scheduler.clone(); // Clone the scheduler Arc
                             let thread = std::thread::spawn(move || {
-                                Scheduler::run_main_loop(&mut *backend, bus_arc);
+                                // Call the new, cleaner main loop
+                                Scheduler::run_main_loop(&mut *backend, scheduler_arc, bus_arc);
                             });
                             self.emulation_thread = Some(thread);
                         }
