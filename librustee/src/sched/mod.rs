@@ -87,7 +87,7 @@ impl Scheduler {
             }
 
             let ee_arc = backend.get_cpu();
-            if ee_arc.lock().unwrap().is_paused.load(Ordering::SeqCst) {
+            if ee_arc.lock().unwrap().is_paused.load(Ordering::Relaxed) {
                 std::thread::park();
             }
         }

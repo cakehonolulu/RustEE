@@ -8,7 +8,7 @@ use crate::ee::vu::VU;
 use std::collections::HashSet;
 use std::ptr;
 use std::sync::{Arc, Mutex, RwLock};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod dmac;
 pub mod intc;
@@ -22,6 +22,7 @@ use crate::bus::map;
 use crate::bus::tlb::AccessType;
 use goblin::elf::Elf;
 use goblin::elf::program_header::PT_LOAD;
+use portable_atomic::{AtomicU128, AtomicU32};
 pub use interpreter::Interpreter;
 pub use jit::JIT;
 use tracing::{error, info};
@@ -34,13 +35,13 @@ unsafe impl<T> Send for UnsafeSend<T> {}
 
 pub struct EE {
     bus: Arc<Mutex<Box<Bus>>>,
-    pub pc: Arc<RwLock<u32>>,
-    pub registers: Arc<RwLock<[u128; 32]>>,
-    pub cop0_registers: Arc<RwLock<[u32; 32]>>,
-    pub lo: Arc<RwLock<u128>>,
-    pub hi: Arc<RwLock<u128>>,
+    pub pc: Arc<AtomicU32>,
+    pub registers: Arc<[AtomicU128; 32]>,
+    pub cop0_registers: Arc<[AtomicU32; 32]>,
+    pub lo: Arc<AtomicU128>,
+    pub hi: Arc<AtomicU128>,
     breakpoints: HashSet<u32>,
-    pub fpu_registers: Arc<RwLock<[u32; 32]>>,
+    pub fpu_registers: Arc<[AtomicU32; 32]>,
     vu0: VU,
     vu1: VU,
     pub sideload_elf: bool,
@@ -55,7 +56,7 @@ impl Clone for EE {
         EE {
             bus: Arc::clone(&self.bus),
             pc: self.pc.clone(),
-            registers: self.registers.clone(),
+            registers: Arc::clone(&self.registers),
             cop0_registers: Arc::clone(&self.cop0_registers),
             lo: self.lo.clone(),
             hi: self.hi.clone(),
@@ -73,18 +74,21 @@ impl Clone for EE {
 }
 
 impl EE {
-    pub fn new(bus: Arc<Mutex<Box<Bus>>>, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Self {
-        cop0_registers.write().unwrap()[15] = 0x59;
+    pub fn new(bus: Arc<Mutex<Box<Bus>>>, cop0_registers: Arc<[AtomicU32; 32]>) -> Self {
+        cop0_registers[15].store(0x59, Ordering::Relaxed);
+
+        let registers = Arc::new(std::array::from_fn(|_| AtomicU128::new(0u128)));
+        let fpu_registers = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
 
         let mut ee = EE {
-            pc: Arc::new(RwLock::new(EE_RESET_VEC)),
-            registers: Arc::new(RwLock::new([0u128; 32])),
+            pc: Arc::new(AtomicU32::new(EE_RESET_VEC)),
+            registers,
             cop0_registers,
-            lo: Arc::new(RwLock::new(0u128)),
-            hi: Arc::new(RwLock::new(0u128)),
+            lo: Arc::new(AtomicU128::new(0u128)),
+            hi: Arc::new(AtomicU128::new(0u128)),
             bus,
             breakpoints: HashSet::new(),
-            fpu_registers: Arc::new(RwLock::new([0u32; 32])),
+            fpu_registers,
             vu0: VU::new(4 * 1024, 4 * 1024),
             vu1: VU::new(16 * 1024, 16 * 1024),
             sideload_elf: false,
@@ -103,19 +107,19 @@ impl EE {
     }
 
     pub fn read_fpu_register_as_u32(&self, index: usize) -> u32 {
-        self.fpu_registers.read().unwrap()[index]
+        self.fpu_registers[index].load(Ordering::Relaxed)
     }
 
     pub fn read_fpu_register_as_f32(&self, index: usize) -> f32 {
-        f32::from_bits(self.fpu_registers.read().unwrap()[index])
+        f32::from_bits(self.fpu_registers[index].load(Ordering::Relaxed))
     }
 
     pub fn write_fpu_register_from_u32(&mut self, index: usize, value: u32) {
-        self.fpu_registers.write().unwrap()[index] = value;
+        self.fpu_registers[index].store(value, Ordering::Relaxed)
     }
 
     pub fn write_fpu_register_from_f32(&mut self, index: usize, value: f32) {
-        self.fpu_registers.write().unwrap()[index] = value.to_bits();
+        self.fpu_registers[index].store(value.to_bits(), Ordering::Relaxed)
     }
 
     pub fn load_elf(&mut self, elf_data: &[u8]) {
@@ -206,76 +210,76 @@ impl CPU for EE {
     type RegisterType = u128;
 
     fn pc(&self) -> u32 {
-        *self.pc.read().unwrap()
+        self.pc.load(Ordering::Relaxed)
     }
 
     fn set_pc(&mut self, value: u32) {
-        *self.pc.write().unwrap() = value;
+        self.pc.store(value, Ordering::Relaxed);
     }
 
     fn read_register(&self, index: usize) -> Self::RegisterType {
-        self.registers.read().unwrap()[index]
+        self.registers[index].load(Ordering::Relaxed)
     }
 
     fn read_hi(&self) -> Self::RegisterType {
-        *self.hi.read().unwrap()
+        self.hi.load(Ordering::Relaxed)
     }
 
     fn read_lo(&self) -> Self::RegisterType {
-        *self.lo.read().unwrap()
+        self.lo.load(Ordering::Relaxed)
     }
 
     fn read_register8(&self, index: usize) -> u8 {
-        self.registers.read().unwrap()[index] as u8
+        self.registers[index].load(Ordering::Relaxed) as u8
     }
 
     fn read_register32(&self, index: usize) -> u32 {
-        self.registers.read().unwrap()[index] as u32
+        self.registers[index].load(Ordering::Relaxed) as u32
     }
 
     fn read_register64(&self, index: usize) -> u64 {
-        self.registers.read().unwrap()[index] as u64
+        self.registers[index].load(Ordering::Relaxed) as u64
     }
 
     fn write_hi0(&mut self, low: u64) {
-        let mut guard = self.hi.write().unwrap();
+        let mut hi = self.hi.load(Ordering::SeqCst);
         let high_mask = !((1u128 << 64) - 1);
-        *guard = (*guard & high_mask) | (low as u128);
+        self.hi.store((hi & high_mask) | (low as u128), Ordering::Relaxed);
     }
 
     fn write_hi(&mut self, value: Self::RegisterType) {
-        *self.hi.write().unwrap() = value;
+        self.hi.store(value, Ordering::Relaxed);
     }
 
     fn write_lo0(&mut self, low: u64) {
-        let mut guard = self.lo.write().unwrap();
+        let mut lo = self.lo.load(Ordering::SeqCst);
         let high_mask = !((1u128 << 64) - 1);
-        *guard = (*guard & high_mask) | (low as u128);
+        self.lo.store((lo & high_mask) | (low as u128), Ordering::Relaxed);
     }
 
     fn write_lo(&mut self, value: Self::RegisterType) {
-        *self.lo.write().unwrap() = value;
+        self.lo.store(value, Ordering::Relaxed);
     }
 
     fn write_register(&mut self, index: usize, value: Self::RegisterType) {
-        self.registers.write().unwrap()[index] = value;
+        self.registers[index].store(value, Ordering::Relaxed);
     }
 
     fn write_register32(&mut self, index: usize, value: u32) {
-        let upper_bits = self.registers.read().unwrap()[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
-        self.registers.write().unwrap()[index] = upper_bits | (value as u128);
+        let upper_bits = self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
     }
 
     fn write_register64(&mut self, index: usize, value: u64) {
-        let upper_bits = self.registers.read().unwrap()[index] & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
-        self.registers.write().unwrap()[index] = upper_bits | (value as u128);
+        let upper_bits = self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
     }
 
     fn read_cop0_register(&self, index: usize) -> u32 {
-        self.cop0_registers.read().unwrap()[index]
+        self.cop0_registers[index].load(Ordering::Relaxed)
     }
     fn write_cop0_register(&mut self, index: usize, value: u32) {
-        self.cop0_registers.write().unwrap()[index] = value;
+        self.cop0_registers[index].store(value, Ordering::Relaxed);
     }
 
     fn write8(&mut self, addr: u32, value: u8) {
@@ -345,7 +349,7 @@ impl CPU for EE {
 
     #[inline(always)]
     fn fetch(&mut self) -> u32 {
-        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, *self.pc.read().unwrap()) }
+        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, self.pc.load(Ordering::SeqCst)) }
     }
 
     #[inline(always)]

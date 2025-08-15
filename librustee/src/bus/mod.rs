@@ -7,9 +7,10 @@ use tracing::{debug, info, trace};
 use std::os::fd::OwnedFd;
 #[cfg(windows)]
 use std::os::windows::raw::HANDLE;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{cell::RefCell, ptr::null_mut};
+use portable_atomic::AtomicU32;
 
 pub mod backpatch;
 mod hw_fastmem;
@@ -120,7 +121,7 @@ pub struct Bus {
     hw_size: usize,
     arena: Option<region::Allocation>,
 
-    pub cop0_registers: Arc<RwLock<[u32; 32]>>,
+    pub cop0_registers: Arc<[AtomicU32; 32]>,
 
     dev9_delay3: u32,
 
@@ -142,7 +143,7 @@ pub struct Bus {
 unsafe impl Send for Bus {}
 
 impl Bus {
-    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<RwLock<[u32; 32]>>, scheduler: Arc<Mutex<Scheduler>>) -> Box<Bus> {
+    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<[AtomicU32; 32]>, scheduler: Arc<Mutex<Scheduler>>) -> Box<Bus> {
         let mut bus = Box::new(Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
@@ -241,11 +242,11 @@ impl Bus {
     }
 
     pub fn read_cop0_register(&self, index: usize) -> u32 {
-        self.cop0_registers.read().unwrap()[index]
+        self.cop0_registers[index].load(Ordering::Relaxed)
     }
 
     pub fn write_cop0_register(&mut self, index: usize, value: u32) {
-        self.cop0_registers.write().unwrap()[index] = value;
+        self.cop0_registers[index].store(value, Ordering::Relaxed);
     }
 
     pub fn read_cop0_asid(&self) -> u8 {

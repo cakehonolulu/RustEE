@@ -307,7 +307,8 @@ impl App {
 
             egui::Window::new("EE CPU State").show(state.egui_renderer.context(), |ui| {
                 if let Ok(ee) = self.ee.lock() {
-                    for (i, &value) in ee.registers.read().unwrap().iter().enumerate() {
+                    for (i, reg) in ee.registers.iter().enumerate() {
+                        let value = reg.load(Ordering::SeqCst);
                         if let Some(prev_value) = self.prev_ee_registers.get(&i) {
                             if *prev_value != value {
                                 self.change_ee_timers.insert(i, 1.0);
@@ -321,8 +322,8 @@ impl App {
                     }
                     self.change_ee_timers.retain(|_, &mut timer| timer > 0.0);
 
-                    let cop0 = ee.cop0_registers.read().unwrap();
-                    for (i, &value) in cop0.iter().enumerate() {
+                    for (i, reg) in ee.cop0_registers.iter().enumerate() {
+                        let value = reg.load(Ordering::SeqCst);
                         if let Some(prev_value) = self.prev_cop0_registers.get(&i) {
                             if *prev_value != value {
                                 self.cop0_change_ee_timers.insert(i, 1.0);
@@ -362,7 +363,8 @@ impl App {
                                             });
                                         })
                                         .body(|mut body| {
-                                            for (i, &value) in ee.registers.read().unwrap().iter().enumerate() {
+                                            for (i, reg) in ee.registers.iter().enumerate() {
+                                                let value = reg.load(Ordering::SeqCst);
                                                 let name = [
                                                     "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3",
                                                     "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
@@ -416,7 +418,7 @@ impl App {
                                                 row.col(|ui| {
                                                     ui.colored_label(
                                                         egui::Color32::WHITE,
-                                                        format!("{:#034X}", *ee.hi.read().unwrap()),
+                                                        format!("{:#034X}", ee.hi.load(Ordering::Relaxed)),
                                                     );
                                                 });
                                             });
@@ -427,7 +429,7 @@ impl App {
                                                 row.col(|ui| {
                                                     ui.colored_label(
                                                         egui::Color32::WHITE,
-                                                        format!("{:#034X}", *ee.lo.read().unwrap()),
+                                                        format!("{:#034X}", ee.lo.load(Ordering::Relaxed)),
                                                     );
                                                 });
                                             });
@@ -438,7 +440,7 @@ impl App {
                                                 row.col(|ui| {
                                                     ui.colored_label(
                                                         egui::Color32::WHITE,
-                                                        format!("{:#010X}", *ee.pc.read().unwrap()),
+                                                        format!("{:#010X}", ee.pc.load(Ordering::Relaxed)),
                                                     );
                                                 });
                                             });
@@ -463,8 +465,8 @@ impl App {
                                             });
                                         })
                                         .body(|mut body| {
-                                            let cop0 = ee.cop0_registers.read().unwrap();
-                                            for (i, &value) in cop0.iter().enumerate() {
+                                            for (i, reg) in ee.cop0_registers.iter().enumerate() {
+                                                let value = reg.load(Ordering::SeqCst);
                                                 let name = [
                                                     "Index", "Random", "EntryLo0", "EntryLo1",
                                                     "Context", "PageMask", "Wired", "", "BadVAddr",
@@ -767,10 +769,10 @@ impl App {
             if self.disassembly_open {
                 if let Ok(mut ee) = self.ee.lock() {
                     if self.follow_pc {
-                        self.disassembly_start_addr = *ee.pc.read().unwrap();
+                        self.disassembly_start_addr = ee.pc.load(Ordering::SeqCst);
                     }
 
-                    let pc = *ee.pc.write().unwrap();
+                    let pc = ee.pc.load(Ordering::SeqCst);
                     let num_instructions = 16;
                     let mut bytes = Vec::new();
                     for offset in 0..num_instructions {
@@ -794,7 +796,7 @@ impl App {
                             egui::ScrollArea::both()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    let current_pc = *ee.pc.read().unwrap() as u64;
+                                    let current_pc = ee.pc.load(Ordering::SeqCst) as u64;
                                     let style = ui.style();
                                     let mono_font: FontId =
                                         style.text_styles[&TextStyle::Monospace].clone();

@@ -1737,10 +1737,10 @@ impl Interpreter {
         let status = self.cpu.read_cop0_register(12); // Status register
         let erl = (status >> 2) & 0x1; // Bit 2
         if erl == 1 {
-            *self.cpu.pc.write().unwrap() = self.cpu.read_cop0_register(30); // ErrorEPC
+            self.cpu.pc.store(self.cpu.read_cop0_register(30), Ordering::Relaxed); // ErrorEPC
             self.cpu.write_cop0_register(12, status & !(1 << 2)); // Clear ERL
         } else {
-            *self.cpu.pc.write().unwrap() = self.cpu.read_cop0_register(14); // EPC
+            self.cpu.pc.store(self.cpu.read_cop0_register(14), Ordering::Relaxed); // EPC
             self.cpu.write_cop0_register(12, status & !(1 << 1)); // Clear EXL
         }
 
@@ -1751,7 +1751,7 @@ impl Interpreter {
             self.cpu.load_elf(&elf_bytes);
 
             self.cpu.sideload_elf = false;
-            *self.cpu.pc.write().unwrap() = self.cpu.elf_entry_point;
+            self.cpu.pc.store(self.cpu.elf_entry_point, Ordering::Relaxed);
         }
     }
 
@@ -1776,9 +1776,9 @@ impl Interpreter {
 
 impl EmulationBackend<EE> for Interpreter {
     fn step(&mut self) {
-        if self.cpu.has_breakpoint(*self.cpu.pc.read().unwrap()) {
-            debug!("Breakpoint hit at 0x{:08X}", *self.cpu.pc.read().unwrap());
-            let pc_value = *self.cpu.pc.read().unwrap();
+        if self.cpu.has_breakpoint(self.cpu.pc.load(Ordering::Relaxed)) {
+            debug!("Breakpoint hit at 0x{:08X}", self.cpu.pc.load(Ordering::Relaxed));
+            let pc_value = self.cpu.pc.load(Ordering::Relaxed);
             self.cpu.remove_breakpoint(pc_value);
             return;
         }
@@ -1792,15 +1792,15 @@ impl EmulationBackend<EE> for Interpreter {
 
     fn run(&mut self) {
         loop {
-            if self.cpu.is_paused.load(Ordering::SeqCst) {
+            if self.cpu.is_paused.load(Ordering::Relaxed) {
                 std::thread::park();
             }
 
             self.step();
 
-            if self.cpu.has_breakpoint(*self.cpu.pc.read().unwrap()) {
-                debug!("Breakpoint hit at 0x{:08X}", *self.cpu.pc.read().unwrap());
-                let pc_value = *self.cpu.pc.read().unwrap();
+            if self.cpu.has_breakpoint(self.cpu.pc.load(Ordering::Relaxed)) {
+                debug!("Breakpoint hit at 0x{:08X}", self.cpu.pc.load(Ordering::Relaxed));
+                let pc_value = self.cpu.pc.load(Ordering::Relaxed);
                 self.cpu.remove_breakpoint(pc_value);
                 break;
             }
