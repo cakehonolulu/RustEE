@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use capstone::{arch::DetailsArchInsn, Capstone};
 use capstone::arch::BuildsCapstone;
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 use super::Bus;
 
@@ -12,6 +12,27 @@ pub struct Context {
 }
 
 pub static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AccessWidth {
+    B8,
+    B16,
+    B32,
+    B64,
+    B128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AccessKind {
+    Read,
+    Write,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AccessInfo {
+    pub kind: AccessKind,
+    pub width: AccessWidth,
+}
 
 #[cfg(any(unix, windows))]
 pub struct CurrentArchHandler;
@@ -453,6 +474,27 @@ pub fn map_cs_reg(cs_reg: u16) -> Option<x86_64_impl::X86Register> {
     }
 }
 
+pub fn find_function_end(cs: &Capstone, func_ptr: *const c_void, size: usize) -> *const c_void {
+    let addr = func_ptr as u64;
+    let code = unsafe { std::slice::from_raw_parts(addr as *const u8, size) };
+
+    let insns = match cs.disasm_all(code, addr) {
+        Ok(list) => list,
+        Err(_) => return ((addr as usize) + size) as *const c_void,
+    };
+
+    for insn in insns.iter() {
+        if let Some(mn) = insn.mnemonic() {
+            if mn == "ret" {
+                let end_addr = insn.address().wrapping_add(insn.bytes().len() as u64);
+                return (end_addr as usize) as *const c_void;
+            }
+        }
+    }
+
+    panic!("No `ret` found in the scanned window!");
+}
+
 pub fn find_memory_access_register(
     cs: &Capstone,
     func_ptr: *const c_void,
@@ -607,101 +649,62 @@ pub fn find_memory_access_register(
 
 pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
     ctx: *mut H::Context,
-    access: &str,
+    access: AccessInfo,
     fault_addr: u32,
 ) {
     let bus_ptr = super::BUS_PTR as *mut Bus;
     let addr = fault_addr;
 
-    match access {
-        "write8" => {
-            let reg_id = REGISTER_MAP[0].expect("no register cached");
+    use AccessKind::*;
+    use AccessWidth::*;
+
+    match (access.kind, access.width) {
+        (Write, B8) => {
+            let reg_id = REGISTER_MAP[0].expect("no register cached for write8");
             let value = H::get_register_value(ctx, reg_id) as u8;
             io_write8_stub(bus_ptr, addr, value);
-            trace!(
-                "Executed io_write8_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                bus_ptr, addr, value
-            );
         }
-        "write16" => {
-            let reg_id = REGISTER_MAP[1].expect("no register cached");
+        (Write, B16) => {
+            let reg_id = REGISTER_MAP[1].expect("no register cached for write16");
             let value = H::get_register_value(ctx, reg_id) as u16;
             io_write16_stub(bus_ptr, addr, value);
-            trace!(
-                "Executed io_write16_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                bus_ptr, addr, value
-            );
         }
-        "write32" => {
-            let reg_id = REGISTER_MAP[2].expect("no register cached");
+        (Write, B32) => {
+            let reg_id = REGISTER_MAP[2].expect("no register cached for write32");
             let value = H::get_register_value(ctx, reg_id) as u32;
             io_write32_stub(bus_ptr, addr, value);
-            trace!(
-                "Executed io_write32_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                bus_ptr, addr, value
-            );
         }
-        "write64" => {
-            let reg_id = REGISTER_MAP[3].expect("no register cached");
+        (Write, B64) => {
+            let reg_id = REGISTER_MAP[3].expect("no register cached for write64");
             let value = H::get_register_value(ctx, reg_id);
             io_write64_stub(bus_ptr, addr, value);
-            trace!(
-                "Executed io_write64_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                bus_ptr, addr, value
-            );
         }
-        "write128" => {
+        (Write, B128) => {
             let (low_reg, high_reg) = REGISTER_PAIR.expect("no register pair cached");
             let low_u64 = H::get_register_value(ctx, low_reg);
             let high_u64 = H::get_register_value(ctx, high_reg);
-            let value = ((high_u64 as u128) << 64) | (low_u64 as u128);
             io_write128_stub(bus_ptr, addr, low_u64, high_u64);
-            trace!(
-                "Executed io_write128_stub(bus_ptr={:p}, addr=0x{:x}, value=0x{:x})",
-                bus_ptr, addr, value
-            );
         }
-        "read8" => {
+        (Read, B8) => {
             let value = io_read8_stub(bus_ptr, addr);
             H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-            trace!(
-                "Executed io_read8_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                bus_ptr, addr, value
-            );
         }
-        "read16" => {
+        (Read, B16) => {
             let value = io_read16_stub(bus_ptr, addr);
             H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-            trace!(
-                "Executed io_read16_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                bus_ptr, addr, value
-            );
         }
-        "read32" => {
+        (Read, B32) => {
             let value = io_read32_stub(bus_ptr, addr);
             H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-            trace!(
-                "Executed io_read32_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                bus_ptr, addr, value
-            );
         }
-        "read64" => {
+        (Read, B64) => {
             let value = io_read64_stub(bus_ptr, addr);
             H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value);
-            trace!(
-                "Executed io_read64_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                bus_ptr, addr, value
-            );
         }
-        "read128" => {
+        (Read, B128) => {
             let value = io_read128_stub(bus_ptr, addr);
             H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
             H::set_register_value(ctx, x86_64_impl::X86Register::Rdx, (value >> 64) as u64);
-            trace!(
-                "Executed io_read128_stub(bus_ptr={:p}, addr=0x{:x}) -> 0x{:x}",
-                bus_ptr, addr, value
-            );
         }
-        _ => error!("Unknown access type: {}", access),
     }
 }

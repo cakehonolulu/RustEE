@@ -6,6 +6,7 @@ use crate::Bus;
 use crate::cpu::CPU;
 use crate::ee::vu::VU;
 use std::collections::HashSet;
+use std::ptr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::AtomicBool;
 
@@ -27,6 +28,10 @@ use tracing::{error, info};
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
+#[derive(Copy, Clone)]
+struct UnsafeSend<T>(T);
+unsafe impl<T> Send for UnsafeSend<T> {}
+
 pub struct EE {
     bus: Arc<Mutex<Box<Bus>>>,
     pub pc: Arc<RwLock<u32>>,
@@ -42,6 +47,7 @@ pub struct EE {
     elf_entry_point: u32,
     pub elf_path: String,
     pub is_paused: Arc<AtomicBool>,
+    bus_ptr: UnsafeSend<*mut Bus>,
 }
 
 impl Clone for EE {
@@ -61,6 +67,7 @@ impl Clone for EE {
             elf_entry_point: self.elf_entry_point,
             elf_path: self.elf_path.clone(),
             is_paused: self.is_paused.clone(),
+            bus_ptr: self.bus_ptr,
         }
     }
 }
@@ -69,7 +76,7 @@ impl EE {
     pub fn new(bus: Arc<Mutex<Box<Bus>>>, cop0_registers: Arc<RwLock<[u32; 32]>>) -> Self {
         cop0_registers.write().unwrap()[15] = 0x59;
 
-        let ee = EE {
+        let mut ee = EE {
             pc: Arc::new(RwLock::new(EE_RESET_VEC)),
             registers: Arc::new(RwLock::new([0u128; 32])),
             cop0_registers,
@@ -84,7 +91,13 @@ impl EE {
             elf_entry_point: 0,
             elf_path: "".to_string(),
             is_paused: Arc::new(AtomicBool::new(true)),
+            bus_ptr: UnsafeSend(ptr::null_mut()),
         };
+
+        {
+            let bus_ptr = &mut **ee.bus.lock().unwrap() as *mut Bus;
+            ee.bus_ptr = UnsafeSend(bus_ptr);
+        }
 
         ee
     }
@@ -332,14 +345,12 @@ impl CPU for EE {
 
     #[inline(always)]
     fn fetch(&mut self) -> u32 {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.read32)(&mut *bus, *self.pc.read().unwrap())
+        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, *self.pc.read().unwrap()) }
     }
 
     #[inline(always)]
     fn fetch_at(&mut self, address: u32) -> u32 {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.read32)(&mut *bus, address)
+        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, address) }
     }
 
     fn add_breakpoint(&mut self, addr: u32) {
@@ -354,6 +365,8 @@ impl CPU for EE {
         self.breakpoints.contains(&addr)
     }
 }
+
+unsafe impl Send for EE {}
 
 #[cfg(test)]
 mod test;
