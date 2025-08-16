@@ -161,6 +161,9 @@ impl Interpreter {
                     0x21 => {
                         self.addu(opcode);
                     }
+                    0x22 => {
+                        self.sub(opcode);
+                    }
                     0x23 => {
                         self.subu(opcode);
                     }
@@ -1771,6 +1774,38 @@ impl Interpreter {
 
         let exception_vector = 0x80000180;
         self.cpu.set_pc(exception_vector);
+    }
+
+    fn sub(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register32(rs) as i32;
+        let rt_val = self.cpu.read_register32(rt) as i32;
+
+        match rs_val.checked_sub(rt_val) {
+            Some(result) => {
+                let result_extended = result as i64 as u64;
+                self.cpu.write_register64(rd, result_extended);
+                self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+            }
+            None => {
+                let status = self.cpu.read_cop0_register(12);
+                let current_pc = self.cpu.pc();
+
+                self.cpu.write_cop0_register(14, current_pc);
+
+                let new_status = status | (1 << 1);
+                self.cpu.write_cop0_register(12, new_status);
+
+                let cause = self.cpu.read_cop0_register(13);
+                let new_cause = (cause & !0x7C) | (12 << 2);
+                self.cpu.write_cop0_register(13, new_cause);
+
+                self.cpu.set_pc(0x80000180);
+            }
+        }
     }
 }
 

@@ -54,6 +54,7 @@ pub struct JIT {
     read_cop0_func: FuncId,
     write_cop0_func: FuncId,
     load_elf_func: FuncId,
+    integer_overflow_exception_func: FuncId,
 }
 
 pub enum BranchTarget {
@@ -215,6 +216,21 @@ pub extern "C" fn __load_elf(cpu_ptr: *mut EE) {
     }
 }
 
+pub extern "C" fn __integer_overflow_exception(cpu_ptr: *mut EE) {
+    unsafe {
+        let cpu = &mut *cpu_ptr;
+        let status = cpu.read_cop0_register(12);
+        let current_pc = cpu.pc();
+        cpu.write_cop0_register(14, current_pc);
+        let new_status = status | (1 << 1);
+        cpu.write_cop0_register(12, new_status);
+        let cause = cpu.read_cop0_register(13);
+        let new_cause = (cause & !0x7C) | (12 << 2);
+        cpu.write_cop0_register(13, new_cause);
+        cpu.set_pc(0x80000180);
+    }
+}
+
 impl JIT {
     pub fn new(mut cpu: EE) -> Self {
         let mut shared_builder = settings::builder();
@@ -257,6 +273,8 @@ impl JIT {
         builder.symbol("__write_cop0", __write_cop0 as *const u8);
 
         builder.symbol("__load_elf", __load_elf as *const u8);
+
+        builder.symbol("__integer_overflow_exception", __integer_overflow_exception as *const u8);
 
         let mut module = JITModule::new(builder);
 
@@ -378,6 +396,12 @@ impl JIT {
             .declare_function("__load_elf", Linkage::Import, &load_elf_sig)
             .expect("Failed to declare __load_elf");
 
+        let mut overflow_sig = module.make_signature();
+        overflow_sig.params.push(AbiParam::new(types::I64)); // cpu_ptr
+        let integer_overflow_exception_func = module
+            .declare_function("__integer_overflow_exception", Linkage::Import, &overflow_sig)
+            .expect("Failed to declare __integer_overflow_exception");
+
         JIT {
             cpu,
             module: UnsafeSend(module),
@@ -400,6 +424,7 @@ impl JIT {
             read_cop0_func,
             write_cop0_func,
             load_elf_func,
+            integer_overflow_exception_func,
         }
     }
 
@@ -680,6 +705,7 @@ impl JIT {
                     0x1A => self.div(builder, opcode, current_pc),
                     0x1B => self.divu(builder, opcode, current_pc),
                     0x21 => self.addu(builder, opcode, current_pc),
+                    0x22 => self.sub(builder, opcode, current_pc),
                     0x23 => self.subu(builder, opcode, current_pc),
                     0x24 => self.and(builder, opcode, current_pc),
                     0x25 => self.or(builder, opcode, current_pc),
@@ -3828,6 +3854,56 @@ impl JIT {
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn sub(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rs, 16);
+        let rs_val64 = Self::load64(builder, rs_addr);
+        let rs_val32 = builder.ins().ireduce(types::I32, rs_val64);
+
+        let rt_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rt, 16);
+        let rt_val64 = Self::load64(builder, rt_addr);
+        let rt_val32 = builder.ins().ireduce(types::I32, rt_val64);
+
+        let (result32, overflow_flag) = builder.ins().ssub_overflow(rs_val32, rt_val32);
+
+        let overflow_block = builder.create_block();
+        let no_overflow_block = builder.create_block();
+        let merge_block = builder.create_block();
+
+        builder.ins().brif(overflow_flag, overflow_block, &[], no_overflow_block, &[]);
+
+        builder.switch_to_block(no_overflow_block);
+        let rd_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rd, 16);
+        let result64 = builder.ins().sextend(types::I64, result32);
+        builder.ins().store(MemFlags::new(), result64, rd_addr, 0);
+
+        Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
+        *current_pc = current_pc.wrapping_add(4);
+        builder.ins().jump(merge_block, &[]);
+
+        builder.switch_to_block(overflow_block);
+        let cpu_ptr = &mut self.cpu as *mut EE as i64;
+        let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
+        let callee = self.module.0.declare_func_in_func(self.integer_overflow_exception_func, builder.func);
+        builder.ins().call(callee, &[cpu_arg]);
+        builder.ins().return_(&[]);
+
+        builder.switch_to_block(merge_block);
+        builder.seal_block(overflow_block);
+        builder.seal_block(no_overflow_block);
+        builder.seal_block(merge_block);
 
         None
     }
