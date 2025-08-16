@@ -142,6 +142,25 @@ pub struct Bus {
 
 unsafe impl Send for Bus {}
 
+
+#[derive(Debug)]
+struct DmaTag {
+    qwc: u16,
+    tag_id: u8,
+    irq: bool,
+    addr: u32,
+}
+
+fn parse_dmatag(tag: u128) -> DmaTag {
+    let low = tag as u64;
+    DmaTag {
+        qwc: (low & 0xFFFF) as u16,
+        tag_id: ((low >> 28) & 0x7) as u8,
+        irq: ((low >> 31) & 0x1) != 0,
+        addr: ((low >> 32) & 0x7FFFFFFF) as u32,
+    }
+}
+
 impl Bus {
     pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<[AtomicU32; 32]>, scheduler: Arc<Mutex<Scheduler>>) -> Box<Bus> {
         let mut bus = Box::new(Bus {
@@ -587,7 +606,139 @@ impl Bus {
     }
 
     fn process_chain_mode(&mut self, base_addr: u32) {
-        // TODO: Implement chain mode transfer logic for GIF
-        todo!("Implement GIF chain mode transfer");
+        trace!("Starting GIF chain mode DMA transfer");
+
+        let mut tag_end = false;
+        while !tag_end {
+            loop {
+                let qwc = {
+                    let ch = self.ee_dmac.channels.get(&base_addr)
+                        .expect("GIF channel missing for QWC read");
+                    ch.qwc
+                };
+
+                if qwc == 0 {
+                    break;
+                }
+
+                let madr = {
+                    let ch = self.ee_dmac.channels.get(&base_addr)
+                        .expect("GIF channel missing for MADR read");
+                    ch.madr
+                };
+
+                let data: u128 = (self.read128)(self, madr);
+
+                if !self.gif.is_path3_masked() {
+                    let gif_ptr: *mut GIF = &mut self.gif;
+                    let mut temp_madr = madr;
+                    let mut temp_qwc = qwc;
+                    unsafe {
+                        (*gif_ptr).write_dmac_data(self, data, &mut temp_madr, &mut temp_qwc, true);
+                    }
+                } else {
+                    debug!("Chain mode PATH3 masked; ignoring GIF FIFO write");
+                }
+
+                {
+                    let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
+                        .expect("GIF channel missing for update");
+                    ch_mut.madr = ch_mut.madr.wrapping_add(16);
+                    ch_mut.qwc = ch_mut.qwc.saturating_sub(1);
+                }
+            }
+
+            let tadr = {
+                let ch = self.ee_dmac.channels.get(&base_addr)
+                    .expect("GIF channel missing for TADR read");
+                ch.tadr
+            };
+
+            let tag_raw = (self.read128)(self, tadr);
+            let tag = parse_dmatag(tag_raw);
+
+            trace!("Chain tag processed: {:?}", tag);
+
+            {
+                let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
+                    .expect("GIF channel missing for tag processing");
+
+                ch_mut.qwc = tag.qwc as u32;
+
+                if tag.irq {
+                    // TODO: Implement DMA interrupt logic
+                    debug!("DMA IRQ requested");
+                }
+
+                match tag.tag_id {
+                    0 => {
+                        ch_mut.madr = tag.addr;
+                        ch_mut.tadr = ch_mut.tadr.wrapping_add(16);
+                        tag_end = true;
+                    }
+                    1 => {
+                        ch_mut.madr = ch_mut.tadr.wrapping_add(16);
+                        ch_mut.tadr = ch_mut.madr;
+                    }
+                    2 => {
+                        ch_mut.madr = ch_mut.tadr.wrapping_add(16);
+                        ch_mut.tadr = tag.addr;
+                    }
+                    3 => {
+                        ch_mut.madr = tag.addr;
+                        ch_mut.tadr = ch_mut.tadr.wrapping_add(16);
+                    }
+                    4 => {
+                        ch_mut.madr = tag.addr;
+                        ch_mut.tadr = ch_mut.tadr.wrapping_add(16);
+                    }
+                    5 => {
+                        let asp = (ch_mut.chcr >> 4) & 0x3;
+                        let return_addr = ch_mut.tadr.wrapping_add(16);
+
+                        if asp == 0 {
+                            ch_mut.asr0 = Option::from(return_addr);
+                        } else if asp == 1 {
+                            ch_mut.asr1 = Option::from(return_addr);
+                        } else {
+                            debug!("DMA CALL tag with invalid ASP value: {}", asp);
+                        }
+
+                        ch_mut.madr = ch_mut.tadr.wrapping_add(16);
+                        ch_mut.tadr = tag.addr;
+
+                        let new_asp = (asp + 1) & 0x3;
+                        ch_mut.chcr = (ch_mut.chcr & !(0x3 << 4)) | (new_asp << 4);
+                    }
+                    6 => {
+                        let asp = (ch_mut.chcr >> 4) & 0x3;
+                        let mut new_asp = asp;
+
+                        ch_mut.madr = ch_mut.tadr.wrapping_add(16);
+
+                        if asp == 2 {
+                            ch_mut.tadr = ch_mut.asr1.expect("REASON");
+                            new_asp = new_asp.saturating_sub(1);
+                        } else if asp == 1 {
+                            ch_mut.tadr = ch_mut.asr0.expect("REASON");
+                            new_asp = new_asp.saturating_sub(1);
+                        } else {
+                            tag_end = true;
+                        }
+
+                        if !tag_end {
+                            ch_mut.chcr = (ch_mut.chcr & !(0x3 << 4)) | (new_asp << 4);
+                        }
+                    }
+                    7 => {
+                        ch_mut.madr = ch_mut.tadr.wrapping_add(16);
+                        tag_end = true;
+                    }
+                    _ => {
+                        panic!("Unknown DMA tag ID encountered: {}", tag.tag_id);
+                    }
+                }
+            }
+        }
     }
 }

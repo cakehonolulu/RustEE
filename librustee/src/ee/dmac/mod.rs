@@ -41,9 +41,9 @@ pub struct DmaChannel {
     pub(crate) chcr: u32,
     pub(crate) madr: u32,
     pub(crate) qwc: u32,
-    tadr: u32,
-    asr0: Option<u32>,
-    asr1: Option<u32>,
+    pub(crate) tadr: u32,
+    pub(crate) asr0: Option<u32>,
+    pub(crate) asr1: Option<u32>,
     sadr: Option<u32>,
     channel_type: ChannelType,
 }
