@@ -29,6 +29,8 @@ pub struct AppState {
     pub surface: wgpu::Surface<'static>,
     pub scale_factor: f32,
     pub egui_renderer: EguiRenderer,
+    pub gs_texture: wgpu::Texture,
+    pub gs_texture_id: egui::TextureId,
 }
 
 impl AppState {
@@ -84,9 +86,27 @@ impl AppState {
 
         surface.configure(&device, &surface_config);
 
-        let egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
+        let mut egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
 
         let scale_factor = 1.0;
+
+        // Create a texture for the GS framebuffer
+        let gs_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("GS Framebuffer"),
+            size: wgpu::Extent3d {
+                width: 640,
+                height: 480,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        let gs_texture_id = egui_renderer.renderer.register_native_texture(&device, &gs_texture.create_view(&Default::default()), wgpu::FilterMode::Linear);
 
         Self {
             device,
@@ -95,6 +115,8 @@ impl AppState {
             surface_config,
             egui_renderer,
             scale_factor,
+            gs_texture,
+            gs_texture_id,
         }
     }
 
@@ -177,7 +199,8 @@ pub struct App {
     emulation_thread: Option<std::thread::JoinHandle<()>>,
     emu_backend: Option<Box<dyn EmulationBackend<EE> + Send>>,
     is_paused: Arc<AtomicBool>,
-    scheduler: Arc<Mutex<Scheduler>>
+    scheduler: Arc<Mutex<Scheduler>>,
+    gs_display_open: bool,
 }
 
 impl App {
@@ -220,6 +243,7 @@ impl App {
             emu_backend: Some(emu_backend),
             is_paused,
             scheduler,
+            gs_display_open: false,
         }
     }
 
@@ -242,7 +266,7 @@ impl App {
             initial_width,
             initial_width,
         )
-        .await;
+            .await;
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
@@ -371,8 +395,8 @@ impl App {
                                                     "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
                                                     "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
                                                 ]
-                                                .get(i)
-                                                .unwrap_or(&"UNK");
+                                                    .get(i)
+                                                    .unwrap_or(&"UNK");
 
                                                 let animation_progress = self
                                                     .change_ee_timers
@@ -475,8 +499,8 @@ impl App {
                                                     "", "", "", "BadPAddr", "Debug", "Perf", "",
                                                     "", "TagLo", "TagHi", "ErrorEPC", "",
                                                 ]
-                                                .get(i)
-                                                .unwrap_or(&"UNK");
+                                                    .get(i)
+                                                    .unwrap_or(&"UNK");
 
                                                 if name.is_empty() {
                                                     continue;
@@ -562,8 +586,50 @@ impl App {
                     if ui.button("Toggle TLB View").clicked() {
                         self.tlb_view_open = !self.tlb_view_open;
                     }
+                    if ui.button("Toggle GS Display").clicked() {
+                        self.gs_display_open = !self.gs_display_open;
+                    }
                 });
             });
+
+            if self.gs_display_open {
+                egui::Window::new("GS Display")
+                    .resizable(true)
+                    .default_size([640.0, 480.0])
+                    .show(state.egui_renderer.context(), |ui| {
+                        let bus = self.bus.lock().unwrap();
+                        let gs = &bus.gs;
+
+                        let (frame_data, width, height) = gs.get_framebuffer_data();
+
+                        if let Some(data) = frame_data {
+                            state.queue.write_texture(
+                                wgpu::ImageCopyTexture {
+                                    texture: &state.gs_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &data,
+                                wgpu::ImageDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(width * 4),
+                                    rows_per_image: Some(height),
+                                },
+                                wgpu::Extent3d {
+                                    width,
+                                    height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+
+                            let img_size = egui::vec2(width as f32, height as f32);
+                            ui.image((state.gs_texture_id, img_size));
+                        } else {
+                            ui.label("Framebuffer not available in current format.");
+                        }
+                    });
+            }
 
             if self.tlb_view_open {
                 let bus = self.bus.lock().unwrap();
@@ -814,17 +880,17 @@ impl App {
                                                         addr_str.trim_start_matches("0x"),
                                                         16,
                                                     )
-                                                    .unwrap_or(0);
+                                                        .unwrap_or(0);
                                                     let addr_text = RichText::new(format!(
                                                         "0x{:08x}:",
                                                         address
                                                     ))
-                                                    .font(mono_font.clone())
-                                                    .color(if address == current_pc {
-                                                        Color32::LIGHT_BLUE
-                                                    } else {
-                                                        Color32::GRAY
-                                                    });
+                                                        .font(mono_font.clone())
+                                                        .color(if address == current_pc {
+                                                            Color32::LIGHT_BLUE
+                                                        } else {
+                                                            Color32::GRAY
+                                                        });
 
                                                     let (mnemonic, operands) =
                                                         if let Some((m, ops)) =

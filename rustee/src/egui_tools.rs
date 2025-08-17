@@ -7,7 +7,7 @@ use winit::window::Window;
 
 pub struct EguiRenderer {
     state: State,
-    renderer: Renderer,
+    pub(crate) renderer: Renderer,
     frame_started: bool,
 }
 

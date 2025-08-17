@@ -107,7 +107,7 @@ pub struct Bus {
     ee_dmac: EEDMAC,
     sif: SIF,
     pub(crate) gif: GIF,
-    pub(crate) gs: GS,
+    pub gs: GS,
     vif0: VIF,
     vif1: VIF,
     ipu: IPU,
