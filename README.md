@@ -13,3 +13,5 @@
 ------
 
 [![EE+Bus Weekly Test](https://github.com/cakehonolulu/RustEE/actions/workflows/ee.yml/badge.svg?branch=main)](https://github.com/cakehonolulu/RustEE/actions/workflows/ee.yml)
+
+<img width="1362" height="800" alt="image" src="https://github.com/user-attachments/assets/1fbae30a-1059-4649-a13b-55fbc954b99e" />
