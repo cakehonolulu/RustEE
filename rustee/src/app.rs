@@ -200,7 +200,7 @@ pub struct App {
     emu_backend: Option<Box<dyn EmulationBackend<EE> + Send>>,
     is_paused: Arc<AtomicBool>,
     scheduler: Arc<Mutex<Scheduler>>,
-    gs_display_open: bool,
+    ee_ctl_display_open: bool,
 }
 
 impl App {
@@ -243,7 +243,7 @@ impl App {
             emu_backend: Some(emu_backend),
             is_paused,
             scheduler,
-            gs_display_open: false,
+            ee_ctl_display_open: false,
         }
     }
 
@@ -329,222 +329,296 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
-            egui::Window::new("EE CPU State").show(state.egui_renderer.context(), |ui| {
-                if let Ok(ee) = self.ee.lock() {
-                    for (i, reg) in ee.registers.iter().enumerate() {
-                        let value = reg.load(Ordering::SeqCst);
-                        if let Some(prev_value) = self.prev_ee_registers.get(&i) {
-                            if *prev_value != value {
-                                self.change_ee_timers.insert(i, 1.0);
+            egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    egui::Color32::BLACK
+                );
+
+                let bus = self.bus.lock().unwrap();
+                let gs = &bus.gs;
+
+                let (frame_data, width, height) = gs.get_framebuffer_data();
+
+                if let Some(data) = frame_data {
+                    state.queue.write_texture(
+                                wgpu::ImageCopyTexture {
+                                    texture: &state.gs_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &data,
+                                wgpu::ImageDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(width * 4),
+                                    rows_per_image: Some(height),
+                                },
+                                wgpu::Extent3d {
+                                    width,
+                                    height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+
+                            // Get the available space and calculate scaling
+                            let available_rect = ui.available_rect_before_wrap();
+                            let available_size = available_rect.size();
+
+                            // Original GS dimensions
+                            let original_width = width as f32;
+                            let original_height = height as f32;
+                            let aspect_ratio = original_width / original_height;
+
+                            // Calculate scaled dimensions while maintaining aspect ratio
+                            let mut scaled_width = available_size.x;
+                            let mut scaled_height = scaled_width / aspect_ratio;
+
+                            // If height is too big, scale by height instead
+                            if scaled_height > available_size.y {
+                                scaled_height = available_size.y;
+                                scaled_width = scaled_height * aspect_ratio;
                             }
-                        }
-                        self.prev_ee_registers.insert(i, value);
-                    }
 
-                    for timer in self.change_ee_timers.values_mut() {
-                        *timer -= delta;
-                    }
-                    self.change_ee_timers.retain(|_, &mut timer| timer > 0.0);
+                            let img_size = egui::vec2(scaled_width, scaled_height);
 
-                    for (i, reg) in ee.cop0_registers.iter().enumerate() {
-                        let value = reg.load(Ordering::SeqCst);
-                        if let Some(prev_value) = self.prev_cop0_registers.get(&i) {
-                            if *prev_value != value {
-                                self.cop0_change_ee_timers.insert(i, 1.0);
-                            }
-                        }
-                        self.prev_cop0_registers.insert(i, value);
-                    }
+                            // Center the image
+                            let center_x = available_rect.center().x - scaled_width / 2.0;
+                            let center_y = available_rect.center().y - scaled_height / 2.0;
+                            let image_rect = egui::Rect::from_min_size(
+                                egui::pos2(center_x, center_y),
+                                img_size
+                            );
 
-                    for timer in self.cop0_change_ee_timers.values_mut() {
-                        *timer -= delta;
-                    }
-                    self.cop0_change_ee_timers
-                        .retain(|_, &mut timer| timer > 0.0);
-
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.selected_ee_tab, 0, "GP Registers");
-                        ui.selectable_value(&mut self.selected_ee_tab, 1, "COP0 Registers");
-                    });
-
-                    ui.separator();
-
-                    match self.selected_ee_tab {
-                        0 => {
-                            ScrollArea::both()
-                                .max_height(ui.available_height())
-                                .show(ui, |ui| {
-                                    TableBuilder::new(ui)
-                                        .striped(true)
-                                        .column(Column::auto().resizable(true))
-                                        .column(Column::remainder())
-                                        .header(20.0, |mut header| {
-                                            header.col(|ui| {
-                                                ui.label("Name");
-                                            });
-                                            header.col(|ui| {
-                                                ui.label("Value");
-                                            });
-                                        })
-                                        .body(|mut body| {
-                                            for (i, reg) in ee.registers.iter().enumerate() {
-                                                let value = reg.load(Ordering::SeqCst);
-                                                let name = [
-                                                    "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3",
-                                                    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
-                                                    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
-                                                    "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
-                                                ]
-                                                    .get(i)
-                                                    .unwrap_or(&"UNK");
-
-                                                let animation_progress = self
-                                                    .change_ee_timers
-                                                    .get(&i)
-                                                    .cloned()
-                                                    .unwrap_or(0.0);
-
-                                                let text_color = if animation_progress > 0.0 {
-                                                    let t = animation_progress;
-                                                    let r = 255.0;
-                                                    let g = 255.0 * (1.0 - t);
-                                                    let b = 255.0 * (1.0 - t);
-                                                    egui::Color32::from_rgb(
-                                                        r as u8, g as u8, b as u8,
-                                                    )
-                                                } else {
-                                                    egui::Color32::WHITE
-                                                };
-
-                                                body.row(18.0, |mut row| {
-                                                    row.col(|ui| {
-                                                        ui.label(*name);
-                                                    });
-                                                    row.col(|ui| {
-                                                        ui.colored_label(
-                                                            text_color,
-                                                            format!("{:#034X}", value),
-                                                        );
-                                                    });
-                                                });
-                                            }
-
-                                            body.row(1.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.separator();
-                                                });
-                                            });
-
-                                            body.row(18.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.label("hi");
-                                                });
-                                                row.col(|ui| {
-                                                    ui.colored_label(
-                                                        egui::Color32::WHITE,
-                                                        format!("{:#034X}", ee.hi.load(Ordering::Relaxed)),
-                                                    );
-                                                });
-                                            });
-                                            body.row(18.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.label("lo");
-                                                });
-                                                row.col(|ui| {
-                                                    ui.colored_label(
-                                                        egui::Color32::WHITE,
-                                                        format!("{:#034X}", ee.lo.load(Ordering::Relaxed)),
-                                                    );
-                                                });
-                                            });
-                                            body.row(18.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.label("pc");
-                                                });
-                                                row.col(|ui| {
-                                                    ui.colored_label(
-                                                        egui::Color32::WHITE,
-                                                        format!("{:#010X}", ee.pc.load(Ordering::Relaxed)),
-                                                    );
-                                                });
-                                            });
-                                        });
-                                });
-                        }
-                        1 => {
-                            ScrollArea::both()
-                                .max_width(f32::INFINITY)
-                                .max_height(ui.available_height())
-                                .show(ui, |ui| {
-                                    TableBuilder::new(ui)
-                                        .striped(true)
-                                        .column(Column::auto().resizable(true))
-                                        .column(Column::remainder())
-                                        .header(20.0, |mut header| {
-                                            header.col(|ui| {
-                                                ui.label("Register");
-                                            });
-                                            header.col(|ui| {
-                                                ui.label("Value");
-                                            });
-                                        })
-                                        .body(|mut body| {
-                                            for (i, reg) in ee.cop0_registers.iter().enumerate() {
-                                                let value = reg.load(Ordering::SeqCst);
-                                                let name = [
-                                                    "Index", "Random", "EntryLo0", "EntryLo1",
-                                                    "Context", "PageMask", "Wired", "", "BadVAddr",
-                                                    "Count", "EntryHi", "Compare", "Status",
-                                                    "Cause", "EPC", "PRId", "Config", "", "", "",
-                                                    "", "", "", "BadPAddr", "Debug", "Perf", "",
-                                                    "", "TagLo", "TagHi", "ErrorEPC", "",
-                                                ]
-                                                    .get(i)
-                                                    .unwrap_or(&"UNK");
-
-                                                if name.is_empty() {
-                                                    continue;
-                                                }
-
-                                                let animation_progress = self
-                                                    .cop0_change_ee_timers
-                                                    .get(&i)
-                                                    .copied()
-                                                    .unwrap_or(0.0);
-
-                                                let text_color = if animation_progress > 0.0 {
-                                                    let t = animation_progress;
-                                                    let r = 255.0;
-                                                    let g = 255.0 * (1.0 - t);
-                                                    let b = 255.0 * (1.0 - t);
-                                                    egui::Color32::from_rgb(
-                                                        r as u8, g as u8, b as u8,
-                                                    )
-                                                } else {
-                                                    egui::Color32::WHITE
-                                                };
-
-                                                body.row(18.0, |mut row| {
-                                                    row.col(|ui| {
-                                                        ui.label(*name);
-                                                    });
-                                                    row.col(|ui| {
-                                                        ui.colored_label(
-                                                            text_color,
-                                                            format!("{:#010X}", value),
-                                                        );
-                                                    });
-                                                });
-                                            }
-                                        });
-                                });
-                        }
-                        _ => {}
-                    }
-                } else {
-                    ui.label("Unable to lock CPU state.");
+                            ui.allocate_ui_at_rect(image_rect, |ui| {
+                                ui.image((state.gs_texture_id, img_size));
+                            });
                 }
             });
+
+
+            if self.ee_ctl_display_open {
+                egui::Window::new("EE CPU State")
+                    .resizable(true)
+                    .default_size(egui::vec2(400.0, 300.0))
+                    .show(state.egui_renderer.context(), |ui| {
+                        if let Ok(ee) = self.ee.lock() {
+                            for (i, reg) in ee.registers.iter().enumerate() {
+                                let value = reg.load(Ordering::SeqCst);
+                                if let Some(prev_value) = self.prev_ee_registers.get(&i) {
+                                    if *prev_value != value {
+                                        self.change_ee_timers.insert(i, 1.0);
+                                    }
+                                }
+                                self.prev_ee_registers.insert(i, value);
+                            }
+
+                            for timer in self.change_ee_timers.values_mut() {
+                                *timer -= delta;
+                            }
+                            self.change_ee_timers.retain(|_, &mut timer| timer > 0.0);
+
+                            for (i, reg) in ee.cop0_registers.iter().enumerate() {
+                                let value = reg.load(Ordering::SeqCst);
+                                if let Some(prev_value) = self.prev_cop0_registers.get(&i) {
+                                    if *prev_value != value {
+                                        self.cop0_change_ee_timers.insert(i, 1.0);
+                                    }
+                                }
+                                self.prev_cop0_registers.insert(i, value);
+                            }
+
+                            for timer in self.cop0_change_ee_timers.values_mut() {
+                                *timer -= delta;
+                            }
+                            self.cop0_change_ee_timers
+                                .retain(|_, &mut timer| timer > 0.0);
+
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(&mut self.selected_ee_tab, 0, "GP Registers");
+                                ui.selectable_value(&mut self.selected_ee_tab, 1, "COP0 Registers");
+                            });
+
+                            ui.separator();
+
+                            match self.selected_ee_tab {
+                                0 => {
+                                    ScrollArea::both()
+                                        .max_height(ui.available_height())
+                                        .show(ui, |ui| {
+                                            TableBuilder::new(ui)
+                                                .striped(true)
+                                                .column(Column::auto().resizable(true))
+                                                .column(Column::remainder())
+                                                .header(20.0, |mut header| {
+                                                    header.col(|ui| {
+                                                        ui.label("Name");
+                                                    });
+                                                    header.col(|ui| {
+                                                        ui.label("Value");
+                                                    });
+                                                })
+                                                .body(|mut body| {
+                                                    for (i, reg) in ee.registers.iter().enumerate() {
+                                                        let value = reg.load(Ordering::SeqCst);
+                                                        let name = [
+                                                            "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3",
+                                                            "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
+                                                            "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
+                                                            "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
+                                                        ]
+                                                            .get(i)
+                                                            .unwrap_or(&"UNK");
+
+                                                        let animation_progress = self
+                                                            .change_ee_timers
+                                                            .get(&i)
+                                                            .cloned()
+                                                            .unwrap_or(0.0);
+
+                                                        let text_color = if animation_progress > 0.0 {
+                                                            let t = animation_progress;
+                                                            let r = 255.0;
+                                                            let g = 255.0 * (1.0 - t);
+                                                            let b = 255.0 * (1.0 - t);
+                                                            egui::Color32::from_rgb(
+                                                                r as u8, g as u8, b as u8,
+                                                            )
+                                                        } else {
+                                                            egui::Color32::WHITE
+                                                        };
+
+                                                        body.row(18.0, |mut row| {
+                                                            row.col(|ui| {
+                                                                ui.label(*name);
+                                                            });
+                                                            row.col(|ui| {
+                                                                ui.colored_label(
+                                                                    text_color,
+                                                                    format!("{:#034X}", value),
+                                                                );
+                                                            });
+                                                        });
+                                                    }
+
+                                                    body.row(1.0, |mut row| {
+                                                        row.col(|ui| {
+                                                            ui.separator();
+                                                        });
+                                                    });
+
+                                                    body.row(18.0, |mut row| {
+                                                        row.col(|ui| {
+                                                            ui.label("hi");
+                                                        });
+                                                        row.col(|ui| {
+                                                            ui.colored_label(
+                                                                egui::Color32::WHITE,
+                                                                format!("{:#034X}", ee.hi.load(Ordering::Relaxed)),
+                                                            );
+                                                        });
+                                                    });
+                                                    body.row(18.0, |mut row| {
+                                                        row.col(|ui| {
+                                                            ui.label("lo");
+                                                        });
+                                                        row.col(|ui| {
+                                                            ui.colored_label(
+                                                                egui::Color32::WHITE,
+                                                                format!("{:#034X}", ee.lo.load(Ordering::Relaxed)),
+                                                            );
+                                                        });
+                                                    });
+                                                    body.row(18.0, |mut row| {
+                                                        row.col(|ui| {
+                                                            ui.label("pc");
+                                                        });
+                                                        row.col(|ui| {
+                                                            ui.colored_label(
+                                                                egui::Color32::WHITE,
+                                                                format!("{:#010X}", ee.pc.load(Ordering::Relaxed)),
+                                                            );
+                                                        });
+                                                    });
+                                                });
+                                        });
+                                }
+                                1 => {
+                                    ScrollArea::both()
+                                        .max_width(f32::INFINITY)
+                                        .max_height(ui.available_height())
+                                        .show(ui, |ui| {
+                                            TableBuilder::new(ui)
+                                                .striped(true)
+                                                .column(Column::auto().resizable(true))
+                                                .column(Column::remainder())
+                                                .header(20.0, |mut header| {
+                                                    header.col(|ui| {
+                                                        ui.label("Register");
+                                                    });
+                                                    header.col(|ui| {
+                                                        ui.label("Value");
+                                                    });
+                                                })
+                                                .body(|mut body| {
+                                                    for (i, reg) in ee.cop0_registers.iter().enumerate() {
+                                                        let value = reg.load(Ordering::SeqCst);
+                                                        let name = [
+                                                            "Index", "Random", "EntryLo0", "EntryLo1",
+                                                            "Context", "PageMask", "Wired", "", "BadVAddr",
+                                                            "Count", "EntryHi", "Compare", "Status",
+                                                            "Cause", "EPC", "PRId", "Config", "", "", "",
+                                                            "", "", "", "BadPAddr", "Debug", "Perf", "",
+                                                            "", "TagLo", "TagHi", "ErrorEPC", "",
+                                                        ]
+                                                            .get(i)
+                                                            .unwrap_or(&"UNK");
+
+                                                        if name.is_empty() {
+                                                            continue;
+                                                        }
+
+                                                        let animation_progress = self
+                                                            .cop0_change_ee_timers
+                                                            .get(&i)
+                                                            .copied()
+                                                            .unwrap_or(0.0);
+
+                                                        let text_color = if animation_progress > 0.0 {
+                                                            let t = animation_progress;
+                                                            let r = 255.0;
+                                                            let g = 255.0 * (1.0 - t);
+                                                            let b = 255.0 * (1.0 - t);
+                                                            egui::Color32::from_rgb(
+                                                                r as u8, g as u8, b as u8,
+                                                            )
+                                                        } else {
+                                                            egui::Color32::WHITE
+                                                        };
+
+                                                        body.row(18.0, |mut row| {
+                                                            row.col(|ui| {
+                                                                ui.label(*name);
+                                                            });
+                                                            row.col(|ui| {
+                                                                ui.colored_label(
+                                                                    text_color,
+                                                                    format!("{:#010X}", value),
+                                                                );
+                                                            });
+                                                        });
+                                                    }
+                                                });
+                                        });
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            ui.label("Unable to lock CPU state.");
+                        }
+                    });
+            }
 
             egui::TopBottomPanel::bottom("EE Taskbar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
@@ -577,6 +651,9 @@ impl App {
 
             egui::TopBottomPanel::top("Menubar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
+                    if ui.button("Toggle EE State View").clicked() {
+                        self.ee_ctl_display_open = !self.ee_ctl_display_open;
+                    }
                     if ui.button("Toggle Disassembly").clicked() {
                         self.disassembly_open = !self.disassembly_open;
                     }
@@ -586,50 +663,8 @@ impl App {
                     if ui.button("Toggle TLB View").clicked() {
                         self.tlb_view_open = !self.tlb_view_open;
                     }
-                    if ui.button("Toggle GS Display").clicked() {
-                        self.gs_display_open = !self.gs_display_open;
-                    }
                 });
             });
-
-            if self.gs_display_open {
-                egui::Window::new("GS Display")
-                    .resizable(true)
-                    .default_size([640.0, 480.0])
-                    .show(state.egui_renderer.context(), |ui| {
-                        let bus = self.bus.lock().unwrap();
-                        let gs = &bus.gs;
-
-                        let (frame_data, width, height) = gs.get_framebuffer_data();
-
-                        if let Some(data) = frame_data {
-                            state.queue.write_texture(
-                                wgpu::ImageCopyTexture {
-                                    texture: &state.gs_texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d::ZERO,
-                                    aspect: wgpu::TextureAspect::All,
-                                },
-                                &data,
-                                wgpu::ImageDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(width * 4),
-                                    rows_per_image: Some(height),
-                                },
-                                wgpu::Extent3d {
-                                    width,
-                                    height,
-                                    depth_or_array_layers: 1,
-                                },
-                            );
-
-                            let img_size = egui::vec2(width as f32, height as f32);
-                            ui.image((state.gs_texture_id, img_size));
-                        } else {
-                            ui.label("Framebuffer not available in current format.");
-                        }
-                    });
-            }
 
             if self.tlb_view_open {
                 let bus = self.bus.lock().unwrap();
