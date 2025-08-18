@@ -699,6 +699,9 @@ impl GS {
         self.source_buffer_width = (data >> 16) & 0x3f;
         self.source_format = (data >> 24) & 0x3f;
 
+        self.source_base_pointer <<= 6;
+        self.source_buffer_width <<= 6;
+
         self.destination_base_pointer = (data >> 32) & 0x3fff;
         self.destination_buffer_width = (data >> 48) & 0x3f;
         self.destination_format = (data >> 56) & 0x3f;
