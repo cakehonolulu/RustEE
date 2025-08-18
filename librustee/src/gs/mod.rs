@@ -268,8 +268,8 @@ impl GS {
                     self.gs_csr = csr_value;
                 }
 
-                if (value & 8) == 1 {
-                    self.gs_csr &= !(1 << 8);
+                if (value & (1 << 3)) != 0 { ;
+                    self.gs_csr &= !(1 << 3);
                 }
             }
             GS_IMR_OFFSET => self.gs_imr = value,

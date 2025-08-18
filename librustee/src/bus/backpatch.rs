@@ -399,19 +399,20 @@ impl ArchHandler for CurrentArchHandler {
         let buf_size = 16;
         let buf = unsafe { std::slice::from_raw_parts(fault_addr as *const u8, buf_size) };
 
-        if let Ok(insns) = cs.disasm_all(buf, fault_addr as u64) {
-            if let Some(insn) = insns.iter().next() {
+        match cs.disasm_count(buf, fault_addr as u64, 1) {
+            Ok(insns) if !insns.is_empty() => {
+                let insn = &insns[0];
                 trace!(
-                    "Current instruction at 0x{:x}: {} {}",
-                    fault_addr,
-                    insn.mnemonic().unwrap_or(""),
-                    insn.op_str().unwrap_or("")
-                );
+                "Current instruction at 0x{:x}: {} {}",
+                fault_addr,
+                insn.mnemonic().unwrap_or(""),
+                insn.op_str().unwrap_or("")
+            );
                 Self::set_instruction_pointer(ctx, (fault_addr + insn.bytes().len() as i64) as u64);
-                return Ok(());
+                Ok(())
             }
+            _ => Err("Failed to advance instruction pointer")
         }
-        Err("Failed to advance instruction pointer")
     }
 
     fn parse_register_from_operand(operand: &str) -> Option<Self::Register> {

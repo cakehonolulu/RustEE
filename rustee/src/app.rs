@@ -643,6 +643,11 @@ impl App {
                         // Reset logic
                     }
 
+                    let mut sched = self.scheduler.lock().unwrap();
+                    ui.checkbox(&mut sched.disable_throttle, "Disable Frame Capping");
+
+                    ui.label(format!("Internal FPS: {:.1}", sched.internal_fps));
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(format!("Frame Time: {:.2} ms", delta * 1000.0));
                     });

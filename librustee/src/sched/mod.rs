@@ -4,6 +4,7 @@ use crate::ee::EE;
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 use tracing::trace;
 
 pub type EventCallback = Box<dyn FnOnce(&mut Bus) + Send + 'static>;
@@ -42,40 +43,55 @@ impl PartialEq for Event {
 
 impl Eq for Event {}
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Scheduler {
     events: BinaryHeap<Event>,
     pub current_cycle: u64,
+    pub real_time_start: Option<Instant>,
+    pub disable_throttle: bool,
+    vsync_count: u32,
+    last_vsync_time: Instant,
+    pub internal_fps: f32,
 }
 
 const EE_FREQUENCY: u64 = 294_912_000;
-const EE_CYCLES_PER_FRAME: u64 = EE_FREQUENCY / 60;
+pub const EE_CYCLES_PER_FRAME: u64 = EE_FREQUENCY / 60;
+
+impl Default for Scheduler {
+    fn default() -> Self {
+        Scheduler {
+            events: BinaryHeap::new(),
+            current_cycle: 0,
+            real_time_start: None,
+            disable_throttle: false,
+            vsync_count: 0,
+            last_vsync_time: Instant::now(),
+            internal_fps: 0.0,
+        }
+    }
+}
 
 impl Scheduler {
     pub fn new() -> Self {
         Scheduler {
             events: BinaryHeap::new(),
             current_cycle: 0,
+            real_time_start: None,
+            disable_throttle: false,
+            vsync_count: 0,
+            last_vsync_time: Instant::now(),
+            internal_fps: 0.0,
         }
     }
 
     pub fn initialize_events(&mut self) {
-        // Schedule first vsync
-        self.add_event(4920115, |bus| {
-            // Set vsync bit in GS_CSR
-            bus.gs.gs_csr |= 8;
-
-            let scheduler_clone = bus.scheduler.clone();
-            let mut scheduler = scheduler_clone.lock().unwrap();
-            scheduler.add_event(4920115, Self::vsync_callback);
-        });
-
         self.add_event(4489019, |bus| {
             bus.gs.draw_buffered();
 
             let scheduler_clone = bus.scheduler.clone();
             let mut scheduler = scheduler_clone.lock().unwrap();
             scheduler.add_event(4489019, Self::draw_batch_callback);
+            scheduler.add_event(431096, Self::vsync_callback);
         });
     }
 
@@ -84,6 +100,13 @@ impl Scheduler {
         scheduler_arc: Arc<Mutex<Scheduler>>,
         bus_arc: Arc<Mutex<Box<Bus>>>,
     ) {
+        {
+            let mut scheduler = scheduler_arc.lock().unwrap();
+            if scheduler.real_time_start.is_none() {
+                scheduler.real_time_start = Some(Instant::now());
+            }
+        }
+
         loop {
             let cycles_to_run = {
                 scheduler_arc.lock().unwrap().cycles_for_next_timeslice()
@@ -104,6 +127,11 @@ impl Scheduler {
                 for callback in callbacks {
                     callback(&mut bus);
                 }
+            }
+
+            {
+                let scheduler = scheduler_arc.lock().unwrap();
+                scheduler.sleep_if_ahead();
             }
 
             let ee_arc = backend.get_cpu();
@@ -156,13 +184,35 @@ impl Scheduler {
         callbacks
     }
 
-    fn vsync_callback(bus: &mut Bus) {
-        bus.gs.gs_csr |= 8;
-        trace!("VSYNC triggered at cycle {}", bus.scheduler.lock().unwrap().current_cycle);
+    pub fn sleep_if_ahead(&self) {
+        if self.disable_throttle {
+            return;
+        }
+        if let Some(start) = self.real_time_start {
+            let emulated_secs = self.current_cycle as f64 / EE_FREQUENCY as f64;
+            let expected = start + Duration::from_secs_f64(emulated_secs);
+            let now = Instant::now();
+            if now < expected {
+                trace!("Sleeping for {:?} to sync", expected - now);
+                std::thread::sleep(expected - now);
+            }
+        }
+    }
 
-        let scheduler_clone = bus.scheduler.clone();
-        let mut scheduler = scheduler_clone.lock().unwrap();
-        scheduler.add_event(4920115, Self::vsync_callback);
+    fn vsync_callback(bus: &mut Bus) {
+        trace!("vsync_callback CSR state before toggling: 0x{:08X}", bus.gs.gs_csr);
+        bus.gs.gs_csr |= 8;
+        trace!("vsync_callback CSR state after toggling: 0x{:08X}", bus.gs.gs_csr);
+
+        let mut scheduler = bus.scheduler.lock().unwrap();
+        scheduler.vsync_count += 1;
+        let now = Instant::now();
+        let elapsed = now.duration_since(scheduler.last_vsync_time).as_secs_f32();
+        if elapsed >= 1.0 {
+            scheduler.internal_fps = scheduler.vsync_count as f32 / elapsed;
+            scheduler.vsync_count = 0;
+            scheduler.last_vsync_time = now;
+        }
     }
 
     fn draw_batch_callback(bus: &mut Bus) {
@@ -172,5 +222,6 @@ impl Scheduler {
         let scheduler_clone = bus.scheduler.clone();
         let mut scheduler = scheduler_clone.lock().unwrap();
         scheduler.add_event(4489019, Self::draw_batch_callback);
+        scheduler.add_event(431096, Self::vsync_callback);
     }
 }
