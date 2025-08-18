@@ -59,6 +59,26 @@ impl Scheduler {
         }
     }
 
+    pub fn initialize_events(&mut self) {
+        // Schedule first vsync
+        self.add_event(4920115, |bus| {
+            // Set vsync bit in GS_CSR
+            bus.gs.gs_csr |= 8;
+
+            let scheduler_clone = bus.scheduler.clone();
+            let mut scheduler = scheduler_clone.lock().unwrap();
+            scheduler.add_event(4920115, Self::vsync_callback);
+        });
+
+        self.add_event(4489019, |bus| {
+            bus.gs.draw_buffered();
+
+            let scheduler_clone = bus.scheduler.clone();
+            let mut scheduler = scheduler_clone.lock().unwrap();
+            scheduler.add_event(4489019, Self::draw_batch_callback);
+        });
+    }
+
     pub fn run_main_loop<B: EmulationBackend<EE> + ?Sized>(
         backend: &mut B,
         scheduler_arc: Arc<Mutex<Scheduler>>,
@@ -134,5 +154,23 @@ impl Scheduler {
             }
         }
         callbacks
+    }
+
+    fn vsync_callback(bus: &mut Bus) {
+        bus.gs.gs_csr |= 8;
+        trace!("VSYNC triggered at cycle {}", bus.scheduler.lock().unwrap().current_cycle);
+
+        let scheduler_clone = bus.scheduler.clone();
+        let mut scheduler = scheduler_clone.lock().unwrap();
+        scheduler.add_event(4920115, Self::vsync_callback);
+    }
+
+    fn draw_batch_callback(bus: &mut Bus) {
+        bus.gs.draw_buffered();
+        trace!("Draw batch at cycle {}", bus.scheduler.lock().unwrap().current_cycle);
+
+        let scheduler_clone = bus.scheduler.clone();
+        let mut scheduler = scheduler_clone.lock().unwrap();
+        scheduler.add_event(4489019, Self::draw_batch_callback);
     }
 }

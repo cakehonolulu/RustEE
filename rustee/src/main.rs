@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::path::Path;
 use portable_atomic::AtomicU32;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::util::SubscriberInitExt;
 use winit::event_loop::{ControlFlow, EventLoop};
 use librustee::sched::Scheduler;
 
@@ -89,6 +90,8 @@ fn main() {
 
         let cop0_registers = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
         let scheduler = Arc::new(Mutex::new(Scheduler::new()));
+
+        scheduler.lock().unwrap().initialize_events();
 
         let bus = Arc::new(Mutex::new(Bus::new(
             bus_mode,

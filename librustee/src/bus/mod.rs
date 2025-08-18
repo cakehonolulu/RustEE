@@ -207,7 +207,7 @@ impl Bus {
             ram_fd: None,
             #[cfg(windows)]
             ram_mapping: None,
-            scheduler,
+            scheduler: Arc::clone(&scheduler),
         });
 
         match mode {
@@ -365,19 +365,7 @@ impl Bus {
                 }
             }
             0x12001000 => {
-                let event = self.gs.write64(addr, value as u64);
-
-                match event {
-                    GsEvent::GsCsrVblankOut { delay } => {
-                        let mut sched = self.scheduler.lock().unwrap();
-                        sched.add_event(delay, move |bus: &mut Bus| {
-                            bus.gs.gs_csr |= 8;
-                        });
-                    }
-
-                    GsEvent::None => {
-                    }
-                }
+                self.gs.write64(addr, value as u64);
             },
             0x1F80141C => self.dev9_delay3 = value,
             _ => {
@@ -396,19 +384,7 @@ impl Bus {
             | 0x12000050 | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090
             | 0x120000A0 | 0x120000B0 | 0x120000C0 | 0x120000D0 | 0x120000E0
             | 0x12001010 | 0x12001000 => {
-                let event = self.gs.write64(addr, value);
-
-                match event {
-                    GsEvent::GsCsrVblankOut { delay } => {
-                        let mut sched = self.scheduler.lock().unwrap();
-                        sched.add_event(delay, move |bus: &mut Bus| {
-                            bus.gs.gs_csr |= 8;
-                        });
-                    }
-
-                    GsEvent::None => {
-                    }
-                }
+                self.gs.write64(addr, value);
             },
             _ => {
                 panic!(

@@ -1,5 +1,7 @@
+use std::sync::{Arc, Mutex};
 use tracing::{error, trace};
 use crate::Bus;
+use crate::sched::{Scheduler, EE_CYCLES_PER_FRAME};
 
 /// Base address for privileged GS registers
 pub const GS_BASE: u32 = 0x1200_0000;
@@ -53,11 +55,18 @@ impl Default for Vertex {
     }
 }
 
+#[derive(Debug)]
+pub struct Primitive {
+    prim_type: u64,
+    vertices: Vec<Vertex>,
+    scissor: u64,
+    zbuf: u64,
+    frame: u64,
+}
 
 #[derive(Debug)]
 pub enum GsEvent {
-    None,
-    GsCsrVblankOut { delay: u64 },
+    None
 }
 
 /// Privileged GS register block
@@ -124,6 +133,7 @@ pub struct GS {
     // Primitive handling
     current_prim: u64,
     vertex_queue: Vec<Vertex>,
+    pub(crate) buffered_primitives: Vec<Primitive>,
 }
 
 impl Default for GS {
@@ -178,6 +188,7 @@ impl Default for GS {
             framebuffer_psm: 0,
             current_prim: 0,
             vertex_queue: Vec::with_capacity(3),
+            buffered_primitives: Vec::new(),
         }
     }
 }
@@ -245,8 +256,21 @@ impl GS {
             EXTWRITE_OFFSET => self.extwrite = value,
             BGCOLOR_OFFSET => self.bgcolor = value,
             GS_CSR_OFFSET => {
-                self.gs_csr = value;
-                event = GsEvent::GsCsrVblankOut { delay: 64000 };
+                let mut csr_value = value & !(0x60); // Bit 5 and bit 6 should be set to 0 when data is written.
+
+                let reset_bit = (csr_value >> 9) & 1;
+                let bit_3 = (csr_value >> 3) & 1;
+
+                if reset_bit == 1 && bit_3 == 1 {
+                    // Set CSR to 0 when  reset condition is met
+                    self.gs_csr = 0;
+                } else {
+                    self.gs_csr = csr_value;
+                }
+
+                if (value & 8) == 1 {
+                    self.gs_csr &= !(1 << 8);
+                }
             }
             GS_IMR_OFFSET => self.gs_imr = value,
             BUSDIR_OFFSET => self.busdir = value,
@@ -593,8 +617,10 @@ impl GS {
     }
 
     fn handle_prim_selection(&mut self, data: u64) {
+        if self.current_prim != (data & 0x7) {
+            //self.draw_buffered();
+        }
         self.current_prim = data & 0x7;
-        self.vertex_queue.clear();
     }
 
     fn add_vertex(&mut self, data: u64, kick: bool) {
@@ -618,30 +644,44 @@ impl GS {
         let r = ((rgbaq >> 16) & 0xFF) as u8;
         let a = ((rgbaq >> 24) & 0xFF) as u8;
 
+        //println!("Vertex: x={}, y={}, z={}, r={}, g={}, b={}, a={}", x, y, z, r, g, b, a);
+
         let vertex = Vertex { x: x as f32, y: y as f32, z: 0, r, g, b, a };
+
         self.vertex_queue.push(vertex);
 
-        if kick {
-            match self.current_prim {
-                0 => { // Point
-                    if self.vertex_queue.len() >= 1 {
-                        self.draw_point();
-                        self.vertex_queue.clear();
-                    }
-                }
-                3 => { // Triangle
-                    if self.vertex_queue.len() >= 3 {
-                        self.draw_triangle();
-                        self.vertex_queue.clear();
-                    }
-                }
-                6 => { // Sprite
-                    if self.vertex_queue.len() >= 2 {
-                        self.draw_sprite();
-                        self.vertex_queue.clear();
-                    }
-                }
-                _ => {}
+        let prim_type = self.current_prim & 0x7;
+
+        let required_vertices = match prim_type {
+            0 => 1, // Point
+            3 => 3, // Triangle
+            6 => 2, // Sprite (actually uses 2 vertices, generates rectangle)
+            _ => return, // Ignore others for now
+        };
+
+        if self.vertex_queue.len() >= required_vertices as usize {
+            let vertices_to_take = required_vertices as usize;
+            let vertices = self.vertex_queue.drain(0..vertices_to_take).collect::<Vec<_>>();
+
+                self.buffered_primitives.push(Primitive {
+                prim_type,
+                vertices,
+                scissor: self.registers[0x40],
+                zbuf: self.registers[0x4E],
+                frame: self.registers[0x50],
+            });
+        }
+    }
+
+    pub fn draw_buffered(&mut self) {
+        let primitives_to_draw: Vec<Primitive> = self.buffered_primitives.drain(..).collect();
+
+        for prim in primitives_to_draw {
+            match prim.prim_type {
+                0 => self.draw_point(&prim.vertices),
+                3 => self.draw_triangle(&prim.vertices),
+                6 => self.draw_sprite(&prim.vertices),
+                _ => {},
             }
         }
     }
@@ -694,50 +734,51 @@ impl GS {
         self.destination_y = 0;
 
         if self.transmission_direction == 2 {
-            //self.blit_vram();
+            self.blit_vram();
         }
     }
 
     fn blit_vram(&mut self) {
-        for y in 0..self.transmission_area_pixel_height {
-            let src = (self.source_base_pointer + self.source_rectangle_x
-                + (self.source_rectangle_y * self.source_buffer_width)
-                + (y * self.source_buffer_width)) as usize;
+        let width_words = self.transmission_area_pixel_width as usize;
+        let height = self.transmission_area_pixel_height as usize;
 
-            let dst = (self.destination_base_pointer + self.destination_rectangle_x
-                + (self.destination_rectangle_y * self.destination_buffer_width)
-                + (y * self.destination_buffer_width)) as usize;
+        let vram_words = VRAM_SIZE / 4;
+        let vram_bytes = self.vram.len();
 
-            let copy_size = self.transmission_area_pixel_width as usize;
+        for y in 0..height {
+            let src_words = (self.source_base_pointer as usize)
+                .saturating_add(self.source_rectangle_x as usize)
+                .saturating_add((self.source_rectangle_y as usize).saturating_mul(self.source_buffer_width as usize))
+                .saturating_add(y.saturating_mul(self.source_buffer_width as usize));
 
-            if src + copy_size <= VRAM_SIZE && dst + copy_size <= VRAM_SIZE {
-                if src < dst && src + copy_size > dst {
-                    for i in (0..copy_size).rev() {
-                        self.vram[dst + i] = self.vram[src + i];
-                    }
-                } else if dst < src && dst + copy_size > src {
-                    for i in 0..copy_size {
-                        self.vram[dst + i] = self.vram[src + i];
-                    }
+            let dst_words = (self.destination_base_pointer as usize)
+                .saturating_add(self.destination_rectangle_x as usize)
+                .saturating_add((self.destination_rectangle_y as usize).saturating_mul(self.destination_buffer_width as usize))
+                .saturating_add(y.saturating_mul(self.destination_buffer_width as usize));
+
+            if src_words.checked_add(width_words).map_or(false, |v| v <= vram_words)
+                && dst_words.checked_add(width_words).map_or(false, |v| v <= vram_words)
+            {
+                let src_b = src_words * 4;
+                let dst_b = dst_words * 4;
+                let len_b = width_words * 4;
+
+                if src_b + len_b <= vram_bytes && dst_b + len_b <= vram_bytes {
+                    self.vram.copy_within(src_b..src_b + len_b, dst_b);
                 } else {
-                    if src < dst {
-                        let (left, right) = self.vram.split_at_mut(dst);
-                        right[..copy_size].copy_from_slice(&left[src..src + copy_size]);
-                    } else {
-                        let (left, right) = self.vram.split_at_mut(src);
-                        left[dst..dst + copy_size].copy_from_slice(&right[..copy_size]);
-                    }
+                    error!("VRAM blit out of bounds (byte range)");
+                    panic!("VRAM blit out of bounds");
                 }
             } else {
-                eprintln!("VRAM blit out of bounds");
-                panic!("VRAM blit out of bounds - src: {}, dst: {}, copy_size: {}, VRAM_SIZE: {}",
-                       src, dst, copy_size, VRAM_SIZE);
+                error!("VRAM blit out of bounds (word range)");
+                panic!("VRAM blit out of bounds");
             }
         }
     }
 
-    fn draw_point(&mut self) {
-        let v = self.vertex_queue[0];
+
+    fn draw_point(&mut self, vertices: &[Vertex]) {
+        let v = vertices.get(0).unwrap();
         let scissor = self.registers[0x40];
         let scax0 = (scissor & 0x7FF) as i32;
         let scax1 = ((scissor >> 16) & 0x7FF) as i32;
@@ -820,10 +861,10 @@ impl GS {
         }
     }
 
-    fn draw_triangle(&mut self) {
-        let v0 = self.vertex_queue[0];
-        let v1 = self.vertex_queue[1];
-        let v2 = self.vertex_queue[2];
+    fn draw_triangle(&mut self, vertices: &[Vertex]) {
+        let v0 = vertices.get(0).unwrap();
+        let v1 = vertices.get(1).unwrap();
+        let v2 = vertices.get(2).unwrap();
 
         let scissor = self.registers[0x40];
         let scax0 = (scissor & 0x7FF) as i32;
@@ -947,9 +988,9 @@ impl GS {
         }
     }
 
-    fn draw_sprite(&mut self) {
-        let v0 = self.vertex_queue[0];
-        let v1 = self.vertex_queue[1];
+    fn draw_sprite(&mut self, vertices: &[Vertex]) {
+        let v0 = vertices.get(0).unwrap();
+        let v1 = vertices.get(1).unwrap();
 
         let scissor = self.registers[0x40];
         let scax0 = (scissor & 0x7FF) as i32;
