@@ -1079,10 +1079,10 @@ impl GS {
                         }
                     }
 
-                    self.vram[pixel_addr] = v1.a;
-                    self.vram[pixel_addr + 1] = v1.b;
-                    self.vram[pixel_addr + 2] = v1.g;
-                    self.vram[pixel_addr + 3] = v1.r;
+                    self.vram[pixel_addr] = v1.r;
+                    self.vram[pixel_addr + 1] = v1.g;
+                    self.vram[pixel_addr + 2] = v1.b;
+                    self.vram[pixel_addr + 3] = v1.a;
                 }
             }
         }
