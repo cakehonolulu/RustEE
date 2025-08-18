@@ -380,6 +380,20 @@ impl Bus {
     pub fn io_write64(&mut self, mut addr: u32, value: u64) {
         addr &= 0x1FFFFFFF;
         match addr {
+            0x10008000..=0x1000D4FF => {
+                let triggered_channel = self.ee_dmac.write_register64(addr, value);
+
+                if let Some(channel_type) = triggered_channel {
+                    self.service_dma_channel(channel_type);
+                }
+            }
+            0x1000E000..=0x1000E050 => {
+                let triggered_channel = self.ee_dmac.write_register64(addr, value);
+
+                if let Some(channel_type) = triggered_channel {
+                    self.service_dma_channel(channel_type);
+                }
+            }
             0x12000000 | 0x12000010 | 0x12000020 | 0x12000030 | 0x12000040
             | 0x12000050 | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090
             | 0x120000A0 | 0x120000B0 | 0x120000C0 | 0x120000D0 | 0x120000E0
@@ -486,6 +500,8 @@ impl Bus {
     pub fn io_read64(&mut self, mut addr: u32) -> u64 {
         addr &= 0x1FFFFFFF;
         match addr {
+            0x10008000..=0x1000D4FF => self.ee_dmac.read_register64(addr),
+            0x1000E000..=0x1000E050 => self.ee_dmac.read_register64(addr),
             0x12000000 | 0x12001000 => self.gs.read64(addr),
             _ => {
                 panic!("Invalid IO read64: addr=0x{:08X}", addr);
@@ -558,12 +574,12 @@ impl Bus {
                 break;
             }
 
-            let data: u128 = (self.read128)(self, madr);
+            let data: u128 = (self.read128)(self, madr as u32);
 
             if !self.gif.is_path3_masked() {
                 let gif_ptr: *mut GIF = &mut self.gif;
                 unsafe {
-                    (*gif_ptr).write_dmac_data(self, data, &mut madr, &mut qwc, false);
+                    (*gif_ptr).write_dmac_data(self, data, &mut (madr as u32), &mut (qwc as u32), false);
                 }
             } else {
                 debug!("Burst mode PATH3 masked; ignoring GIF FIFO write");;
@@ -603,14 +619,14 @@ impl Bus {
                     ch.madr
                 };
 
-                let data: u128 = (self.read128)(self, madr);
+                let data: u128 = (self.read128)(self, madr as u32);
 
                 if !self.gif.is_path3_masked() {
                     let gif_ptr: *mut GIF = &mut self.gif;
                     let mut temp_madr = madr;
                     let mut temp_qwc = qwc;
                     unsafe {
-                        (*gif_ptr).write_dmac_data(self, data, &mut temp_madr, &mut temp_qwc, true);
+                        (*gif_ptr).write_dmac_data(self, data, &mut (temp_madr as u32), &mut (temp_qwc as u32), true);
                     }
                 } else {
                     debug!("Chain mode PATH3 masked; ignoring GIF FIFO write");
@@ -630,7 +646,7 @@ impl Bus {
                 ch.tadr
             };
 
-            let tag_raw = (self.read128)(self, tadr);
+            let tag_raw = (self.read128)(self, tadr as u32);
             let tag = parse_dmatag(tag_raw);
 
             trace!("Chain tag processed: {:?}", tag);
@@ -639,7 +655,7 @@ impl Bus {
                 let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
                     .expect("GIF channel missing for tag processing");
 
-                ch_mut.qwc = tag.qwc as u32;
+                ch_mut.qwc = tag.qwc as u64;
 
                 if tag.irq {
                     // TODO: Implement DMA interrupt logic
@@ -648,7 +664,7 @@ impl Bus {
 
                 match tag.tag_id {
                     0 => {
-                        ch_mut.madr = tag.addr;
+                        ch_mut.madr = tag.addr as u64;
                         ch_mut.tadr = ch_mut.tadr.wrapping_add(16);
                         tag_end = true;
                     }
@@ -658,14 +674,14 @@ impl Bus {
                     }
                     2 => {
                         ch_mut.madr = ch_mut.tadr.wrapping_add(16);
-                        ch_mut.tadr = tag.addr;
+                        ch_mut.tadr = tag.addr as u64;
                     }
                     3 => {
-                        ch_mut.madr = tag.addr;
+                        ch_mut.madr = tag.addr as u64;
                         ch_mut.tadr = ch_mut.tadr.wrapping_add(16);
                     }
                     4 => {
-                        ch_mut.madr = tag.addr;
+                        ch_mut.madr = tag.addr as u64;
                         ch_mut.tadr = ch_mut.tadr.wrapping_add(16);
                     }
                     5 => {
@@ -681,7 +697,7 @@ impl Bus {
                         }
 
                         ch_mut.madr = ch_mut.tadr.wrapping_add(16);
-                        ch_mut.tadr = tag.addr;
+                        ch_mut.tadr = tag.addr as u64;
 
                         let new_asp = (asp + 1) & 0x3;
                         ch_mut.chcr = (ch_mut.chcr & !(0x3 << 4)) | (new_asp << 4);

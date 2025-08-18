@@ -38,13 +38,13 @@ pub enum ChannelType {
 
 #[derive(Debug)]
 pub struct DmaChannel {
-    pub(crate) chcr: u32,
-    pub(crate) madr: u32,
-    pub(crate) qwc: u32,
-    pub(crate) tadr: u32,
-    pub(crate) asr0: Option<u32>,
-    pub(crate) asr1: Option<u32>,
-    sadr: Option<u32>,
+    pub(crate) chcr: u64,
+    pub(crate) madr: u64,
+    pub(crate) qwc: u64,
+    pub(crate) tadr: u64,
+    pub(crate) asr0: Option<u64>,
+    pub(crate) asr1: Option<u64>,
+    sadr: Option<u64>,
     channel_type: ChannelType,
 }
 
@@ -64,6 +64,22 @@ impl DmaChannel {
 
     pub fn read32(&self, offset: u32) -> u32 {
         match offset {
+            CHCR_OFFSET => self.chcr as u32,
+            MADR_OFFSET => self.madr as u32,
+            QWC_OFFSET => self.qwc as u32,
+            TADR_OFFSET => self.tadr as u32,
+            ASR0_OFFSET => self.asr0.expect("ASR0 not available") as u32,
+            ASR1_OFFSET => self.asr1.expect("ASR1 not available") as u32,
+            SADR_OFFSET => self.sadr.expect("SADR not available") as u32,
+            _ => {
+                error!("Invalid channel read offset: {:#X}", offset);
+                0
+            }
+        }
+    }
+
+    pub fn read64(&self, offset: u32) -> u64 {
+        match offset {
             CHCR_OFFSET => self.chcr,
             MADR_OFFSET => self.madr,
             QWC_OFFSET => self.qwc,
@@ -81,7 +97,48 @@ impl DmaChannel {
     pub fn write32(&mut self, offset: u32, value: u32) {
         match offset {
             CHCR_OFFSET => {
-                self.chcr = (value & 0xFFFF) | (self.chcr & 0xFFFF_0000);
+                self.chcr = (((value & 0xFFFF) as u64) | (self.chcr & 0xFFFF_0000));
+            }
+            MADR_OFFSET => {
+                self.madr = (value & !0xF) as u64;
+            }
+            QWC_OFFSET => {
+                self.qwc = (value & 0xFFFF) as u64;
+            }
+            TADR_OFFSET => {
+                self.tadr = (value & !0xF) as u64;
+            }
+            ASR0_OFFSET => {
+                if let Some(a) = &mut self.asr0 {
+                    *a = (value & !0xF) as u64;
+                } else {
+                    trace!("Write to ASR0 on channel without ASR0");
+                }
+            }
+            ASR1_OFFSET => {
+                if let Some(a) = &mut self.asr1 {
+                    *a = (value & !0xF) as u64;
+                } else {
+                    trace!("Write to ASR1 on channel without ASR1");
+                }
+            }
+            SADR_OFFSET => {
+                if let Some(s) = &mut self.sadr {
+                    *s = (value & !0xF) as u64;
+                } else {
+                    trace!("Write to SADR on channel without SADR");
+                }
+            }
+            _ => {
+                error!("Invalid channel write offset: {:#X}", offset);
+            }
+        }
+    }
+
+    pub fn write64(&mut self, offset: u32, value: u64) {
+        match offset {
+            CHCR_OFFSET => {
+                self.chcr = ((value & 0xFFFF) | (self.chcr & 0xFFFF_0000));
             }
             MADR_OFFSET => {
                 self.madr = value & !0xF;
@@ -108,7 +165,7 @@ impl DmaChannel {
             }
             SADR_OFFSET => {
                 if let Some(s) = &mut self.sadr {
-                    *s = value & !0xF;
+                    *s = (value & !0xF) as u64;
                 } else {
                     trace!("Write to SADR on channel without SADR");
                 }
@@ -126,13 +183,13 @@ impl DmaChannel {
 
 pub struct EEDMAC {
     pub(crate) channels: HashMap<u32, DmaChannel>,
-    d_ctrl: u32,
-    d_stat: u32,
-    d_pcr: u32,
-    d_sqwc: u32,
-    d_rbsr: u32,
-    d_rbor: u32,
-    d_enablew: u32,
+    d_ctrl: u64,
+    d_stat: u64,
+    d_pcr: u64,
+    d_sqwc: u64,
+    d_rbsr: u64,
+    d_rbor: u64,
+    d_enablew: u64,
 }
 
 impl EEDMAC {
@@ -173,6 +230,32 @@ impl EEDMAC {
             }
         } else {
             match addr {
+                0x1000_E000 => self.d_ctrl = value as u64,
+                0x1000_E010 => self.d_stat = value as u64,
+                0x1000_E020 => self.d_pcr = value as u64,
+                0x1000_E030 => self.d_sqwc = value as u64,
+                0x1000_E040 => self.d_rbsr = value as u64,
+                0x1000_E050 => self.d_rbor = value as u64,
+                0x1000_F590 => self.d_enablew = value as u64,
+                _ => error!("Invalid DMAC write32 address: {:#X}", addr),
+            }
+        }
+
+        None
+    }
+
+    pub fn write_register64(&mut self, addr: u32, value: u64) -> Option<ChannelType> {
+        let base = addr & 0xFFFF_F000;
+        let offset = addr & 0xFF;
+
+        if let Some(ch) = self.channels.get_mut(&base) {
+            ch.write64(offset, value);
+
+            if offset == CHCR_OFFSET && ch.is_running() {
+                return Some(ch.channel_type);
+            }
+        } else {
+            match addr {
                 0x1000_E000 => self.d_ctrl = value,
                 0x1000_E010 => self.d_stat = value,
                 0x1000_E020 => self.d_pcr = value,
@@ -180,7 +263,7 @@ impl EEDMAC {
                 0x1000_E040 => self.d_rbsr = value,
                 0x1000_E050 => self.d_rbor = value,
                 0x1000_F590 => self.d_enablew = value,
-                _ => error!("Invalid DMAC write address: {:#X}", addr),
+                _ => error!("Invalid DMAC write64 address: {:#X}", addr),
             }
         }
 
@@ -195,6 +278,29 @@ impl EEDMAC {
             ch.read32(offset)
         } else {
             match addr {
+                0x1000_E000 => self.d_ctrl as u32,
+                0x1000_E010 => self.d_stat as u32,
+                0x1000_E020 => self.d_pcr as u32,
+                0x1000_E030 => self.d_sqwc as u32,
+                0x1000_E040 => self.d_rbsr as u32,
+                0x1000_E050 => self.d_rbor as u32,
+                0x1000_F590 => self.d_enablew as u32,
+                _ => {
+                    error!("Invalid DMAC read32 address: {:#X}", addr);
+                    0
+                }
+            }
+        }
+    }
+
+    pub fn read_register64(&self, addr: u32) -> u64 {
+        let base = addr & 0xFFFF_F000;
+        let offset = addr & 0xFF;
+
+        if let Some(ch) = self.channels.get(&base) {
+            ch.read64(offset)
+        } else {
+            match addr {
                 0x1000_E000 => self.d_ctrl,
                 0x1000_E010 => self.d_stat,
                 0x1000_E020 => self.d_pcr,
@@ -203,7 +309,7 @@ impl EEDMAC {
                 0x1000_E050 => self.d_rbor,
                 0x1000_F590 => self.d_enablew,
                 _ => {
-                    error!("Invalid DMAC read address: {:#X}", addr);
+                    error!("Invalid DMAC read64 address: {:#X}", addr);
                     0
                 }
             }
