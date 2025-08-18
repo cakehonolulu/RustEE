@@ -286,7 +286,6 @@ impl App {
         if let Some(window) = self.window.as_ref() {
             if let Some(min) = window.is_minimized() {
                 if min {
-                    println!("Window is minimized");
                     return;
                 }
             }

@@ -1,7 +1,9 @@
+use std::error::Error;
 use egui::Context;
 use egui_wgpu::wgpu::{CommandEncoder, Device, Queue, StoreOp, TextureFormat, TextureView};
 use egui_wgpu::{wgpu, Renderer, ScreenDescriptor};
 use egui_winit::State;
+use winit::window::Icon;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -11,6 +13,19 @@ pub struct EguiRenderer {
     frame_started: bool,
 }
 
+fn icon_from_embedded_bytes() -> Result<Icon, Box<dyn Error>> {
+    let bytes: &'static [u8] = include_bytes!(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../resources/banner.png")
+    );
+
+    let img = image::load_from_memory(bytes)?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+
+    // create winit::window::Icon
+    let icon = Icon::from_rgba(rgba.into_raw(), w, h)?;
+    Ok(icon)
+}
 impl EguiRenderer {
     pub fn context(&self) -> &Context {
         self.state.egui_ctx()
@@ -23,6 +38,17 @@ impl EguiRenderer {
         msaa_samples: u32,
         window: &Window,
     ) -> EguiRenderer {
+        window.set_title("RustEE");
+        match icon_from_embedded_bytes() {
+            Ok(icon) => {
+                window.set_window_icon(Some(icon));
+            }
+            Err(e) => {
+                // use whichever logging / error handling your project uses
+                // fallback: print to stderr so you notice while developing
+                eprintln!("Warning: failed to load embedded window icon: {}", e);
+            }
+        }
         let egui_context = Context::default();
 
         let egui_state = egui_winit::State::new(

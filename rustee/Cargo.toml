@@ -10,6 +10,7 @@ egui = "0.31.1"
 egui-wgpu = "0.31.1"
 egui-winit = "0.31.1"
 egui_extras = "0.31.1"
+image = "0.25.6"
 librustee = { path = "../librustee" }
 pollster = "0.4.0"
 portable-atomic = "1.11.1"
