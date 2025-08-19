@@ -630,8 +630,8 @@ impl GS {
         let xoffset_1 = (self.registers[0x18] & 0xFFFF) as i16;
         let yoffset_1 = ((self.registers[0x18] >> 32) & 0xFFFF) as i16;
 
-        let x_fixed = x_fixed - xoffset_1;
-        let y_fixed = y_fixed - yoffset_1;
+        let x_fixed = x_fixed.wrapping_sub(xoffset_1);
+        let y_fixed = y_fixed.wrapping_sub(yoffset_1);
 
         let z = ((data >> 48) & 0xFFFFFF) as i32;
 
