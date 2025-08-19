@@ -48,7 +48,6 @@ pub trait ArchHandler {
     fn get_stack_pointer(ctx: *mut Self::Context) -> u64;
     fn advance_instruction_pointer(
         ctx: *mut Self::Context,
-        cs: &Capstone,
         fault_addr: i64,
     ) -> Result<(), &'static str>;
     fn parse_register_from_operand(operand: &str) -> Option<Self::Register>;
@@ -59,6 +58,65 @@ pub trait ArchHandler {
     fn set_register_value(ctx: *mut Self::Context, reg_id: Self::Register, value: u64);
 }
 
+
+    unsafe fn get_mov_instruction_length(ip: *const u8) -> usize {
+        let mut len: usize = 0;
+
+        loop {
+            let b = *ip.add(len);
+            if (0x40..=0x4F).contains(&b)
+                || b == 0x66
+                || b == 0x67
+                || b == 0xF2 || b == 0xF3
+            {
+                len += 1;
+                if len > 4 { return 0; }
+            } else {
+                break;
+            }
+        }
+
+        let opc = *ip.add(len);
+        len += 1;
+        if opc != 0x88 && opc != 0x89 && opc != 0x8A && opc != 0x8B {
+            return 0;
+        }
+
+        let modrm = *ip.add(len);
+        len += 1;
+        let mod_bits = modrm >> 6;
+        let _reg = (modrm >> 3) & 0x7;
+        let rm = modrm & 0x7;
+
+        if mod_bits == 0x3 {
+            return 0;
+        }
+
+        let mut disp_size: usize = 0;
+        if rm == 0x4 {
+            let sib = *ip.add(len);
+            len += 1;
+            let _scale = sib >> 6;
+            let _index = (sib >> 3) & 0x7;
+            let base = sib & 0x7;
+
+            if base == 0x5 && mod_bits == 0x0 {
+                disp_size = 4;
+            }
+        }
+
+        disp_size = match mod_bits {
+            0x0 => if rm == 0x5 { 4 } else { disp_size },
+            0x1 => 1,
+            0x2 => 4,
+            _ => return 0,
+        };
+        len += disp_size;
+
+        len
+    }
+
+    
 pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
     unsafe {
         if bus.is_null() {
@@ -304,25 +362,20 @@ impl ArchHandler for CurrentArchHandler {
 
     fn advance_instruction_pointer(
         ctx: *mut Self::Context,
-        cs: &Capstone,
         fault_addr: i64,
     ) -> Result<(), &'static str> {
-        let buf_size = 16;
-        let buf = unsafe { std::slice::from_raw_parts(fault_addr as *const u8, buf_size) };
-
-        if let Ok(insns) = cs.disasm_all(buf, fault_addr as u64) {
-            if let Some(insn) = insns.iter().next() {
-                trace!(
-                    "Current instruction at 0x{:x}: {} {}",
-                    fault_addr,
-                    insn.mnemonic().unwrap_or(""),
-                    insn.op_str().unwrap_or("")
-                );
-                Self::set_instruction_pointer(ctx, (fault_addr + insn.bytes().len() as i64) as u64);
-                return Ok(());
-            }
+        let length = unsafe { get_mov_instruction_length(fault_addr as *const u8) };
+        if length == 0 {
+            panic!("Unrecognized instruction format at fault address");
         }
-        Err("Failed to advance instruction pointer")
+
+        trace!(
+            "Advancing IP by {} bytes from 0x{:x}",
+            length,
+            fault_addr
+        );
+        Self::set_instruction_pointer(ctx, (fault_addr as u64 + length as u64));
+        Ok(())
     }
 
     fn parse_register_from_operand(operand: &str) -> Option<Self::Register> {
@@ -393,26 +446,20 @@ impl ArchHandler for CurrentArchHandler {
 
     fn advance_instruction_pointer(
         ctx: *mut Self::Context,
-        cs: &Capstone,
         fault_addr: i64,
     ) -> Result<(), &'static str> {
-        let buf_size = 16;
-        let buf = unsafe { std::slice::from_raw_parts(fault_addr as *const u8, buf_size) };
-
-        match cs.disasm_count(buf, fault_addr as u64, 1) {
-            Ok(insns) if !insns.is_empty() => {
-                let insn = &insns[0];
-                trace!(
-                "Current instruction at 0x{:x}: {} {}",
-                fault_addr,
-                insn.mnemonic().unwrap_or(""),
-                insn.op_str().unwrap_or("")
-            );
-                Self::set_instruction_pointer(ctx, (fault_addr + insn.bytes().len() as i64) as u64);
-                Ok(())
-            }
-            _ => Err("Failed to advance instruction pointer")
+        let length = unsafe { get_mov_instruction_length(fault_addr as *const u8) };
+        if length == 0 {
+            panic!("Unrecognized instruction format at fault address");
         }
+
+        trace!(
+            "Advancing IP by {} bytes from 0x{:x}",
+            length,
+            fault_addr
+        );
+        Self::set_instruction_pointer(ctx, (fault_addr as u64 + length as u64));
+        Ok(())
     }
 
     fn parse_register_from_operand(operand: &str) -> Option<Self::Register> {

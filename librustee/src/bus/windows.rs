@@ -58,15 +58,6 @@ unsafe extern "system" fn veh_handler(info: *mut EXCEPTION_POINTERS) -> i32 { un
     generic_exception_handler::<CurrentArchHandler>(info)
 }}
 
-thread_local! {
-    static CAPSTONE: Capstone = Capstone::new()
-        .x86()
-        .mode(arch::x86::ArchMode::Mode64)
-        .detail(true)
-        .build()
-        .expect("Failed to create Capstone object");
-}
-
 static STUB_ADDRS: Lazy<HashMap<AccessInfo, u64>> = Lazy::new(|| {
     let mut m = HashMap::new();
     m.insert(AccessInfo { kind: Write, width: B8 }, io_write8_stub as u64);
@@ -229,9 +220,7 @@ unsafe fn generic_exception_handler<
                         if patch_instruction(movabs_addr as u64, &stub_bytes).is_ok() {
                             trace!("Patched JIT call at 0x{:x}", movabs_addr);
                             execute_stub::<H>(ctx, access_info, fault_addr);
-                            CAPSTONE.with(|cs| {
-                                H::advance_instruction_pointer(ctx, cs, H::get_instruction_pointer(ctx)).unwrap();
-                            });
+                            H::advance_instruction_pointer(ctx, H::get_instruction_pointer(ctx)).unwrap();
                             return EXCEPTION_CONTINUE_EXECUTION;
                         }
                     }
@@ -244,9 +233,7 @@ unsafe fn generic_exception_handler<
             execute_stub::<H>(ctx, access_info, fault_addr);
 
             let fault_rip = H::get_instruction_pointer(ctx);
-            CAPSTONE.with(|cs| {
-                H::advance_instruction_pointer(ctx, cs, fault_rip).unwrap();
-            });
+            H::advance_instruction_pointer(ctx, fault_rip).unwrap();
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 
@@ -385,17 +372,15 @@ pub fn install_handler() -> io::Result<()> {
         *guard = ranges;
     }
 
-    CAPSTONE.with(|cap| {
-        for (func_ptr, index) in write_functions.iter() {
-            if let Some(reg) = find_memory_access_register(&cs, *func_ptr, *index == 4) {
-                unsafe {
-                    super::backpatch::REGISTER_MAP[*index] = Some(reg);
-                }
-            } else {
-                error!("Failed to find memory access register for function at {:p}", func_ptr);
+    for (func_ptr, index) in write_functions.iter() {
+        if let Some(reg) = find_memory_access_register(&cs, *func_ptr, *index == 4) {
+            unsafe {
+                super::backpatch::REGISTER_MAP[*index] = Some(reg);
             }
+        } else {
+            error!("Failed to find memory access register for function at {:p}", func_ptr);
         }
-    });
+    }
 
     let handle = unsafe { AddVectoredExceptionHandler(1, Some(veh_handler)) };
     if handle.is_null() {

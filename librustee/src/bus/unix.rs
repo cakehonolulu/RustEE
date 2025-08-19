@@ -6,9 +6,8 @@ use crate::bus::backpatch::{
 };
 use crate::bus::unix::libc::ucontext_t;
 use crate::bus::{Bus, HW_BASE, HW_LENGTH};
-use capstone::arch::x86::X86Reg;
-use capstone::arch::{x86, BuildsCapstone, DetailsArchInsn};
-use capstone::{arch, Capstone, RegId};
+use capstone::arch::BuildsCapstone;
+use capstone::{arch, Capstone};
 use nix::libc;
 use nix::sys::mman::{mprotect, ProtFlags};
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
@@ -29,15 +28,6 @@ struct BusFnId {
 
 static BUS_RANGES: Lazy<RwLock<Vec<(u64, u64, BusFnId)>>> =
     Lazy::new(|| RwLock::new(Vec::new()));
-
-thread_local! {
-    static CAPSTONE: Capstone = Capstone::new()
-        .x86()
-        .mode(arch::x86::ArchMode::Mode64)
-        .detail(true)
-        .build()
-        .expect("Failed to create Capstone object");
-}
 
 static STUB_ADDRS: Lazy<HashMap<AccessInfo, u64>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -212,14 +202,10 @@ fn generic_segv_handler<
                             trace!("Patched JIT call at 0x{:x}", movabs_addr);
                             unsafe { execute_stub::<H>(ctx, access_info, fault_addr) };
                                             
-                            CAPSTONE.with(|cs| {
-                                H::advance_instruction_pointer(
-                                    ctx,
-                                    cs,
-                        H::get_instruction_pointer(ctx),
-                                )
-                                .unwrap();
-            });
+                            H::advance_instruction_pointer(
+                                ctx,
+                            H::get_instruction_pointer(ctx),
+                            ).unwrap();
                             return;
                         }
                     }
@@ -234,12 +220,10 @@ fn generic_segv_handler<
             unsafe { execute_stub::<H>(ctx, access_info, fault_addr) };
 
             let fault_rip = H::get_instruction_pointer(ctx);
-            CAPSTONE.with(|cs| {
-                if H::advance_instruction_pointer(ctx, cs, fault_rip).is_err() {
-                    error!("Failed to advance instruction pointer in interpreter path.");
-                    restore_default_handler_and_raise(signum);
-                }
-            });
+            if H::advance_instruction_pointer(ctx, fault_rip).is_err() {
+                error!("Failed to advance instruction pointer in interpreter path.");
+                restore_default_handler_and_raise(signum);
+            }
             return;
         }
         restore_default_handler_and_raise(signum);
@@ -421,7 +405,6 @@ pub fn install_handler() -> io::Result<()> {
         *guard = ranges;
     }
 
-    CAPSTONE.with(|_cap| {
         for (func_ptr, index) in write_functions.iter() {
             if let Some(reg) = find_memory_access_register(&cs, *func_ptr, *index == 4) {
                 unsafe {
@@ -434,7 +417,6 @@ pub fn install_handler() -> io::Result<()> {
                 );
             }
         }
-    });
 
     let handler = SigHandler::SigAction(segv_handler as extern "C" fn(_, _, *mut c_void));
     let flags = SaFlags::SA_SIGINFO;
