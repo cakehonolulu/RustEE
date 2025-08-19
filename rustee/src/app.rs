@@ -90,7 +90,6 @@ impl AppState {
 
         let scale_factor = 1.0;
 
-        // Create a texture for the GS framebuffer
         let gs_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("GS Framebuffer"),
             size: wgpu::Extent3d {
@@ -201,6 +200,9 @@ pub struct App {
     is_paused: Arc<AtomicBool>,
     scheduler: Arc<Mutex<Scheduler>>,
     ee_ctl_display_open: bool,
+    vram_view_open: bool,
+    vram_texture: Option<wgpu::Texture>,
+    vram_texture_id: Option<egui::TextureId>,
 }
 
 impl App {
@@ -244,6 +246,9 @@ impl App {
             is_paused,
             scheduler,
             ee_ctl_display_open: false,
+            vram_view_open: false,
+            vram_texture: None,
+            vram_texture_id: None,
         }
     }
 
@@ -313,6 +318,80 @@ impl App {
             Ok(_) => {}
         };
 
+        let bus = self.bus.lock().unwrap();
+        let gs = &bus.gs;
+        let (frame_data, original_width, original_height) = gs.get_framebuffer_data();
+        drop(bus);
+
+        const TARGET_WIDTH: u32 = 640;
+        const TARGET_HEIGHT: u32 = 480;
+
+        let current_texture_size = state.gs_texture.size();
+        if current_texture_size.width != TARGET_WIDTH || current_texture_size.height != TARGET_HEIGHT {
+            state.egui_renderer.renderer.free_texture(&state.gs_texture_id);
+
+            state.gs_texture = state.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("GS Framebuffer"),
+                size: wgpu::Extent3d {
+                    width: TARGET_WIDTH,
+                    height: TARGET_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            println!("Created GS texture at fixed 640x480");
+
+            state.gs_texture_id = state.egui_renderer.renderer.register_native_texture(
+                &state.device,
+                &state.gs_texture.create_view(&Default::default()),
+                wgpu::FilterMode::Linear,
+            );
+        }
+
+        if let Some(original_data) = &frame_data {
+            let mut scaled_data = vec![0u8; (TARGET_WIDTH * TARGET_HEIGHT * 4) as usize];
+
+            for y in 0..TARGET_HEIGHT {
+                for x in 0..TARGET_WIDTH {
+                    let src_x = ((x * original_width) / TARGET_WIDTH).min(original_width - 1);
+                    let src_y = ((y * original_height) / TARGET_HEIGHT).min(original_height - 1);
+
+                    let src_idx = ((src_y * original_width + src_x) * 4) as usize;
+                    let dst_idx = ((y * TARGET_WIDTH + x) * 4) as usize;
+
+                    if src_idx + 4 <= original_data.len() && dst_idx + 4 <= scaled_data.len() {
+                        scaled_data[dst_idx..dst_idx + 4].copy_from_slice(&original_data[src_idx..src_idx + 4]);
+                    }
+                }
+            }
+
+            state.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &state.gs_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &scaled_data,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(TARGET_WIDTH * 4),
+                    rows_per_image: Some(TARGET_HEIGHT),
+                },
+                wgpu::Extent3d {
+                    width: TARGET_WIDTH,
+                    height: TARGET_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
         let surface_texture = surface_texture.unwrap();
 
         let surface_view = surface_texture
@@ -335,64 +414,32 @@ impl App {
                     egui::Color32::BLACK
                 );
 
-                let bus = self.bus.lock().unwrap();
-                let gs = &bus.gs;
+                if frame_data.is_some() {
+                    let available_rect = ui.available_rect_before_wrap();
+                    let available_size = available_rect.size();
 
-                let (frame_data, width, height) = gs.get_framebuffer_data();
+                    let aspect_ratio = TARGET_WIDTH as f32 / TARGET_HEIGHT as f32;
 
-                if let Some(data) = frame_data {
-                    state.queue.write_texture(
-                                wgpu::ImageCopyTexture {
-                                    texture: &state.gs_texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d::ZERO,
-                                    aspect: wgpu::TextureAspect::All,
-                                },
-                                &data,
-                                wgpu::ImageDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(width * 4),
-                                    rows_per_image: Some(height),
-                                },
-                                wgpu::Extent3d {
-                                    width,
-                                    height,
-                                    depth_or_array_layers: 1,
-                                },
-                            );
+                    let mut scaled_width = available_size.x;
+                    let mut scaled_height = scaled_width / aspect_ratio;
 
-                            // Get the available space and calculate scaling
-                            let available_rect = ui.available_rect_before_wrap();
-                            let available_size = available_rect.size();
+                    if scaled_height > available_size.y {
+                        scaled_height = available_size.y;
+                        scaled_width = scaled_height * aspect_ratio;
+                    }
 
-                            // Original GS dimensions
-                            let original_width = width as f32;
-                            let original_height = height as f32;
-                            let aspect_ratio = original_width / original_height;
+                    let img_size = egui::vec2(scaled_width, scaled_height);
 
-                            // Calculate scaled dimensions while maintaining aspect ratio
-                            let mut scaled_width = available_size.x;
-                            let mut scaled_height = scaled_width / aspect_ratio;
+                    let center_x = available_rect.center().x - scaled_width / 2.0;
+                    let center_y = available_rect.center().y - scaled_height / 2.0;
+                    let image_rect = egui::Rect::from_min_size(
+                        egui::pos2(center_x, center_y),
+                        img_size
+                    );
 
-                            // If height is too big, scale by height instead
-                            if scaled_height > available_size.y {
-                                scaled_height = available_size.y;
-                                scaled_width = scaled_height * aspect_ratio;
-                            }
-
-                            let img_size = egui::vec2(scaled_width, scaled_height);
-
-                            // Center the image
-                            let center_x = available_rect.center().x - scaled_width / 2.0;
-                            let center_y = available_rect.center().y - scaled_height / 2.0;
-                            let image_rect = egui::Rect::from_min_size(
-                                egui::pos2(center_x, center_y),
-                                img_size
-                            );
-
-                            ui.allocate_ui_at_rect(image_rect, |ui| {
-                                ui.image((state.gs_texture_id, img_size));
-                            });
+                    ui.allocate_ui_at_rect(image_rect, |ui| {
+                        ui.image((state.gs_texture_id, img_size));
+                    });
                 }
             });
 
@@ -625,9 +672,8 @@ impl App {
                         if self.emulation_thread.is_none() {
                             let mut backend = self.emu_backend.take().unwrap();
                             let bus_arc = self.bus.clone();
-                            let scheduler_arc = self.scheduler.clone(); // Clone the scheduler Arc
+                            let scheduler_arc = self.scheduler.clone();
                             let thread = std::thread::spawn(move || {
-                                // Call the new, cleaner main loop
                                 Scheduler::run_main_loop(&mut *backend, scheduler_arc, bus_arc);
                             });
                             self.emulation_thread = Some(thread);
@@ -645,10 +691,10 @@ impl App {
                     let mut sched = self.scheduler.lock().unwrap();
                     ui.checkbox(&mut sched.disable_throttle, "Disable Frame Capping");
 
-                    ui.label(format!("Internal FPS: {:.1}", sched.internal_fps));
-
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("Frame Time: {:.2} ms", delta * 1000.0));
+                        ui.label(format!("| VSYNC/s: : {:.1}", sched.internal_fps));
+                        ui.label(format!("| GS Resolution: {}x{}", original_width, original_height));
+                        ui.label(format!("Frontend Frame Time: {:.2} ms", delta * 1000.0));
                     });
                 });
             });
@@ -667,8 +713,112 @@ impl App {
                     if ui.button("Toggle TLB View").clicked() {
                         self.tlb_view_open = !self.tlb_view_open;
                     }
+                    if ui.button("View VRAM").clicked() {
+                        self.vram_view_open = !self.vram_view_open;
+                    }
                 });
             });
+
+            if self.vram_view_open {
+                let bus = self.bus.lock().unwrap();
+                let gs = &bus.gs;
+                let (vram_data, vram_width, vram_height) = gs.get_vram_data();
+                drop(bus);
+
+                if let Some(data) = vram_data {
+                    let needs_new_texture = if let Some(existing_texture) = &self.vram_texture {
+                        let current_size = existing_texture.size();
+                        current_size.width != vram_width || current_size.height != vram_height
+                    } else {
+                        true
+                    };
+
+                    if needs_new_texture {
+                        if let Some(old_texture_id) = self.vram_texture_id {
+                            state.egui_renderer.renderer.free_texture(&old_texture_id);
+                        }
+
+                        let vram_texture = state.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("VRAM Viewer"),
+                            size: wgpu::Extent3d {
+                                width: vram_width,
+                                height: vram_height,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                            view_formats: &[],
+                        });
+
+                        let vram_texture_id = state.egui_renderer.renderer.register_native_texture(
+                            &state.device,
+                            &vram_texture.create_view(&Default::default()),
+                            wgpu::FilterMode::Linear,
+                        );
+
+                        self.vram_texture = Some(vram_texture);
+                        self.vram_texture_id = Some(vram_texture_id);
+                    }
+
+                    if let (Some(texture), Some(_)) = (&self.vram_texture, &self.vram_texture_id) {
+                        state.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &data,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(vram_width * 4),
+                                rows_per_image: Some(vram_height),
+                            },
+                            wgpu::Extent3d {
+                                width: vram_width,
+                                height: vram_height,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    }
+                }
+
+                egui::Window::new("VRAM Viewer")
+                    .resizable(true)
+                    .default_size(egui::vec2(800.0, 600.0))
+                    .show(state.egui_renderer.context(), |ui| {
+                        if let Some(texture_id) = self.vram_texture_id {
+                            ui.separator();
+                            let available_rect = ui.available_rect_before_wrap();
+                            let available_size = available_rect.size();
+
+                            let original_width = vram_width as f32;
+                            let original_height = vram_height as f32;
+                            let aspect_ratio = original_width / original_height;
+
+                            let mut scaled_width = available_size.x;
+                            let mut scaled_height = scaled_width / aspect_ratio;
+
+                            if scaled_height > available_size.y {
+                                scaled_height = available_size.y;
+                                scaled_width = scaled_height * aspect_ratio;
+                            }
+
+                            let img_size = egui::vec2(scaled_width, scaled_height);
+
+                            ScrollArea::both()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.image((texture_id, img_size));
+                                });
+                        } else {
+                            ui.label("No VRAM data available");
+                        }
+                    });
+            }
 
             if self.tlb_view_open {
                 let bus = self.bus.lock().unwrap();

@@ -1060,19 +1060,16 @@ impl JIT {
 
         let rs_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rs, 16);
         let rs_val64 = builder.ins().load(types::I64, MemFlags::new(), rs_addr, 0);
-        let rs_lo32 = builder.ins().ireduce(types::I32, rs_val64);
 
-        let imm32 = builder.ins().iconst(types::I32, imm);
+        let imm64 = builder.ins().iconst(types::I64, imm & 0xFFFF);
 
-        let or32 = builder.ins().bor(rs_lo32, imm32);
-        let result64 = builder.ins().uextend(types::I64, or32);
+        let result64 = builder.ins().bor(rs_val64, imm64);
 
         let rt_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rt, 16);
         builder.ins().store(MemFlags::new(), result64, rt_addr, 0);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
-
         None
     }
 
@@ -3031,6 +3028,7 @@ impl JIT {
         let rt_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
 
         let shift_amount = builder.ins().iconst(types::I64, sa);
+
         let result = builder.ins().ishl(rt_val, shift_amount);
 
         let rd_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rd, 16);
@@ -3038,7 +3036,6 @@ impl JIT {
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
-
         None
     }
 

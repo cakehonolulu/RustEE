@@ -285,6 +285,7 @@ impl Interpreter {
                         match funct {
                             0x2 => self.tlbwi(),
                             0x18 => self.eret(),
+                            0x38 => self.ei(),
                             0x39 => self.di(),
                             _ => panic!(
                                 "Unhandled EE Interpreter C0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
@@ -523,12 +524,13 @@ impl Interpreter {
     fn ori(&mut self, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
-        let imm = (opcode & 0xFFFF) as u32;
+        let imm = (opcode & 0xFFFF) as u64;
 
-        let rs_val = self.cpu.read_register32(rs);
+        let rs_val = self.cpu.read_register64(rs);
+
         let result = rs_val | imm;
 
-        self.cpu.write_register32(rt, result);
+        self.cpu.write_register64(rt, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -1478,6 +1480,7 @@ impl Interpreter {
         let sa = (opcode >> 6) & 0x1F;
 
         let rt_val = self.cpu.read_register64(rt);
+
         let result = rt_val << sa;
 
         self.cpu.write_register64(rd, result);
@@ -1876,6 +1879,21 @@ impl Interpreter {
                 self.cpu.set_pc(0x80000180);
             }
         }
+    }
+
+    fn ei(&mut self) {
+        let status = self.cpu.read_cop0_register(12);
+        let edi = (status >> 10) & 0x1; // Bit 10: EDI
+        let exl = (status >> 1) & 0x1;  // Bit 1: EXL
+        let erl = (status >> 2) & 0x1;  // Bit 2: ERL
+        let ksu = (status >> 3) & 0x3;  // Bits 4:3: KSU
+
+        if edi == 1 || exl == 1 || erl == 1 || ksu == 0 {
+            let new_status = status | 1u32; // Set EIE (bit 0)
+            self.cpu.write_cop0_register(12, new_status);
+        }
+
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
 

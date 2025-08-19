@@ -204,7 +204,7 @@ impl GS {
         }
     }
 
-    pub fn get_framebuffer_data(&self) -> (Option<Vec<u8>>, u32, u32) {
+    pub fn get_vram_data(&self) -> (Option<Vec<u8>>, u32, u32) {
         let fbp = self.framebuffer_fbp;
         let fbw = self.framebuffer_fbw;
         let psm = self.framebuffer_psm;
@@ -235,7 +235,63 @@ impl GS {
         (Some(frame), width, height)
     }
 
+    pub fn get_framebuffer_data(&self) -> (Option<Vec<u8>>, u32, u32) {
+        let en1 = (self.pmode & 1) != 0;
+        let en2 = (self.pmode & 2) != 0;
+        if !en1 && !en2 {
+            return (None, 0, 0);
+        }
 
+        let (dispfb, display) = if en1 {
+            (self.dispfb1, self.display1)
+        } else {
+            (self.dispfb2, self.display2)
+        };
+
+        let fbp = (dispfb & 0x1FF) as u32;
+        let fbw = ((dispfb >> 9) & 0x3F) as u32;
+        let psm = ((dispfb >> 15) & 0x1F) as u32;
+        if psm != 0 {
+            return (None, 0, 0);
+        }
+        let dbx = ((dispfb >> 32) & 0x7FF) as u32;
+        let dby = ((dispfb >> 43) & 0x7FF) as u32;
+
+        let magh = ((display >> 23) & 0xF) as u32;
+        let magv = ((display >> 27) & 0x3) as u32;
+        let dw = ((display >> 32) & 0xFFF) as u32;
+        let dh = ((display >> 44) & 0x7FF) as u32;
+
+        let display_width = dw + 1;
+        let display_height = dh + 1;
+
+        let buffer_width_pixels = fbw * 64;
+
+        let mag_h = magh + 1;
+        let mag_v = magv + 1;
+
+        let buffer_read_width = ((display_width as u64 + mag_h as u64 - 1) / mag_h as u64) as u32;
+        let buffer_read_height = ((display_height as u64 + mag_v as u64 - 1) / mag_v as u64) as u32;
+
+        let base_addr_bytes = (fbp as usize * 2048 * 4);
+
+        let mut buffer_frame = vec![0u8; (buffer_read_width as usize * buffer_read_height as usize * 4)];
+
+        for py in 0..buffer_read_height {
+            let src_y = dby + py;
+            for px in 0..buffer_read_width {
+                let src_x = dbx + px;
+                let src_addr = base_addr_bytes + (src_y as usize * buffer_width_pixels as usize + src_x as usize) * 4;
+                let dst_addr = (py as usize * buffer_read_width as usize + px as usize) * 4;
+                if src_addr + 4 <= self.vram.len() {
+                    buffer_frame[dst_addr..dst_addr + 4].copy_from_slice(&self.vram[src_addr..src_addr + 4]);
+                }
+            }
+        }
+
+        (Some(buffer_frame), buffer_read_width, buffer_read_height)
+    }
+    
     /// Write a 64-bit value to a GS register
     pub fn write64(&mut self, offset: u32, value: u64) -> GsEvent {
         let mut event: GsEvent = GsEvent::None;
