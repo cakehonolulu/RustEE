@@ -106,7 +106,6 @@ fn generic_segv_handler<
     for &(start, end, fn_id) in guard.iter() {
         if rip >= start && rip < end {
             bus_fn_id = Some(fn_id);
-            break;
         }
     }
 
@@ -137,80 +136,95 @@ fn generic_segv_handler<
 
     let is_jit = bus_fn_id.unwrap().is_jit;
 
-    CAPSTONE.with(|cs| {
         if is_jit {
             trace!("Detected JIT fastmem access! Attempting to patch call site...");
 
             let caller_ret_addr = unsafe { *(H::get_stack_pointer(ctx) as *const u64) };
 
-            const SEARCH_RANGE: u64 = 32;
-            let search_start = caller_ret_addr.saturating_sub(SEARCH_RANGE);
-            let code_slice = unsafe {
-                std::slice::from_raw_parts(search_start as *const u8, SEARCH_RANGE as usize)
-            };
+            let buf_size = 19;
+            let buf_start = rip.saturating_sub(buf_size);
+            let buf: [u8; 19] = unsafe { std::ptr::read(buf_start as *const [u8; 19]) };
 
-            let Ok(insns) = cs.disasm_all(code_slice, search_start) else {
-                error!("Failed to disassemble JIT code at 0x{:x}", search_start);
-                restore_default_handler_and_raise(signum);
-                return;
-            };
+            let movabs_opcodes = [
+                ([0x48, 0xB8], "rax"),
+                ([0x48, 0xB9], "rcx"),
+                ([0x48, 0xBA], "rdx"),
+                ([0x48, 0xBB], "rbx"),
+                ([0x48, 0xBC], "rsp"),
+                ([0x48, 0xBD], "rbp"),
+                ([0x48, 0xBE], "rsi"),
+                ([0x48, 0xBF], "rdi"),
+                ([0x49, 0xB8], "r8"),
+                ([0x49, 0xB9], "r9"),
+                ([0x49, 0xBA], "r10"),
+                ([0x49, 0xBB], "r11"),
+            ];
 
-            let mut mov_addr = 0u64;
-            let mut mov_reg: Option<RegId> = None;
+            let call_opcodes_2byte = [
+                ([0xFF, 0xD0], "rax"),
+                ([0xFF, 0xD1], "rcx"),
+                ([0xFF, 0xD2], "rdx"),
+                ([0xFF, 0xD3], "rbx"),
+                ([0xFF, 0xD4], "rsp"),
+                ([0xFF, 0xD5], "rbp"),
+                ([0xFF, 0xD6], "rsi"),
+                ([0xFF, 0xD7], "rdi"),
+            ];
 
-            for insn in insns.iter() {
-                if insn.address() >= caller_ret_addr {
-                    break;
+            let call_opcodes_3byte = [
+                ([0x41, 0xFF, 0xD0], "r8"),
+                ([0x41, 0xFF, 0xD1], "r9"),
+                ([0x41, 0xFF, 0xD2], "r10"),
+                ([0x41, 0xFF, 0xD3], "r11"),
+            ];
+
+            let mut mov_hits = Vec::new();
+            for i in 0..=buf_size - 2 {
+                if let Some((_, reg)) = movabs_opcodes.iter()
+                    .find(|(opc, _)| &buf[i as usize..i as usize + 2] == *opc) {
+                    mov_hits.push((i, *reg));
+                }
+            }
+
+            let mut call_hits = Vec::new();
+            for i in 0..=buf_size - 2 {
+                if let Some((_, reg)) = call_opcodes_2byte.iter()
+                    .find(|(opc, _)| &buf[i as usize..i as usize + 2] == *opc) {
+                    call_hits.push((i, *reg, 2));
                 }
 
-                if insn.mnemonic() == Some("mov") {
-                    if let Ok(detail) = cs.insn_detail(insn) {
-                        let operands: Vec<_> =
-                            detail.arch_detail().x86().unwrap().operands().collect();
-                        if operands.len() == 2 {
-                            if let &x86::X86OperandType::Reg(reg) = &operands[0].op_type {
-                                if let &x86::X86OperandType::Imm(_) = &operands[1].op_type {
-                                    mov_addr = insn.address();
-                                    mov_reg = Some(reg);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if insn.mnemonic() == Some("call")
-                    && (insn.address() + insn.bytes().len() as u64 == caller_ret_addr)
-                {
-                    if let Ok(detail) = cs.insn_detail(insn) {
-                        let operands: Vec<_> =
-                            detail.arch_detail().x86().unwrap().operands().collect();
-                        if operands.len() == 1 {
-                            if let (Some(mov_reg_id), &x86::X86OperandType::Reg(call_reg_id)) =
-                                (mov_reg, &operands[0].op_type)
-                            {
-                                if mov_reg_id.0 == call_reg_id.0 {
-                                    let reg_name = cs.reg_name(mov_reg_id).unwrap_or_default();
-                                    let Some(reg) = H::parse_register_from_operand(&reg_name) else { continue };
-                                    let Some(stub_addr) = STUB_ADDRS.get(&access_info) else { continue };
-                                    let Some(stub_bytes) = H::encode_stub_call(&reg, *stub_addr) else { continue };
-
-                                    if patch_instruction(mov_addr, &stub_bytes).is_ok() {
-                                        trace!("Patched JIT call at 0x{:x}", mov_addr);
-                                        unsafe { execute_stub::<H>(ctx, access_info, fault_addr) };
-                                        H::advance_instruction_pointer(
-                                            ctx,
-                                            cs,
-                                            H::get_instruction_pointer(ctx),
-                                        )
-                                        .unwrap();
-                                        return;
-                                    }
-                                }
-                            }
-                        }
+                if i + 3 <= buf_size {
+                    if let Some((_, reg)) = call_opcodes_3byte.iter()
+                        .find(|(opc, _)| &buf[i as usize..i as usize + 3] == *opc) {
+                        call_hits.push((i, *reg, 3));
                     }
                 }
             }
+            for &(mov_off, mov_reg) in &mov_hits {
+                for &(call_off, call_reg, _) in &call_hits {
+                    if mov_reg == call_reg {
+                        let movabs_addr = buf_start + mov_off;
+                        let Some(reg) = H::parse_register_from_operand(&mov_reg) else { continue };
+                        let Some(stub_addr) = STUB_ADDRS.get(&access_info) else { continue };
+                        let Some(stub_bytes) = H::encode_stub_call(&reg, *stub_addr) else { continue };
+
+                        if patch_instruction(movabs_addr, &stub_bytes).is_ok() {
+                            trace!("Patched JIT call at 0x{:x}", movabs_addr);
+                            unsafe { execute_stub::<H>(ctx, access_info, fault_addr) };
+                                            
+                            CAPSTONE.with(|cs| {
+                                H::advance_instruction_pointer(
+                                    ctx,
+                                    cs,
+                        H::get_instruction_pointer(ctx),
+                                )
+                                .unwrap();
+            });
+                            return;
+                        }
+                    }
+                }
+            }              
             error!(
                 "Failed to find instruction pair to patch JIT code at 0x{:x}",
                 caller_ret_addr
@@ -220,14 +234,15 @@ fn generic_segv_handler<
             unsafe { execute_stub::<H>(ctx, access_info, fault_addr) };
 
             let fault_rip = H::get_instruction_pointer(ctx);
-            if H::advance_instruction_pointer(ctx, cs, fault_rip).is_err() {
-                error!("Failed to advance instruction pointer in interpreter path.");
-                restore_default_handler_and_raise(signum);
-            }
+            CAPSTONE.with(|cs| {
+                if H::advance_instruction_pointer(ctx, cs, fault_rip).is_err() {
+                    error!("Failed to advance instruction pointer in interpreter path.");
+                    restore_default_handler_and_raise(signum);
+                }
+            });
             return;
         }
         restore_default_handler_and_raise(signum);
-    })
 }
 
 fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
