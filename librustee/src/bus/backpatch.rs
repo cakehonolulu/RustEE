@@ -59,62 +59,78 @@ pub trait ArchHandler {
 }
 
 
-    unsafe fn get_mov_instruction_length(ip: *const u8) -> usize {
-        let mut len: usize = 0;
+unsafe fn get_mov_instruction_length(ip: *const u8) -> usize {
+    let mut len: usize = 0;
 
-        loop {
-            let b = *ip.add(len);
-            if (0x40..=0x4F).contains(&b)
-                || b == 0x66
-                || b == 0x67
-                || b == 0xF2 || b == 0xF3
-            {
-                len += 1;
-                if len > 4 { return 0; }
-            } else {
-                break;
-            }
-        }
-
-        let opc = *ip.add(len);
-        len += 1;
-        if opc != 0x88 && opc != 0x89 && opc != 0x8A && opc != 0x8B {
-            return 0;
-        }
-
-        let modrm = *ip.add(len);
-        len += 1;
-        let mod_bits = modrm >> 6;
-        let _reg = (modrm >> 3) & 0x7;
-        let rm = modrm & 0x7;
-
-        if mod_bits == 0x3 {
-            return 0;
-        }
-
-        let mut disp_size: usize = 0;
-        if rm == 0x4 {
-            let sib = *ip.add(len);
+    loop {
+        let b = *ip.add(len);
+        if (0x40..=0x4F).contains(&b)
+            || b == 0x66
+            || b == 0x67
+            || b == 0xF2 || b == 0xF3
+        {
             len += 1;
-            let _scale = sib >> 6;
-            let _index = (sib >> 3) & 0x7;
-            let base = sib & 0x7;
-
-            if base == 0x5 && mod_bits == 0x0 {
-                disp_size = 4;
-            }
+            if len > 4 { return 0; }
+        } else {
+            break;
         }
-
-        disp_size = match mod_bits {
-            0x0 => if rm == 0x5 { 4 } else { disp_size },
-            0x1 => 1,
-            0x2 => 4,
-            _ => return 0,
-        };
-        len += disp_size;
-
-        len
     }
+
+    let opc = *ip.add(len);
+    len += 1;
+
+    let is_two_byte = opc == 0x0F;
+    let opc_effective = if is_two_byte {
+        let opc2 = *ip.add(len);
+        len += 1;
+        opc2
+    } else {
+        opc
+    };
+
+    if is_two_byte {
+        if ![0xB6, 0xB7, 0xBE, 0xBF].contains(&opc_effective) {
+            return 0;
+        }
+    } else {
+        if ![0x88, 0x89, 0x8A, 0x8B].contains(&opc_effective) {
+            return 0;
+        }
+    }
+
+    let modrm = *ip.add(len);
+    len += 1;
+    let mod_bits = modrm >> 6;
+    let _reg = (modrm >> 3) & 0x7;
+    let rm = modrm & 0x7;
+
+    if mod_bits == 0x3 {
+        return 0;
+    }
+
+    let mut disp_size: usize = 0;
+    if rm == 0x4 {
+        let sib = *ip.add(len);
+        len += 1;
+        let _scale = sib >> 6;
+        let _index = (sib >> 3) & 0x7;
+        let base = sib & 0x7;
+
+        if mod_bits == 0x0 && base == 0x5 {
+            disp_size = 4;
+        }
+    }
+
+    disp_size = match mod_bits {
+        0x0 => if rm == 0x5 { 4 } else { disp_size },
+        0x1 => 1,
+        0x2 => 4,
+        _ => return 0,
+    };
+    len += disp_size;
+
+    len
+}
 
     
 pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
