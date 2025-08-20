@@ -69,7 +69,7 @@ enum BranchInfo {
     Eret { target: BranchTarget },
 }
 
-const MAX_BLOCKS: NonZero<usize> = NonZero::new(128).unwrap();
+const MAX_BLOCKS: NonZero<usize> = NonZero::new(256).unwrap();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __break(cpu_ptr: *mut EE) {
