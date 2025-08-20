@@ -34,7 +34,6 @@ struct UnsafeSend<T>(T);
 unsafe impl<T> Send for UnsafeSend<T> {}
 
 pub struct EE {
-    bus: Arc<Mutex<Box<Bus>>>,
     pub pc: Arc<AtomicU32>,
     pub registers: Arc<[AtomicU128; 32]>,
     pub cop0_registers: Arc<[AtomicU32; 32]>,
@@ -54,7 +53,6 @@ pub struct EE {
 impl Clone for EE {
     fn clone(&self) -> EE {
         EE {
-            bus: Arc::clone(&self.bus),
             pc: self.pc.clone(),
             registers: Arc::clone(&self.registers),
             cop0_registers: Arc::clone(&self.cop0_registers),
@@ -74,19 +72,18 @@ impl Clone for EE {
 }
 
 impl EE {
-    pub fn new(bus: Arc<Mutex<Box<Bus>>>, cop0_registers: Arc<[AtomicU32; 32]>) -> Self {
+    pub fn new(bus_ptr: *mut Bus, cop0_registers: Arc<[AtomicU32; 32]>) -> Self {
         cop0_registers[15].store(0x59, Ordering::Relaxed);
 
         let registers = Arc::new(std::array::from_fn(|_| AtomicU128::new(0u128)));
         let fpu_registers = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
 
-        let mut ee = EE {
+        EE {
             pc: Arc::new(AtomicU32::new(EE_RESET_VEC)),
             registers,
             cop0_registers,
             lo: Arc::new(AtomicU128::new(0u128)),
             hi: Arc::new(AtomicU128::new(0u128)),
-            bus,
             breakpoints: HashSet::new(),
             fpu_registers,
             vu0: VU::new(4 * 1024, 4 * 1024),
@@ -95,15 +92,8 @@ impl EE {
             elf_entry_point: 0,
             elf_path: "".to_string(),
             is_paused: Arc::new(AtomicBool::new(true)),
-            bus_ptr: UnsafeSend(ptr::null_mut()),
-        };
-
-        {
-            let bus_ptr = &mut **ee.bus.lock().unwrap() as *mut Bus;
-            ee.bus_ptr = UnsafeSend(bus_ptr);
+            bus_ptr: UnsafeSend(bus_ptr),
         }
-
-        ee
     }
 
     pub fn read_fpu_register_as_u32(&self, index: usize) -> u32 {
@@ -138,8 +128,8 @@ impl EE {
             elf.program_headers.len()
         );
 
-        // Grab a mutable reference to RAM once
-        let mut bus = self.bus.lock().unwrap();
+        // Grab a mutable reference to Bus unsafely
+        let bus = unsafe { &mut *self.bus_ptr.0 };
 
         // Iterate all PT_LOAD segments
         for (i, phdr) in elf.program_headers.iter().enumerate() {
@@ -168,7 +158,7 @@ impl EE {
 
             // Zero entire memsz region (covers BSS)
             for i in paddr..(paddr + memsz) {
-                (bus.write8)(&mut bus, i as u32, 0);
+                (bus.write8)(bus, i as u32, 0);
             }
 
             // Copy file data
@@ -176,7 +166,7 @@ impl EE {
                 let data = &elf_data[offset..offset + filesz];
 
                 for (i, &b) in data.iter().enumerate() {
-                    (bus.write8)(&mut bus, (paddr + i) as u32, b);
+                    (bus.write8)(bus, (paddr + i) as u32, b);
                 }
 
                 info!(
@@ -283,47 +273,47 @@ impl CPU for EE {
     }
 
     fn write8(&mut self, addr: u32, value: u8) {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.write8)(&mut *bus, addr, value)
+        unsafe { ((*self.bus_ptr.0).write8)(&mut *self.bus_ptr.0, addr, value) }
     }
 
     fn write16(&mut self, addr: u32, value: u16) {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.write16)(&mut *bus, addr, value)
+        unsafe { ((*self.bus_ptr.0).write16)(&mut *self.bus_ptr.0, addr, value) }
     }
 
     fn write32(&mut self, addr: u32, value: u32) {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.write32)(&mut *bus, addr, value)
+        unsafe { ((*self.bus_ptr.0).write32)(&mut *self.bus_ptr.0, addr, value) }
     }
 
     fn write64(&mut self, addr: u32, value: u64) {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.write64)(&mut *bus, addr, value)
+        unsafe { ((*self.bus_ptr.0).write64)(&mut *self.bus_ptr.0, addr, value) }
+    }
+
+    fn write128(&mut self, addr: u32, value: u128) {
+        unsafe { ((*self.bus_ptr.0).write128)(&mut *self.bus_ptr.0, addr, value) }
     }
 
     fn read8(&mut self, addr: u32) -> u8 {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.read8)(&mut *bus, addr)
+        unsafe { ((*self.bus_ptr.0).read8)(&mut *self.bus_ptr.0, addr) }
     }
 
     fn read16(&mut self, addr: u32) -> u16 {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.read16)(&mut *bus, addr)
+        unsafe { ((*self.bus_ptr.0).read16)(&mut *self.bus_ptr.0, addr) }
     }
 
     fn read32(&mut self, addr: u32) -> u32 {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.read32)(&mut *bus, addr)
+        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, addr) }
     }
 
     fn read64(&mut self, addr: u32) -> u64 {
-        let mut bus = self.bus.lock().unwrap();
-        (bus.read64)(&mut *bus, addr)
+        unsafe { ((*self.bus_ptr.0).read64)(&mut *self.bus_ptr.0, addr) }
+    }
+
+    fn read128(&mut self, addr: u32) -> u128 {
+        unsafe { ((*self.bus_ptr.0).read128)(&mut *self.bus_ptr.0, addr) }
     }
 
     fn read32_raw(&mut self, addr: u32) -> u32 {
-        let bus = self.bus.lock().unwrap();
+        let bus = unsafe { &mut *self.bus_ptr.0 };
         let pa = match bus.tlb.borrow_mut().translate_address(
             addr,
             AccessType::ReadWord,

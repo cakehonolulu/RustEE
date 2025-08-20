@@ -95,6 +95,32 @@ impl Scheduler {
         });
     }
 
+    pub fn run_timeslice<B: EmulationBackend<EE> + ?Sized>(
+        backend: &mut B,
+        scheduler: &mut Scheduler,
+        bus: &mut Bus,
+    ) {
+        if scheduler.real_time_start.is_none() {
+            scheduler.real_time_start = Some(Instant::now());
+        }
+
+        let cycles_to_run = scheduler.cycles_for_next_timeslice();
+        if cycles_to_run > 0 {
+            backend.run_for_cycles(cycles_to_run);
+        }
+
+        scheduler.advance_cycles(cycles_to_run);
+        let callbacks = scheduler.drain_due_events();
+
+        if !callbacks.is_empty() {
+            for callback in callbacks {
+                callback(bus);
+            }
+        }
+
+        scheduler.sleep_if_ahead();
+    }
+
     pub fn run_main_loop<B: EmulationBackend<EE> + ?Sized>(
         backend: &mut B,
         scheduler_arc: Arc<Mutex<Scheduler>>,
@@ -123,20 +149,16 @@ impl Scheduler {
             };
 
             if !callbacks.is_empty() {
-                let mut bus = bus_arc.lock().unwrap();
                 for callback in callbacks {
-                    callback(&mut bus);
+                    let mut guard = bus_arc.lock().unwrap();
+                    let bus: &mut Bus = &mut *guard;
+                    callback(bus);
                 }
             }
 
             {
                 let scheduler = scheduler_arc.lock().unwrap();
                 scheduler.sleep_if_ahead();
-            }
-
-            let ee_arc = backend.get_cpu();
-            if ee_arc.lock().unwrap().is_paused.load(Ordering::Relaxed) {
-                std::thread::park();
             }
         }
     }

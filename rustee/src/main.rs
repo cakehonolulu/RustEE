@@ -11,6 +11,7 @@ use portable_atomic::AtomicU32;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::util::SubscriberInitExt;
 use winit::event_loop::{ControlFlow, EventLoop};
+use librustee::ee::Interpreter;
 use librustee::sched::Scheduler;
 
 mod app;
@@ -93,34 +94,42 @@ fn main() {
 
         scheduler.lock().unwrap().initialize_events();
 
-        let bus = Arc::new(Mutex::new(Bus::new(
+        let bus_box = Bus::new(
             bus_mode,
             bios,
             Arc::clone(&cop0_registers),
             Arc::clone(&scheduler),
-        )));
+        );
+        let bus = Arc::new(Mutex::new(bus_box));
 
-        let ee = Arc::new(Mutex::new(EE::new(
-            Arc::clone(&bus),
+        let bus_ptr = {
+            let mut guard = bus.lock().unwrap();
+            &mut **guard as *mut Bus
+        };
+
+        let mut ee_obj = EE::new(
+            bus_ptr,
             Arc::clone(&cop0_registers),
-        )));
+        );
 
         if let Some(breakpoints) = arguments.get_one::<Vec<u32>>("ee-breakpoint") {
             for &addr in breakpoints {
-                ee.lock().unwrap().add_breakpoint(addr);
+                ee_obj.add_breakpoint(addr);
             }
         }
 
         if let Some(elf) = arguments.get_one::<String>("elf") {
-            let mut ee_lock = ee.lock().unwrap();
-            ee_lock.elf_path = elf.to_string();
-            ee_lock.sideload_elf = true;
+            ee_obj.elf_path = elf.to_string();
+            ee_obj.sideload_elf = true;
         }
+
+        let ee = Arc::new(Mutex::new(ee_obj));
 
         let backend = arguments
             .get_one::<String>("ee-backend")
             .map(String::clone)
             .unwrap_or_else(|| "jit".to_string());
+
 
         #[cfg(not(target_arch = "wasm32"))]
         {

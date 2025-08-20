@@ -1160,8 +1160,8 @@ impl JIT {
         let store_val64 = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
         let store_val32 = builder.ins().ireduce(types::I32, store_val64);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1176,8 +1176,8 @@ impl JIT {
     }
 
     fn tlbwi(&mut self, builder: &mut FunctionBuilder, current_pc: &mut u32) -> Option<BranchInfo> {
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let local_callee = self
@@ -1210,8 +1210,8 @@ impl JIT {
 
         let addr32 = builder.ins().ireduce(types::I32, addr64);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1315,8 +1315,8 @@ impl JIT {
         let rt_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64, rt, 16);
         let store_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1688,8 +1688,8 @@ impl JIT {
 
         let addr = builder.ins().iadd_imm(rs_sext, imm);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1729,8 +1729,8 @@ impl JIT {
         let ft_addr = Self::ptr_add(builder, Arc::as_ptr(&self.cpu.lo) as *const u128 as i64, ft, 4);
         let fpu_val = Self::load32(builder, ft_addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1758,8 +1758,8 @@ impl JIT {
         let rs_val = Self::load32(builder, rs_addr);
         let addr = builder.ins().iadd_imm(rs_val, imm);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1825,8 +1825,8 @@ impl JIT {
 
         let addr = builder.ins().ireduce(types::I32, addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1884,8 +1884,8 @@ impl JIT {
 
         let byte_val = builder.ins().ireduce(types::I8, rt_val32);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -2267,8 +2267,8 @@ impl JIT {
         let rs_val = Self::load32(builder, rs_addr);
         let addr = builder.ins().iadd_imm(rs_val, imm);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -2382,8 +2382,8 @@ impl JIT {
 
         let store_val = builder.ins().ireduce(types::I16, rt_val);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -2843,8 +2843,8 @@ impl JIT {
         let aligned_addr = builder.ins().band(vaddr, align_mask);
         let aligned_addr32 = builder.ins().ireduce(types::I32, aligned_addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -2913,8 +2913,8 @@ impl JIT {
         let upper_bits_shifted = builder.ins().ushr_imm(rt_val, 64);
         let high = builder.ins().ireduce(types::I64, upper_bits_shifted);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -2948,8 +2948,8 @@ impl JIT {
         let addr = builder.ins().iadd_imm(rs_val64, imm);
         let addr32 = builder.ins().ireduce(types::I32, addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -3187,8 +3187,8 @@ impl JIT {
         let addr = builder.ins().iadd_imm(rs_val64, imm);
         let addr32 = builder.ins().ireduce(types::I32, addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -3231,8 +3231,8 @@ impl JIT {
         let p_addr = builder.ins().band(v_addr, align_mask);
         let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -3288,8 +3288,8 @@ impl JIT {
         let p_addr = builder.ins().band(v_addr, align_mask);
         let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -3359,8 +3359,8 @@ impl JIT {
 
         let data_quad = builder.ins().ushr(rt_val, shift);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -3404,8 +3404,8 @@ impl JIT {
 
         let data_quad = builder.ins().ishl(rt_val, shift);
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
+        
+        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
         let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -4044,7 +4044,7 @@ impl EmulationBackend<EE> for JIT {
         executed_cycles
     }
 
-    fn get_cpu(&self) -> Arc<Mutex<EE>> {
-        Arc::new(Mutex::new(self.cpu.clone()))
+    fn get_cpu(&mut self) -> &mut EE {
+        &mut self.cpu
     }
 }

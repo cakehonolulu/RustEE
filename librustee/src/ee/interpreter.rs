@@ -584,10 +584,8 @@ impl Interpreter {
 
         let address = rs_val.wrapping_add(imm as u32);
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write32)(&mut *bus, address, rt_val);
-        }
+        self.cpu.write32(address, rt_val);
+
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -637,9 +635,9 @@ impl Interpreter {
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
 
-        let bus = self.cpu.bus.lock().unwrap();
-        let bus_ptr: *mut Bus = &**bus as *const Bus as *mut Bus;
-        let mut tlb_refmut = bus.tlb.borrow_mut();
+        let bus = self.cpu.bus_ptr.0;
+        let bus_ptr: *mut Bus = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
+        let mut tlb_refmut = unsafe { (*bus).tlb.borrow_mut() };
         tlb_refmut.write_tlb_entry(bus_ptr, index, new_entry);
     }
 
@@ -653,10 +651,7 @@ impl Interpreter {
         let address = rs_val.wrapping_add(imm as u32);
 
         {
-            let loaded_word = {
-                let mut bus = self.cpu.bus.lock().unwrap();
-                (bus.read32)(bus.deref_mut(), address)
-            };
+            let loaded_word = self.cpu.read32(address);
 
             self.cpu.write_register32(rt, loaded_word);
         }
@@ -689,10 +684,8 @@ impl Interpreter {
         let addr = base.wrapping_add(imm as u32);
 
         let value = (self.cpu.read_register(rt) & 0xFFFF_FFFF_FFFF_FFFF) as u64;
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write64)(bus.deref_mut(), addr, value);
-        }
+
+        self.cpu.write64(addr, value);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -867,10 +860,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_byte = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read8)(bus.deref_mut(), address)
-        };
+        let loaded_byte = self.cpu.read8(address);
 
         let result = loaded_byte as i8 as i64 as u64;
         self.cpu.write_register64(rt, result);
@@ -888,10 +878,7 @@ impl Interpreter {
 
         let fpu_val = self.cpu.read_fpu_register_as_u32(ft);
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write32)(bus.deref_mut(), address, fpu_val);
-        }
+        self.cpu.write32(address, fpu_val);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -904,10 +891,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_byte = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read8)(bus.deref_mut(), address)
-        };
+        let loaded_byte = self.cpu.read8(address);
 
         let result = loaded_byte as u64;
         self.cpu.write_register64(rt, result);
@@ -935,10 +919,7 @@ impl Interpreter {
         let base = (self.cpu.read_register(rs) & 0xFFFF_FFFF) as u32;
         let addr = base.wrapping_add(imm as u32);
 
-        let loaded_value = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read64)(bus.deref_mut(), addr)
-        };
+        let loaded_value = self.cpu.read64(addr);
 
         self.cpu.write_register64(rt, loaded_value);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
@@ -967,10 +948,7 @@ impl Interpreter {
 
         let address = rs_val.wrapping_add(imm as u32);
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write8)(&mut *bus, address, rt_val as u8);
-        }
+        self.cpu.write8(address, rt_val as u8);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -1155,10 +1133,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_byte = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read16)(bus.deref_mut(), address)
-        };
+        let loaded_byte = self.cpu.read16(address);
 
         let result = loaded_byte as u64;
         self.cpu.write_register64(rt, result);
@@ -1211,10 +1186,7 @@ impl Interpreter {
         let rt_val = self.cpu.read_register32(rt);
         let address = rs_val.wrapping_add(imm as u32);
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write16)(&mut *bus, address, rt_val as u16);
-        }
+        self.cpu.write16(address, rt_val as u16);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -1410,10 +1382,7 @@ impl Interpreter {
         let vaddr = base_val.wrapping_add(offset as u32);
         let aligned_addr = vaddr & !0xF;
 
-        let value = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read128)(bus.deref_mut(), aligned_addr)
-        };
+        let value = self.cpu.read128(aligned_addr);
 
         self.cpu.write_register(rt, value.into());
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
@@ -1430,10 +1399,7 @@ impl Interpreter {
 
         let value = self.cpu.read_register(rt);
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write128)(bus.deref_mut(), aligned_addr, value);
-        }
+        self.cpu.write128(aligned_addr, value);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
@@ -1446,10 +1412,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_halfword = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read16)(bus.deref_mut(), address)
-        };
+        let loaded_halfword = self.cpu.read16(address);
 
         let result = loaded_halfword as i16 as i64 as u64;
         self.cpu.write_register64(rt, result);
@@ -1549,10 +1512,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_word = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read32)(bus.deref_mut(), address)
-        };
+        let loaded_word = self.cpu.read32(address);
 
         let result = loaded_word as u64;
         self.cpu.write_register64(rt, result);
@@ -1570,10 +1530,7 @@ impl Interpreter {
         let byte = v_addr & 0x7; // 0..7
         let p_addr = v_addr & !0x7;
 
-        let mem_quad = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read64)(bus.deref_mut(), p_addr)
-        };
+        let mem_quad = self.cpu.read64(p_addr);
 
         let rt_val = self.cpu.read_register64(rt);
         let shift = (7 - byte) * 8; // max (7-0)*8 = 56
@@ -1595,10 +1552,7 @@ impl Interpreter {
         let byte = v_addr & 0x7; // 0..7
         let p_addr = v_addr & !0x7;
 
-        let mem_quad = {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.read64)(bus.deref_mut(), p_addr)
-        };
+        let mem_quad = self.cpu.read64(p_addr);
 
         let rt_val = self.cpu.read_register64(rt);
         let shift = byte * 8; // max 56
@@ -1632,10 +1586,7 @@ impl Interpreter {
         let shift = (7 - byte) * 8; // max 56
         let data_quad = rt_val >> shift;
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write64)(bus.deref_mut(), p_addr, data_quad);
-        }
+        self.cpu.write64(p_addr, data_quad);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -1653,10 +1604,8 @@ impl Interpreter {
         let shift = byte * 8; // max 56
         let data_quad = rt_val << shift;
 
-        {
-            let mut bus = self.cpu.bus.lock().unwrap();
-            (bus.write64)(bus.deref_mut(), p_addr, data_quad);
-        }
+        self.cpu.write64(p_addr, data_quad);
+
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
@@ -1946,7 +1895,7 @@ impl EmulationBackend<EE> for Interpreter {
         executed_cycles
     }
 
-    fn get_cpu(&self) -> Arc<Mutex<EE>> {
-        Arc::new(Mutex::new(self.cpu.clone()))
+    fn get_cpu(&mut self) -> &mut EE {
+        &mut self.cpu
     }
 }

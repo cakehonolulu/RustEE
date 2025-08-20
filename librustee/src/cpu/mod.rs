@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 pub trait CPU {
     type RegisterType;
 
@@ -27,10 +25,12 @@ pub trait CPU {
     fn write16(&mut self, addr: u32, value: u16);
     fn write32(&mut self, addr: u32, value: u32);
     fn write64(&mut self, addr: u32, value: u64);
+    fn write128(&mut self, addr: u32, value: u128);
     fn read8(&mut self, addr: u32) -> u8;
     fn read16(&mut self, addr: u32) -> u16;
     fn read32(&mut self, addr: u32) -> u32;
     fn read64(&mut self, addr: u32) -> u64;
+    fn read128(&mut self, addr: u32) -> u128;
     fn read32_raw(&mut self, addr: u32) -> u32;
 
     fn fetch(&mut self) -> u32;
@@ -46,5 +46,5 @@ pub trait EmulationBackend<C> {
     fn run(&mut self);
     fn run_for_cycles(&mut self, cycles: u64) -> u64;
 
-    fn get_cpu(&self) -> Arc<Mutex<C>>;
+    fn get_cpu(&mut self) -> &mut C;
 }
