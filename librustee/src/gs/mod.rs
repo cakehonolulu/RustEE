@@ -62,6 +62,7 @@ pub struct Primitive {
     scissor: u64,
     zbuf: u64,
     frame: u64,
+    ctx: u64
 }
 
 #[derive(Debug)]
@@ -725,6 +726,7 @@ impl GS {
                 scissor: self.registers[0x40],
                 zbuf: self.registers[0x4E],
                 frame: self.registers[0x50],
+                ctx: (self.registers[0x00] >> 9) & 1,
             });
         }
     }
@@ -732,7 +734,22 @@ impl GS {
     pub fn draw_buffered(&mut self) {
         let primitives_to_draw: Vec<Primitive> = self.buffered_primitives.drain(..).collect();
 
+            let old_fbp = self.framebuffer_fbp;
+            let old_fbw = self.framebuffer_fbw;
+            let old_psm = self.framebuffer_psm;
+
         for prim in primitives_to_draw {
+            if prim.ctx == 0 {
+                self.framebuffer_fbp = (self.registers[0x4C] & 0x1FF) as u32;
+                self.framebuffer_fbw = ((self.registers[0x4C] >> 16) & 0x3F) as u32;
+                self.framebuffer_psm = ((self.registers[0x4C] >> 24) & 0x3F) as u32;
+            }
+            if prim.ctx == 1 {
+                self.framebuffer_fbp = (self.registers[0x4D] & 0x1FF) as u32;
+                self.framebuffer_fbw = ((self.registers[0x4D] >> 16) & 0x3F) as u32;
+                self.framebuffer_psm = ((self.registers[0x4D] >> 24) & 0x3F) as u32;
+            }
+
             match prim.prim_type {
                 0 => self.draw_point(&prim.vertices),
                 3 => self.draw_triangle(&prim.vertices),
@@ -740,6 +757,10 @@ impl GS {
                 _ => {},
             }
         }
+
+        self.framebuffer_fbp = old_fbp;
+        self.framebuffer_fbw = old_fbw;
+        self.framebuffer_psm = old_psm;
     }
 
     fn update_framebuffer_info(&mut self, data: u64) {
@@ -865,54 +886,7 @@ impl GS {
 
         let mut write_pixel = !z_mask;
 
-        let mut old_z: u32 = 0;
-        let z_addr: usize;
-
-        if !z_mask {
-            match z_format {
-                0 | 1 => { // PSMZ32 or PSMZ24
-                    z_addr = z_base + (y as usize * width + x as usize) * 4;
-                    if z_addr + 4 > self.vram.len() {
-                        return;
-                    }
-                    old_z = u32::from_le_bytes(self.vram[z_addr..z_addr + 4].try_into().unwrap());
-                    if z_format == 1 {
-                        old_z &= 0x00FFFFFF;
-                    }
-                    write_pixel = z_value >= old_z;
-                }
-                2 | 0xA => { // PSMZ16 or PSMZ16S
-                    z_addr = z_base + (y as usize * width + x as usize) * 2;
-                    if z_addr + 2 > self.vram.len() {
-                        return;
-                    }
-                    old_z = u16::from_le_bytes(self.vram[z_addr..z_addr + 2].try_into().unwrap()) as u32;
-                    write_pixel = z_value >= old_z;
-                }
-                _ => return,
-            }
-        } else {
-            write_pixel = true;
-            z_addr = 0;
-        }
-
         if write_pixel {
-            if !z_mask {
-                match z_format {
-                    0 | 1 => {
-                        let mut z_to_write = z_value;
-                        if z_format == 1 {
-                            z_to_write &= 0x00FFFFFF;
-                        }
-                        self.vram[z_addr..z_addr + 4].copy_from_slice(&z_to_write.to_le_bytes());
-                    }
-                    2 | 0xA => {
-                        self.vram[z_addr..z_addr + 2].copy_from_slice(&(z_value as u16).to_le_bytes());
-                    }
-                    _ => {},
-                }
-            }
-
             self.vram[pixel_addr] = v.a;
             self.vram[pixel_addr + 1] = v.r;
             self.vram[pixel_addr + 2] = v.g;
@@ -989,54 +963,7 @@ impl GS {
 
                     let mut write_pixel = !z_mask;
 
-                    let mut old_z: u32 = 0;
-                    let z_addr: usize;
-
-                    if !z_mask {
-                        match z_format {
-                            0 | 1 => {
-                                z_addr = z_base + (y as usize * width + x as usize) * 4;
-                                if z_addr + 4 > self.vram.len() {
-                                    continue;
-                                }
-                                old_z = u32::from_le_bytes(self.vram[z_addr..z_addr + 4].try_into().unwrap());
-                                if z_format == 1 {
-                                    old_z &= 0x00FFFFFF;
-                                }
-                                write_pixel = z_value >= old_z;
-                            }
-                            2 | 0xA => {
-                                z_addr = z_base + (y as usize * width + x as usize) * 2;
-                                if z_addr + 2 > self.vram.len() {
-                                    continue;
-                                }
-                                old_z = u16::from_le_bytes(self.vram[z_addr..z_addr + 2].try_into().unwrap()) as u32;
-                                write_pixel = z_value >= old_z;
-                            }
-                            _ => continue,
-                        }
-                    } else {
-                        z_addr = 0;
-                        write_pixel = true;
-                    }
-
                     if write_pixel {
-                        if !z_mask {
-                            match z_format {
-                                0 | 1 => {
-                                    let mut z_to_write = z_value;
-                                    if z_format == 1 {
-                                        z_to_write &= 0x00FFFFFF;
-                                    }
-                                    self.vram[z_addr..z_addr + 4].copy_from_slice(&z_to_write.to_le_bytes());
-                                }
-                                2 | 0xA => {
-                                    self.vram[z_addr..z_addr + 2].copy_from_slice(&(z_value as u16).to_le_bytes());
-                                }
-                                _ => {},
-                            }
-                        }
-
                         self.vram[pixel_addr] = v2.r;
                         self.vram[pixel_addr + 1] = v2.g;
                         self.vram[pixel_addr + 2] = v2.b;
@@ -1087,54 +1014,7 @@ impl GS {
 
                 let mut write_pixel = !z_mask;
 
-                let mut old_z: u32 = 0;
-                let z_addr: usize;
-
-                if !z_mask {
-                    match z_format {
-                        0 | 1 => {
-                            z_addr = z_base + (y as usize * width + x as usize) * 4;
-                            if z_addr + 4 > self.vram.len() {
-                                continue;
-                            }
-                            old_z = u32::from_le_bytes(self.vram[z_addr..z_addr + 4].try_into().unwrap());
-                            if z_format == 1 {
-                                old_z &= 0x00FFFFFF;
-                            }
-                            write_pixel = z_value >= old_z;
-                        }
-                        2 | 0xA => {
-                            z_addr = z_base + (y as usize * width + x as usize) * 2;
-                            if z_addr + 2 > self.vram.len() {
-                                continue;
-                            }
-                            old_z = u16::from_le_bytes(self.vram[z_addr..z_addr + 2].try_into().unwrap()) as u32;
-                            write_pixel = z_value >= old_z;
-                        }
-                        _ => continue,
-                    }
-                } else {
-                    z_addr = 0;
-                    write_pixel = true;
-                }
-
                 if write_pixel {
-                    if !z_mask {
-                        match z_format {
-                            0 | 1 => {
-                                let mut z_to_write = z_value;
-                                if z_format == 1 {
-                                    z_to_write &= 0x00FFFFFF;
-                                }
-                                self.vram[z_addr..z_addr + 4].copy_from_slice(&z_to_write.to_le_bytes());
-                            }
-                            2 | 0xA => {
-                                self.vram[z_addr..z_addr + 2].copy_from_slice(&(z_value as u16).to_le_bytes());
-                            }
-                            _ => {},
-                        }
-                    }
-
                     self.vram[pixel_addr] = v1.r;
                     self.vram[pixel_addr + 1] = v1.g;
                     self.vram[pixel_addr + 2] = v1.b;
