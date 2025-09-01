@@ -41,6 +41,22 @@ pub fn init_software_fastmem(bus: &mut Bus) {
             c1: 0,
             mask: 0x001F_E000,
         },
+        TlbEntry {
+            vpn2: 0x7000_0000 >> 13,
+            asid: 0,
+            g: true,
+            pfn0: 0x7000_0000 >> 12,
+            pfn1: 0,
+            v0: true,
+            d0: true,
+            v1: false,
+            d1: false,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x0000_6000,
+        },
     ];
 
     let bus_ptr = bus as *mut Bus;
@@ -51,6 +67,56 @@ pub fn init_software_fastmem(bus: &mut Bus) {
         }
         bus.tlb.borrow().install_sw_fastmem_mapping(bus, entry);
         debug!("Installed SW-FMEM TLB mapping: {:?}", entry);
+    }
+
+    let ram_start_va_k0: usize = 0x8000_0000;
+    let ram_size: usize = 32 * 1024 * 1024;
+    let ram_end_va_k0 = ram_start_va_k0 + ram_size;
+    let ram_start_vpn_k0 = ram_start_va_k0 >> PAGE_BITS;
+    let ram_end_vpn_k0 = ram_end_va_k0 >> PAGE_BITS;
+    for vpn in ram_start_vpn_k0..ram_end_vpn_k0 {
+        let va = vpn << PAGE_BITS;
+        let offset = va - ram_start_va_k0;
+        let host = bus.ram.as_ptr() as usize + offset;
+        bus.page_read[vpn] = host;
+        bus.page_write[vpn] = host;
+    }
+
+    let ram_start_va_k1: usize = 0xA000_0000;
+    let ram_end_va_k1 = ram_start_va_k1 + ram_size;
+    let ram_start_vpn_k1 = ram_start_va_k1 >> PAGE_BITS;
+    let ram_end_vpn_k1 = ram_end_va_k1 >> PAGE_BITS;
+    for vpn in ram_start_vpn_k1..ram_end_vpn_k1 {
+        let va = vpn << PAGE_BITS;
+        let offset = va - ram_start_va_k1;
+        let host = bus.ram.as_ptr() as usize + offset;
+        bus.page_read[vpn] = host;
+        bus.page_write[vpn] = host;
+    }
+
+    let bios_start_va_k0: usize = 0x9FC0_0000;
+    let bios_size: usize = 4 * 1024 * 1024;
+    let bios_end_va_k0 = bios_start_va_k0 + bios_size;
+    let bios_start_vpn_k0 = bios_start_va_k0 >> PAGE_BITS;
+    let bios_end_vpn_k0 = bios_end_va_k0 >> PAGE_BITS;
+    for vpn in bios_start_vpn_k0..bios_end_vpn_k0 {
+        let va = vpn << PAGE_BITS;
+        let offset = va - bios_start_va_k0;
+        let host = bus.bios.bytes.as_ptr() as usize + offset;
+        bus.page_read[vpn] = host;
+        bus.page_write[vpn] = 0;
+    }
+
+    let bios_start_va_k1: usize = 0xBFC0_0000;
+    let bios_end_va_k1 = bios_start_va_k1 + bios_size;
+    let bios_start_vpn_k1 = bios_start_va_k1 >> PAGE_BITS;
+    let bios_end_vpn_k1 = bios_end_va_k1 >> PAGE_BITS;
+    for vpn in bios_start_vpn_k1..bios_end_vpn_k1 {
+        let va = vpn << PAGE_BITS;
+        let offset = va - bios_start_va_k1;
+        let host = bus.bios.bytes.as_ptr() as usize + offset;
+        bus.page_read[vpn] = host;
+        bus.page_write[vpn] = 0;
     }
 
     debug!("Software Fast Memory initialized with predefined TLB mappings.");
@@ -65,11 +131,21 @@ impl Bus {
             unsafe {
                 (host as *const u8)
                     .add(offset)
-                    .cast::<u8>()
                     .read_unaligned()
             }
         } else {
-            self.retry_read(va)
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u8).read_unaligned() };
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_read8(pa)
         }
     }
 
@@ -85,7 +161,18 @@ impl Bus {
                     .read_unaligned()
             }
         } else {
-            self.retry_read(va)
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u16).read_unaligned() };
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_read16(pa)
         }
     }
 
@@ -101,7 +188,18 @@ impl Bus {
                     .read_unaligned()
             }
         } else {
-            self.retry_read(va)
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u32).read_unaligned() };
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_read32(pa)
         }
     }
 
@@ -117,7 +215,18 @@ impl Bus {
                     .read_unaligned()
             }
         } else {
-            self.retry_read(va)
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u64).read_unaligned() };
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_read64(pa)
         }
     }
 
@@ -133,7 +242,18 @@ impl Bus {
                     .read_unaligned()
             }
         } else {
-            self.retry_read(va)
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u128).read_unaligned() };
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_read128(pa)
         }
     }
 
@@ -145,11 +265,22 @@ impl Bus {
             unsafe {
                 (host as *mut u8)
                     .add(offset)
-                    .cast::<u8>()
                     .write_unaligned(value)
             }
         } else {
-            self.retry_write(va, value);
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u8).write_unaligned(value) }
+                return;
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_write8(pa, value)
         }
     }
 
@@ -165,7 +296,19 @@ impl Bus {
                     .write_unaligned(value)
             }
         } else {
-            self.retry_write(va, value);
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u16).write_unaligned(value) }
+                return;
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_write16(pa, value)
         }
     }
 
@@ -181,7 +324,19 @@ impl Bus {
                     .write_unaligned(value)
             }
         } else {
-            self.retry_write(va, value);
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u32).write_unaligned(value) }
+                return;
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_write32(pa, value)
         }
     }
 
@@ -197,7 +352,19 @@ impl Bus {
                     .write_unaligned(value)
             }
         } else {
-            self.retry_write(va, value);
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u64).write_unaligned(value) }
+                return;
+            }
+
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+            };
+            self.io_write64(pa, value)
         }
     }
 
@@ -213,177 +380,19 @@ impl Bus {
                     .write_unaligned(value)
             }
         } else {
-            self.retry_write(va, value);
-        }
-    }
-
-    fn retry_read<V>(&mut self, va: u32) -> V
-    where
-        V: TryFrom<u128>,
-        V::Error: std::fmt::Debug,
-    {
-        let access_type = match std::mem::size_of::<V>() {
-            1 => AccessType::ReadByte,
-            2 => AccessType::ReadHalfword,
-            4 => AccessType::ReadWord,
-            8 => AccessType::ReadDoubleword,
-            16 => AccessType::ReadDoubleword,
-            _ => unreachable!("Unsupported read size"),
-        };
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
-            {
-                Ok(pa) => pa,
-                Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
+            if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
+                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u128).write_unaligned(value) }
+                return;
             }
-        };
 
-        let vpn = (va as usize) >> PAGE_BITS;
-        let offset = (pa as usize) & (PAGE_SIZE - 1);
-
-        if let Some(roff) = map::RAM.contains(pa) {
-            let host = self.ram.as_ptr() as usize + (roff as usize);
-            unsafe {
-                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
-                (self.page_write.as_ptr() as *mut usize)
-                    .add(vpn)
-                    .write(host);
-                let data_ptr = (host as *const u8).add(offset);
-                let data = match std::mem::size_of::<V>() {
-                    1 => data_ptr.cast::<u8>().read_unaligned() as u128,
-                    2 => data_ptr.cast::<u16>().read_unaligned() as u128,
-                    4 => data_ptr.cast::<u32>().read_unaligned() as u128,
-                    8 => data_ptr.cast::<u64>().read_unaligned() as u128,
-                    16 => data_ptr.cast::<u128>().read_unaligned(),
-                    _ => unreachable!("Unsupported read size"),
-                };
-                return V::try_from(data).unwrap();
-            }
-        } else if let Some(boff) = map::BIOS.contains(pa) {
-            let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
-            unsafe {
-                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
-                (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
-                let data_ptr = (host as *const u8).add(offset);
-                let data = match std::mem::size_of::<V>() {
-                    1 => data_ptr.cast::<u8>().read_unaligned() as u128,
-                    2 => data_ptr.cast::<u16>().read_unaligned() as u128,
-                    4 => data_ptr.cast::<u32>().read_unaligned() as u128,
-                    8 => data_ptr.cast::<u64>().read_unaligned() as u128,
-                    16 => data_ptr.cast::<u128>().read_unaligned(),
-                    _ => unreachable!("Unsupported read size"),
-                };
-                return V::try_from(data).unwrap();
-            }
-        } else if let Some(io_offset) = map::IO.contains(pa) {
-            let aligned_addr = pa & !0x3;
-            let byte_offset = (pa & 0x3) as usize;
-            let data = self.io_read32(aligned_addr) as u128;
-            let data = (data >> (byte_offset * 8)) & 0xFF;
-            return V::try_from(data).unwrap();
-        }
-
-        let tlb = self.tlb.borrow_mut();
-        tlb.install_all_sw_fastmem_mappings(self);
-        let host = self.page_read[vpn];
-        if host == 0 {
-            panic!("SW-FMEM retry still unmapped VA=0x{:08X}", va);
-        }
-        unsafe {
-            let data_ptr = (host as *const u8).add(offset);
-            let data = match std::mem::size_of::<V>() {
-                1 => data_ptr.cast::<u8>().read_unaligned() as u128,
-                2 => data_ptr.cast::<u16>().read_unaligned() as u128,
-                4 => data_ptr.cast::<u32>().read_unaligned() as u128,
-                8 => data_ptr.cast::<u64>().read_unaligned() as u128,
-                16 => data_ptr.cast::<u128>().read_unaligned(),
-                _ => unreachable!("Unsupported read size"),
+            let pa = {
+                self.tlb.borrow_mut().translate_address(
+                    va,
+                    AccessType::ReadByte,
+                    self.operating_mode,
+                    self.read_cop0_asid()).unwrap_or_else(|e| va)
             };
-            return V::try_from(data).unwrap();
-        }
-    }
-
-    pub fn retry_write<V>(&mut self, va: u32, value: V)
-    where
-        V: TryInto<u128>,
-        V::Error: std::fmt::Debug,
-    {
-        let access_type = match std::mem::size_of::<V>() {
-            1 => AccessType::WriteByte,
-            2 => AccessType::WriteHalfword,
-            4 => AccessType::WriteWord,
-            8 => AccessType::WriteDoubleword,
-            16 => AccessType::WriteDoubleword,
-            _ => unreachable!("Unsupported write size"),
-        };
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
-            {
-                Ok(pa) => pa,
-                Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
-            }
-        };
-
-        let vpn = (va as usize) >> PAGE_BITS;
-        let offset = (pa as usize) & (PAGE_SIZE - 1);
-
-        let val128: u128 = value.try_into().unwrap();
-        let size = std::mem::size_of::<V>();
-
-        if let Some(roff) = map::RAM.contains(pa) {
-            let host = self.ram.as_ptr() as usize + (roff as usize);
-            unsafe {
-                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
-                (self.page_write.as_ptr() as *mut usize)
-                    .add(vpn)
-                    .write(host);
-                let ptr = (host as *mut u8).add(offset);
-                match size {
-                    1 => ptr.cast::<u8>().write_unaligned(val128 as u8),
-                    2 => ptr.cast::<u16>().write_unaligned(val128 as u16),
-                    4 => ptr.cast::<u32>().write_unaligned(val128 as u32),
-                    8 => ptr.cast::<u64>().write_unaligned(val128 as u64),
-                    16 => ptr.cast::<u128>().write_unaligned(val128),
-                    _ => unreachable!("Unsupported write size {}", size),
-                }
-            }
-            return;
-        } else if let Some(boff) = map::BIOS.contains(pa) {
-            let host = self.bios.bytes.as_ptr() as usize + (boff as usize);
-            unsafe {
-                (self.page_read.as_ptr() as *mut usize).add(vpn).write(host);
-                (self.page_write.as_ptr() as *mut usize).add(vpn).write(0);
-            }
-            panic!("SW-FMEM write to read-only BIOS VA=0x{:08X}", va);
-        } else if map::IO.contains(pa).is_some() {
-            match size {
-                1 => todo!("IO Write 8"),
-                2 => todo!("IO Write 16"),
-                4 => self.io_write32(pa, val128 as u32),
-                8 => todo!("IO Write 64"),
-                _ => unreachable!("Unsupported I/O write size {}", size),
-            }
-            return;
-        }
-
-        let tlb = self.tlb.borrow_mut();
-        tlb.install_all_sw_fastmem_mappings(self);
-        let host = self.page_write[vpn];
-        if host == 0 {
-            panic!("SW-FMEM retry still unmapped or read-only VA=0x{:08X}", va);
-        }
-        unsafe {
-            let ptr = (host as usize as *mut u8).add(offset);
-            match size {
-                1 => ptr.cast::<u8>().write_unaligned(val128 as u8),
-                2 => ptr.cast::<u16>().write_unaligned(val128 as u16),
-                4 => ptr.cast::<u32>().write_unaligned(val128 as u32),
-                8 => ptr.cast::<u64>().write_unaligned(val128 as u64),
-                16 => ptr.cast::<u128>().write_unaligned(val128),
-                _ => unreachable!("Unsupported write size {}", size),
-            }
+            self.io_write128(pa, value)
         }
     }
 }
@@ -409,28 +418,48 @@ impl Tlb {
             for vpn in start_vpn..end_vpn {
                 let offset = ((vpn as u64 * 4096) - start_va) & (page_size - 1);
                 let pa = (pfn0 << 12) + offset;
+                let pr = bus.page_read.as_ptr() as *mut usize;
+                let pw = bus.page_write.as_ptr() as *mut usize;
+
                 if let Some(roff) = map::RAM.contains(pa as u32) {
                     let host = bus.ram.as_ptr() as usize + roff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
                     unsafe {
                         *pr.add(vpn) = host;
                         *pw.add(vpn) = if entry.d0 { host } else { 0 };
                     }
                 } else if let Some(boff) = map::BIOS.contains(pa as u32) {
                     let host = bus.bios.bytes.as_ptr() as usize + boff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
                     unsafe {
                         *pr.add(vpn) = host;
                         *pw.add(vpn) = 0;
                     }
+                } else if let Some(soff) = map::SCRATCHPAD.contains(pa as u32) {
+                    let host = bus.scratchpad.as_ptr() as usize + soff as usize;
+                    unsafe {
+                        *pr.add(vpn) = host;
+                        *pw.add(vpn) = if entry.d0 { host } else { 0 };
+                    }
+                } else if let Some(voff) = map::VU0.contains(pa as u32) {
+                    let host = if (pa as u32) < 0x1100_1000 {
+                        bus.vu0_data.as_ptr() as usize + voff as usize
+                    } else {
+                        bus.vu0_code.as_ptr() as usize + (voff as usize - 0x1000)
+                    };
+                    unsafe {
+                        *pr.add(vpn) = host;
+                        *pw.add(vpn) = if entry.d0 { host } else { 0 };
+                    }
+                } else if let Some(voff) = map::VU1.contains(pa as u32) {
+                    let host = if (pa as u32) < 0x1100_C000 {
+                        bus.vu1_data.as_ptr() as usize + voff as usize
+                    } else {
+                        bus.vu1_code.as_ptr() as usize + (voff as usize - 0x4000)
+                    };
+                    unsafe {
+                        *pr.add(vpn) = host;
+                        *pw.add(vpn) = if entry.d0 { host } else { 0 };
+                    }
                 } else {
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
                     unsafe {
                         *pr.add(vpn) = 0;
                         *pw.add(vpn) = 0;
@@ -447,28 +476,48 @@ impl Tlb {
             for vpn in start_vpn..end_vpn {
                 let offset = ((vpn as u64 * 4096) - start_va_odd) & (page_size - 1);
                 let pa = (pfn1 << 12) + offset;
+                let pr = bus.page_read.as_ptr() as *mut usize;
+                let pw = bus.page_write.as_ptr() as *mut usize;
+
                 if let Some(roff) = map::RAM.contains(pa as u32) {
                     let host = bus.ram.as_ptr() as usize + roff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
                     unsafe {
                         *pr.add(vpn) = host;
                         *pw.add(vpn) = if entry.d1 { host } else { 0 };
                     }
                 } else if let Some(boff) = map::BIOS.contains(pa as u32) {
                     let host = bus.bios.bytes.as_ptr() as usize + boff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
                     unsafe {
                         *pr.add(vpn) = host;
                         *pw.add(vpn) = 0;
                     }
+                } else if let Some(soff) = map::SCRATCHPAD.contains(pa as u32) {
+                    let host = bus.scratchpad.as_ptr() as usize + soff as usize;
+                    unsafe {
+                        *pr.add(vpn) = host;
+                        *pw.add(vpn) = if entry.d1 { host } else { 0 };
+                    }
+                } else if let Some(voff) = map::VU0.contains(pa as u32) {
+                    let host = if (pa as u32) < 0x1100_1000 {
+                        bus.vu0_data.as_ptr() as usize + voff as usize
+                    } else {
+                        bus.vu0_code.as_ptr() as usize + (voff as usize - 0x1000)
+                    };
+                    unsafe {
+                        *pr.add(vpn) = host;
+                        *pw.add(vpn) = if entry.d1 { host } else { 0 };
+                    }
+                } else if let Some(voff) = map::VU1.contains(pa as u32) {
+                    let host = if (pa as u32) < 0x1100_C000 {
+                        bus.vu1_data.as_ptr() as usize + voff as usize
+                    } else {
+                        bus.vu1_code.as_ptr() as usize + (voff as usize - 0x4000)
+                    };
+                    unsafe {
+                        *pr.add(vpn) = host;
+                        *pw.add(vpn) = if entry.d1 { host } else { 0 };
+                    }
                 } else {
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
                     unsafe {
                         *pr.add(vpn) = 0;
                         *pw.add(vpn) = 0;
