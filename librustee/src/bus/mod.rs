@@ -75,6 +75,9 @@ pub mod map {
     pub const IO: Range = Range(0x1000_0000, 64 * 1024);
     pub const BIOS: Range = Range(0x1FC0_0000, 4 * 1024 * 1024);
     pub const SCRATCHPAD: Range = Range(0x7000_0000, 16 * 1024);
+    pub const GIF: Range = Range(0x1000_3000, 0xA0);
+    pub const VU0: Range = Range(0x1100_0000, 0x8000);
+    pub const VU1: Range = Range(0x1100_8000, 0x8000);
 }
 
 const PAGE_BITS: usize = 12; // 4 KiB pages
@@ -367,6 +370,7 @@ impl Bus {
             0x12001000 => {
                 self.gs.write64(addr, value as u64);
             },
+            0x1C0003E0 => {},
             0x1F80141C => self.dev9_delay3 = value,
             _ => {
                 panic!(

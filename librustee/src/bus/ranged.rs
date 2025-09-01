@@ -20,12 +20,12 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
             s1: false,
             c0: 0,
             c1: 0,
-            mask: 0x001F_E000,
+            mask: 0x001F_E000, // 1MB page
         },
         TlbEntry {
             vpn2: 0x1FC0_0000 >> 13,
             asid: 0,
-            g: true, // Global
+            g: true,
             pfn0: 0x1FC0_0000 >> 12,
             pfn1: 0x1FD0_0000 >> 12,
             v0: true,
@@ -36,7 +36,23 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
             s1: false,
             c0: 0,
             c1: 0,
-            mask: 0x001F_E000,
+            mask: 0x001F_E000, // 1MB page
+        },
+        TlbEntry {
+            vpn2: 0x7000_0000 >> 13, // 0x38000
+            asid: 0,
+            g: true,
+            pfn0: 0x7000_0000 >> 12, // 0x70000
+            pfn1: 0,
+            v0: true,
+            d0: true,
+            v1: false,
+            d1: false,
+            s0: false,
+            s1: false,
+            c0: 0,
+            c1: 0,
+            mask: 0x0000_6000, // 16KB page
         },
     ];
 
@@ -55,219 +71,246 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
 
 impl Bus {
     pub fn ranged_read8(&mut self, va: u32) -> u8 {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u8;
+            return unsafe { ptr.read_unaligned() }
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::ReadByte,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u8;
             unsafe { ptr.read_unaligned() }
-        } else if let Some(io_offset) = map::IO.contains(pa) {
-            todo!("IO Read 8");
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u8;
+            unsafe { ptr.read_unaligned() }
         } else if let Some(offset) = map::BIOS.contains(pa) {
             let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u8;
             unsafe { ptr.read_unaligned() }
         } else {
-            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+            self.io_read8(pa)
         }
     }
 
     pub fn ranged_read16(&mut self, va: u32) -> u16 {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u16;
+            return unsafe { ptr.read_unaligned() }
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::ReadHalfword,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u16;
             unsafe { ptr.read_unaligned() }
-        } else if let Some(io_offset) = map::IO.contains(pa) {
-            todo!("IO Read 16");
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u16;
+            unsafe { ptr.read_unaligned() }
         } else if let Some(offset) = map::BIOS.contains(pa) {
             let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u16;
             unsafe { ptr.read_unaligned() }
         } else {
-            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+            self.io_read16(pa)
         }
     }
 
     pub fn ranged_read32(&mut self, va: u32) -> u32 {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u32;
+            return unsafe { ptr.read_unaligned() }
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::ReadWord,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u32;
             unsafe { ptr.read_unaligned() }
-        } else if map::IO.contains(pa).is_some() {
-            self.io_read32(pa)
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u32;
+            unsafe { ptr.read_unaligned() }
         } else if let Some(offset) = map::BIOS.contains(pa) {
             let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u32;
             unsafe { ptr.read_unaligned() }
         } else {
-            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+            self.io_read32(pa)
         }
     }
 
     pub fn ranged_read64(&mut self, va: u32) -> u64 {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u64;
+            return unsafe { ptr.read_unaligned() }
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::ReadDoubleword,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u64;
             unsafe { ptr.read_unaligned() }
-        } else if map::IO.contains(pa).is_some() {
-            todo!("IO Read 64");
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u64;
+            unsafe { ptr.read_unaligned() }
         } else if let Some(offset) = map::BIOS.contains(pa) {
             let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u64;
             unsafe { ptr.read_unaligned() }
         } else {
-            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+            self.io_read64(pa)
         }
     }
 
     pub fn ranged_read128(&mut self, va: u32) -> u128 {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u128;
+            return unsafe { ptr.read_unaligned() }
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::ReadDoubleword,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u128;
             unsafe { ptr.read_unaligned() }
-        } else if map::IO.contains(pa).is_some() {
-            todo!("IO Read 128");
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u128;
+            unsafe { ptr.read_unaligned() }
         } else if let Some(offset) = map::BIOS.contains(pa) {
             let ptr = unsafe { self.bios.bytes.as_ptr().add(offset as usize) } as *const u128;
             unsafe { ptr.read_unaligned() }
         } else {
-            panic!("Ranged: Unhandled read from physical address 0x{:08X}", pa);
+            self.io_read128(pa)
         }
     }
 
     pub fn ranged_write8(&mut self, va: u32, val: u8) {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u8;
+            unsafe { ptr.write_unaligned(val) }
+            return;
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::WriteByte,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u8;
-            unsafe {
-                ptr.write_unaligned(val);
-            }
-        } else if map::IO.contains(pa).is_some() {
-            todo!("IO Write 8");
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u8;
+            unsafe { ptr.write_unaligned(val) }
         } else {
-            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+            self.io_write8(pa, val)
         }
     }
 
     pub fn ranged_write16(&mut self, va: u32, val: u16) {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u16;
+            unsafe { ptr.write_unaligned(val) }
+            return;
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::WriteHalfword,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u16;
-            unsafe {
-                ptr.write_unaligned(val);
-            }
-        } else if map::IO.contains(pa).is_some() {
-            todo!("IO Write 16");
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u16;
+            unsafe { ptr.write_unaligned(val) }
         } else {
-            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+            self.io_write16(pa, val)
         }
     }
 
     pub fn ranged_write32(&mut self, va: u32, val: u32) {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u32;
+            unsafe { ptr.write_unaligned(val) }
+            return;
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::WriteWord,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u32;
-            unsafe {
-                ptr.write_unaligned(val);
-            }
-        } else if map::IO.contains(pa).is_some() {
-            self.io_write32(pa, val)
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u32;
+            unsafe { ptr.write_unaligned(val) }
         } else {
-            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+            self.io_write32(pa, val)
         }
     }
 
     pub fn ranged_write64(&mut self, va: u32, val: u64) {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u64;
+            unsafe { ptr.write_unaligned(val) }
+            return;
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
             match tlb.translate_address(
@@ -277,45 +320,74 @@ impl Bus {
                 self.read_cop0_asid(),
             ) {
                 Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
+                Err(e) => panic!("Ranged: TLB exception on write64: {:?}, VA: 0x{:08X}", e, va),
             }
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
-            let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u64;
-            unsafe {
-                ptr.write_unaligned(val);
-            }
-        } else if map::IO.contains(pa).is_some() {
-            todo!("IO Write 64");
+            let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) as *mut u64 };
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize)as *mut u64 };
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::VU0.contains(pa) {
+            let ptr = if pa < 0x1100_4000 {
+                unsafe { self.vu0_data.as_mut_ptr().add(offset as usize) as *mut u64 }
+            } else {
+                unsafe { self.vu0_code.as_mut_ptr().add((offset - 0x4000) as usize) as *mut u64 }
+            };
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::VU1.contains(pa) {
+            let ptr = if pa < 0x1100_C000 {
+                unsafe { self.vu1_data.as_mut_ptr().add(offset as usize) as *mut u64 }
+            } else {
+                unsafe { self.vu1_code.as_mut_ptr().add((offset - 0x4000) as usize) as *mut u64 }
+            };
+            unsafe { ptr.write_unaligned(val) }
         } else {
-            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+            self.io_write64(pa, val)
         }
     }
 
     pub fn ranged_write128(&mut self, va: u32, val: u128) {
+        if let Some(offset) = map::SCRATCHPAD.contains(va) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u128;
+            unsafe { ptr.write_unaligned(val) }
+            return;
+        }
+
         let pa = {
             let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            tlb.translate_address(
                 va,
                 AccessType::WriteDoubleword,
                 self.operating_mode,
                 self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u128;
-            unsafe {
-                ptr.write_unaligned(val);
-            }
-        } else if map::IO.contains(pa).is_some() {
-            todo!("IO Write 128");
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) } as *mut u128;
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::VU0.contains(pa) {
+            let ptr = if pa < 0x1100_4000 {
+                unsafe { self.vu0_data.as_mut_ptr().add(offset as usize) as *mut u128 }
+            } else {
+                unsafe { self.vu0_code.as_mut_ptr().add((offset - 0x4000) as usize) as *mut u128 }
+            };
+            unsafe { ptr.write_unaligned(val) }
+        } else if let Some(offset) = map::VU1.contains(pa) {
+            let ptr = if pa < 0x1100_C000 {
+                unsafe { self.vu1_data.as_mut_ptr().add(offset as usize) as *mut u128 }
+            } else {
+                unsafe { self.vu1_code.as_mut_ptr().add((offset - 0x4000) as usize) as *mut u128 }
+            };
+            unsafe { ptr.write_unaligned(val) }
         } else {
-            panic!("Ranged: Unhandled write to physical address 0x{:08X}", pa);
+            self.io_write128(pa, val)
         }
     }
 }
