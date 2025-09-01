@@ -637,8 +637,7 @@ impl Interpreter {
 
         let bus = self.cpu.bus_ptr.0;
         let bus_ptr: *mut Bus = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let mut tlb_refmut = unsafe { (*bus).tlb.borrow_mut() };
-        tlb_refmut.write_tlb_entry(bus_ptr, index, new_entry);
+        unsafe { (*bus).tlb.write_tlb_entry(bus_ptr, index, new_entry); }
     }
 
     fn lw(&mut self, opcode: u32) {

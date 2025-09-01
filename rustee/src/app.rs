@@ -822,7 +822,6 @@ impl App {
 
             if self.tlb_view_open {
                 let bus = self.bus.lock().unwrap();
-                let tlb = bus.tlb.borrow();
                 egui::Window::new("TLB Viewer")
                     .resizable(true)
                     .default_size(egui::vec2(800.0, 400.0))
@@ -893,7 +892,7 @@ impl App {
                                     });
                                 })
                                 .body(|mut body| {
-                                    for (index, entry) in tlb.entries.iter().enumerate() {
+                                    for (index, entry) in bus.tlb.entries.iter().enumerate() {
                                         if let Some(e) = entry {
                                             body.row(18.0, |mut row| {
                                                 row.col(|ui| {

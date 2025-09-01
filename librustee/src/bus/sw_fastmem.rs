@@ -45,11 +45,8 @@ pub fn init_software_fastmem(bus: &mut Bus) {
 
     let bus_ptr = bus as *mut Bus;
     for (index, entry) in default_mappings.iter().enumerate() {
-        {
-            let mut tlb_ref = bus.tlb.borrow_mut();
-            tlb_ref.write_tlb_entry(bus_ptr, index, *entry);
-        }
-        bus.tlb.borrow().install_sw_fastmem_mapping(bus, entry);
+        bus.tlb.write_tlb_entry(bus_ptr, index, *entry);
+        //bus.tlb.install_sw_fastmem_mapping(bus, entry);
         debug!("Installed SW-FMEM TLB mapping: {:?}", entry);
     }
 
@@ -230,13 +227,10 @@ impl Bus {
             16 => AccessType::ReadDoubleword,
             _ => unreachable!("Unsupported read size"),
         };
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
-            {
-                Ok(pa) => pa,
-                Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
-            }
+        let pa = match self.tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
+        {
+            Ok(pa) => pa,
+            Err(e) => panic!("SW-FMEM TLB exception on read VA=0x{:08X}: {:?}", va, e),
         };
 
         let vpn = (va as usize) >> PAGE_BITS;
@@ -284,8 +278,7 @@ impl Bus {
             return V::try_from(data).unwrap();
         }
 
-        let tlb = self.tlb.borrow_mut();
-        tlb.install_all_sw_fastmem_mappings(self);
+        //self.tlb.install_all_sw_fastmem_mappings(self);
         let host = self.page_read[vpn];
         if host == 0 {
             panic!("SW-FMEM retry still unmapped VA=0x{:08X}", va);
@@ -317,13 +310,10 @@ impl Bus {
             16 => AccessType::WriteDoubleword,
             _ => unreachable!("Unsupported write size"),
         };
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
-            {
-                Ok(pa) => pa,
-                Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
-            }
+        let pa = match self.tlb.translate_address(va, access_type, self.operating_mode, self.read_cop0_asid())
+        {
+            Ok(pa) => pa,
+            Err(e) => panic!("SW-FMEM TLB exception on write VA=0x{:08X}: {:?}", va, e),
         };
 
         let vpn = (va as usize) >> PAGE_BITS;
@@ -368,8 +358,7 @@ impl Bus {
             return;
         }
 
-        let tlb = self.tlb.borrow_mut();
-        tlb.install_all_sw_fastmem_mappings(self);
+        //self.tlb.install_all_sw_fastmem_mappings(self);
         let host = self.page_write[vpn];
         if host == 0 {
             panic!("SW-FMEM retry still unmapped or read-only VA=0x{:08X}", va);
@@ -390,52 +379,34 @@ impl Bus {
 
 use super::tlb::Tlb;
 impl Tlb {
-    pub fn install_all_sw_fastmem_mappings(&self, bus: &Bus) {
+    pub fn install_all_sw_fastmem_mappings(&self, bus: &mut Bus) {
         for entry in self.entries.iter().flatten() {
             self.install_sw_fastmem_mapping(bus, entry);
         }
     }
 
-    pub fn install_sw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
-        let page_size = mask_to_page_size(entry.mask) as u64;
-        let start_va = (entry.vpn2 as u64) << 13;
-        let pfn0 = entry.pfn0 as u64;
-        let pfn1 = entry.pfn1 as u64;
+    pub fn install_sw_fastmem_mapping(&self, bus: &mut Bus, entry: &TlbEntry) {
+        let page_size = mask_to_page_size(entry.mask) as u32;
+        let start_va = (entry.vpn2 << 13) as u32;
 
         // even page
         if entry.v0 {
             let start_vpn = (start_va >> 12) as usize;
             let end_vpn = ((start_va + page_size) >> 12) as usize;
             for vpn in start_vpn..end_vpn {
-                let offset = ((vpn as u64 * 4096) - start_va) & (page_size - 1);
-                let pa = (pfn0 << 12) + offset;
-                if let Some(roff) = map::RAM.contains(pa as u32) {
-                    let host = bus.ram.as_ptr() as usize + roff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
-                    unsafe {
-                        *pr.add(vpn) = host;
-                        *pw.add(vpn) = if entry.d0 { host } else { 0 };
-                    }
-                } else if let Some(boff) = map::BIOS.contains(pa as u32) {
-                    let host = bus.bios.bytes.as_ptr() as usize + boff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
-                    unsafe {
-                        *pr.add(vpn) = host;
-                        *pw.add(vpn) = 0;
-                    }
+                let offset = (((vpn as u32) << 12) - start_va) & (page_size - 1);
+                let pa = (entry.pfn0 << 12) + offset;
+                let host = if let Some(roff) = map::RAM.contains(pa) {
+                    bus.ram.as_ptr() as usize + (roff as usize)
+                } else if let Some(boff) = map::BIOS.contains(pa) {
+                    bus.bios.bytes.as_ptr() as usize + (boff as usize)
+                } else if let Some(soff) = map::SCRATCHPAD.contains(pa) {
+                    bus.scratchpad.as_ptr() as usize + (soff as usize)
                 } else {
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
-                    unsafe {
-                        *pr.add(vpn) = 0;
-                        *pw.add(vpn) = 0;
-                    }
-                }
+                    0
+                };
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d0 && host != 0 { host } else { 0 };
             }
         }
 
@@ -445,43 +416,27 @@ impl Tlb {
             let start_vpn = (start_va_odd >> 12) as usize;
             let end_vpn = ((start_va_odd + page_size) >> 12) as usize;
             for vpn in start_vpn..end_vpn {
-                let offset = ((vpn as u64 * 4096) - start_va_odd) & (page_size - 1);
-                let pa = (pfn1 << 12) + offset;
-                if let Some(roff) = map::RAM.contains(pa as u32) {
-                    let host = bus.ram.as_ptr() as usize + roff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
-                    unsafe {
-                        *pr.add(vpn) = host;
-                        *pw.add(vpn) = if entry.d1 { host } else { 0 };
-                    }
-                } else if let Some(boff) = map::BIOS.contains(pa as u32) {
-                    let host = bus.bios.bytes.as_ptr() as usize + boff as usize;
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
-                    unsafe {
-                        *pr.add(vpn) = host;
-                        *pw.add(vpn) = 0;
-                    }
+                let offset = (((vpn as u32) << 12) - start_va_odd) & (page_size - 1);
+                let pa = (entry.pfn1 << 12) + offset;
+                let host = if let Some(roff) = map::RAM.contains(pa) {
+                    bus.ram.as_ptr() as usize + (roff as usize)
+                } else if let Some(boff) = map::BIOS.contains(pa) {
+                    bus.bios.bytes.as_ptr() as usize + (boff as usize)
+                } else if let Some(soff) = map::SCRATCHPAD.contains(pa) {
+                    bus.scratchpad.as_ptr() as usize + (soff as usize)
                 } else {
-                    let pr = bus.page_read.as_ptr() as *mut usize;
-                    let pw = bus.page_write.as_ptr() as *mut usize;
-
-                    unsafe {
-                        *pr.add(vpn) = 0;
-                        *pw.add(vpn) = 0;
-                    }
-                }
+                    0
+                };
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d1 && host != 0 { host } else { 0 };
             }
         }
     }
 
     pub fn clear_sw_fastmem_mapping(&self, bus: &mut Bus, entry: &TlbEntry) {
-        let page_size = mask_to_page_size(entry.mask) as u64;
-        let start_va = (entry.vpn2 as u64) << 13;
-        let total_size = 2 * page_size;
+        let page_size = mask_to_page_size(entry.mask) as u32;
+        let start_va = (entry.vpn2 << 13) as u32;
+        let total_size = page_size * 2;
         let start_vpn = (start_va >> 12) as usize;
         let end_vpn = ((start_va + total_size) >> 12) as usize;
         for vpn in start_vpn..end_vpn {

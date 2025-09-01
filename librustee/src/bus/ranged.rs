@@ -44,8 +44,7 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
 
     for (index, entry) in default_mappings.iter().enumerate() {
         {
-            let mut tlb_ref = bus.tlb.borrow_mut();
-            tlb_ref.write_tlb_entry(bus_ptr, index, *entry);
+            bus.tlb.write_tlb_entry(bus_ptr, index, *entry);
         }
         tracing::debug!("Installed TLB mapping: {:?}", entry);
     }
@@ -55,18 +54,8 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
 
 impl Bus {
     pub fn ranged_read8(&mut self, va: u32) -> u8 {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::ReadByte,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::ReadByte, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on read");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u8;
@@ -82,18 +71,8 @@ impl Bus {
     }
 
     pub fn ranged_read16(&mut self, va: u32) -> u16 {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::ReadHalfword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::ReadHalfword, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on read");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u16;
@@ -109,18 +88,8 @@ impl Bus {
     }
 
     pub fn ranged_read32(&mut self, va: u32) -> u32 {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::ReadWord,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::ReadWord, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on read");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u32;
@@ -136,18 +105,8 @@ impl Bus {
     }
 
     pub fn ranged_read64(&mut self, va: u32) -> u64 {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::ReadDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::ReadDoubleword, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on read");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u64;
@@ -163,18 +122,8 @@ impl Bus {
     }
 
     pub fn ranged_read128(&mut self, va: u32) -> u128 {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::ReadDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on read: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::ReadDoubleword, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on read");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_ptr().add(offset as usize) } as *const u128;
@@ -190,18 +139,8 @@ impl Bus {
     }
 
     pub fn ranged_write8(&mut self, va: u32, val: u8) {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::WriteByte,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::WriteByte, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on write");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u8;
@@ -216,18 +155,8 @@ impl Bus {
     }
 
     pub fn ranged_write16(&mut self, va: u32, val: u16) {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::WriteHalfword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::WriteHalfword, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on write");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u16;
@@ -242,18 +171,8 @@ impl Bus {
     }
 
     pub fn ranged_write32(&mut self, va: u32, val: u32) {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::WriteWord,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::WriteWord, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on write");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u32;
@@ -268,18 +187,8 @@ impl Bus {
     }
 
     pub fn ranged_write64(&mut self, va: u32, val: u64) {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::WriteDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::WriteDoubleword, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on write");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u64;
@@ -294,18 +203,8 @@ impl Bus {
     }
 
     pub fn ranged_write128(&mut self, va: u32, val: u128) {
-        let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
-                va,
-                AccessType::WriteDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write: {:?}", e),
-            }
-        };
+        let pa = self.tlb.translate_address(va, AccessType::WriteDoubleword, self.operating_mode, self.read_cop0_asid())
+            .expect("Ranged: TLB exception on write");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) } as *mut u128;

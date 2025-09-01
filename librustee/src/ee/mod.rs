@@ -314,15 +314,8 @@ impl CPU for EE {
 
     fn read32_raw(&mut self, addr: u32) -> u32 {
         let bus = unsafe { &mut *self.bus_ptr.0 };
-        let pa = match bus.tlb.borrow_mut().translate_address(
-            addr,
-            AccessType::ReadWord,
-            bus.operating_mode,
-            bus.read_cop0_asid(),
-        ) {
-            Ok(pa) => pa,
-            Err(_) => return 0,
-        };
+        let pa = bus.tlb.translate_address(addr, AccessType::ReadWord, bus.operating_mode, bus.read_cop0_asid())
+            .expect("Ranged: TLB exception on write");
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { bus.ram.as_ptr().add(offset as usize) } as *const u32;
