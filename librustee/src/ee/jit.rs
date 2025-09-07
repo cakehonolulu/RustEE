@@ -158,7 +158,7 @@ pub extern "C" fn __bus_read128(
 pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
     unsafe {
         let bus = crate::bus::BUS_PTR as *mut Bus;
-        let mut tlb_ref = (*bus).tlb.borrow_mut();
+        let tlb = &mut (*bus).tlb;
 
         let index = (((*bus).read_cop0_register(0)) & 0x3F) as usize;
 
@@ -203,7 +203,7 @@ pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
             mask: page_mask,
         };
 
-        tlb_ref.write_tlb_entry(bus, index, new_entry);
+        tlb.write_tlb_entry(bus, index, new_entry);
     }
 }
 

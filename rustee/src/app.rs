@@ -822,7 +822,7 @@ impl App {
 
             if self.tlb_view_open {
                 let bus = self.bus.lock().unwrap();
-                let tlb = bus.tlb.borrow();
+                let tlb = &bus.tlb;
                 egui::Window::new("TLB Viewer")
                     .resizable(true)
                     .default_size(egui::vec2(800.0, 400.0))

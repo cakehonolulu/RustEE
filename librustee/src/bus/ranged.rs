@@ -57,11 +57,11 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
     ];
 
     let bus_ptr = bus as *mut Bus;
+    let tlb = &mut (*bus).tlb;
 
     for (index, entry) in default_mappings.iter().enumerate() {
         {
-            let mut tlb_ref = bus.tlb.borrow_mut();
-            tlb_ref.write_tlb_entry(bus_ptr, index, *entry);
+            tlb.write_tlb_entry(bus_ptr, index, *entry);
         }
         tracing::debug!("Installed TLB mapping: {:?}", entry);
     }
@@ -76,13 +76,18 @@ impl Bus {
             return unsafe { ptr.read_unaligned() }
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::ReadByte,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -106,13 +111,18 @@ impl Bus {
             return unsafe { ptr.read_unaligned() }
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::ReadHalfword,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -136,13 +146,18 @@ impl Bus {
             return unsafe { ptr.read_unaligned() }
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::ReadWord,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -166,13 +181,18 @@ impl Bus {
             return unsafe { ptr.read_unaligned() }
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::ReadDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -196,13 +216,18 @@ impl Bus {
             return unsafe { ptr.read_unaligned() }
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::ReadDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -227,13 +252,18 @@ impl Bus {
             return;
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::WriteByte,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -255,13 +285,18 @@ impl Bus {
             return;
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::WriteHalfword,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -283,13 +318,18 @@ impl Bus {
             return;
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::WriteWord,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 
@@ -311,17 +351,19 @@ impl Bus {
             return;
         }
 
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
+
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
-            match tlb.translate_address(
+            let tlb = &mut self.tlb;
+            tlb.translate_address(
                 va,
                 AccessType::WriteDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
-            ) {
-                Ok(pa) => pa,
-                Err(e) => panic!("Ranged: TLB exception on write64: {:?}, VA: 0x{:08X}", e, va),
-            }
+                operating_mode,
+                cop0_asid,
+            ).unwrap_or_else(|e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -355,14 +397,18 @@ impl Bus {
             unsafe { ptr.write_unaligned(val) }
             return;
         }
+        let cop0_asid = {
+            self.read_cop0_asid()
+        };
+        let operating_mode = self.operating_mode;
 
         let pa = {
-            let mut tlb = self.tlb.borrow_mut();
+            let tlb = &mut self.tlb;
             tlb.translate_address(
                 va,
                 AccessType::WriteDoubleword,
-                self.operating_mode,
-                self.read_cop0_asid(),
+                operating_mode,
+                cop0_asid,
             ).unwrap_or_else(|e| va)
         };
 

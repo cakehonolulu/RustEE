@@ -94,7 +94,7 @@ pub struct Bus {
     vu1_data: Vec<u8>, // 16 KB VU1 data
     pub(crate) scratchpad: Vec<u8>,
 
-    pub tlb: RefCell<Tlb>,
+    pub tlb: Tlb,
     pub(crate) operating_mode: OperatingMode,
 
     #[cfg(unix)]
@@ -203,7 +203,7 @@ impl Bus {
             hw_base: null_mut(),
             hw_size: 0,
             arena: None,
-            tlb: Tlb::new().into(),
+            tlb: Tlb::new(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers: Arc::clone(&cop0_registers),
             #[cfg(unix)]

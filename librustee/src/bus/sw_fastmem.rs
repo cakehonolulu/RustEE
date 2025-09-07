@@ -62,10 +62,11 @@ pub fn init_software_fastmem(bus: &mut Bus) {
     let bus_ptr = bus as *mut Bus;
     for (index, entry) in default_mappings.iter().enumerate() {
         {
-            let mut tlb_ref = bus.tlb.borrow_mut();
-            tlb_ref.write_tlb_entry(bus_ptr, index, *entry);
+            let tlb = &mut bus.tlb;
+            tlb.write_tlb_entry(bus_ptr, index, *entry);
         }
-        bus.tlb.borrow().install_sw_fastmem_mapping(bus, entry);
+
+        bus.tlb.install_sw_fastmem_mapping(bus, entry);
         debug!("Installed SW-FMEM TLB mapping: {:?}", entry);
     }
 
@@ -138,12 +139,19 @@ impl Bus {
                 return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u8).read_unaligned() };
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_read8(pa)
         }
@@ -165,12 +173,19 @@ impl Bus {
                 return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u16).read_unaligned() };
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_read16(pa)
         }
@@ -192,12 +207,19 @@ impl Bus {
                 return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u32).read_unaligned() };
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_read32(pa)
         }
@@ -219,12 +241,19 @@ impl Bus {
                 return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u64).read_unaligned() };
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_read64(pa)
         }
@@ -246,12 +275,19 @@ impl Bus {
                 return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u128).read_unaligned() };
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_read128(pa)
         }
@@ -273,12 +309,19 @@ impl Bus {
                 return;
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_write8(pa, value)
         }
@@ -301,12 +344,19 @@ impl Bus {
                 return;
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_write16(pa, value)
         }
@@ -329,12 +379,19 @@ impl Bus {
                 return;
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_write32(pa, value)
         }
@@ -357,12 +414,19 @@ impl Bus {
                 return;
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_write64(pa, value)
         }
@@ -385,12 +449,19 @@ impl Bus {
                 return;
             }
 
+            let cop0_asid = {
+                self.read_cop0_asid()
+            };
+            let operating_mode = self.operating_mode;
+
             let pa = {
-                self.tlb.borrow_mut().translate_address(
+                let tlb = &mut self.tlb;
+                tlb.translate_address(
                     va,
-                    AccessType::ReadByte,
-                    self.operating_mode,
-                    self.read_cop0_asid()).unwrap_or_else(|e| va)
+                    AccessType::WriteDoubleword,
+                    operating_mode,
+                    cop0_asid,
+                ).unwrap_or_else(|e| va)
             };
             self.io_write128(pa, value)
         }

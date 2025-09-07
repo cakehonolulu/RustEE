@@ -313,12 +313,18 @@ impl CPU for EE {
     }
 
     fn read32_raw(&mut self, addr: u32) -> u32 {
+        let cop0_asid = {
+            let bus = unsafe { &mut *self.bus_ptr.0 };
+            bus.read_cop0_asid()
+        };
         let bus = unsafe { &mut *self.bus_ptr.0 };
-        let pa = match bus.tlb.borrow_mut().translate_address(
+        let tlb = &mut (*bus).tlb;
+        let operating_mode = bus.operating_mode;
+        let pa = match tlb.translate_address(
             addr,
             AccessType::ReadWord,
-            bus.operating_mode,
-            bus.read_cop0_asid(),
+            operating_mode,
+            cop0_asid,
         ) {
             Ok(pa) => pa,
             Err(_) => return 0,
