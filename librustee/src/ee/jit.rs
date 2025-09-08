@@ -11,7 +11,6 @@ use cranelift_codegen::{isa, settings};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
-use lru::LruCache;
 use portable_atomic::{AtomicU32, AtomicU128};
 use std::collections::HashMap;
 use std::fs;
@@ -20,6 +19,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use target_lexicon::Triple;
 use tracing::{debug, error};
+use std::mem;
 
 #[derive(Clone, Copy)]
 pub struct Block {
@@ -31,68 +31,141 @@ pub struct Block {
     pub cycle_count: u32,
 }
 
+const NUM_SETS: usize = 512;
+const ASSOCIATIVITY: usize = 4;
+
 #[derive(Clone, Copy)]
 struct CacheEntry {
     tag: u32,
     block: Block,
 }
 
-const NUM_SETS: usize = 512;
-const ASSOCIATIVITY: usize = 4;
+struct Set {
+    entries: [Option<CacheEntry>; ASSOCIATIVITY],
+    order: [usize; ASSOCIATIVITY],
+}
 
-struct BlockCache {
-    sets: Vec<[Option<CacheEntry>; ASSOCIATIVITY]>,
+impl Set {
+    fn new() -> Self {
+        let entries: [Option<CacheEntry>; ASSOCIATIVITY] = {
+            let mut a: [Option<CacheEntry>; ASSOCIATIVITY] = unsafe { mem::zeroed() };
+            for i in 0..ASSOCIATIVITY {
+                a[i] = None;
+            }
+            a
+        };
+
+        let mut order = [0usize; ASSOCIATIVITY];
+        for i in 0..ASSOCIATIVITY {
+            order[i] = i;
+        }
+
+        Set { entries, order }
+    }
+}
+
+pub struct BlockCache {
+    sets: Vec<Set>,
 }
 
 impl BlockCache {
-    fn new() -> Self {
-        BlockCache {
-            sets: vec![[None; ASSOCIATIVITY]; NUM_SETS],
+    pub fn new() -> Self {
+        let mut sets = Vec::with_capacity(NUM_SETS);
+        for _ in 0..NUM_SETS {
+            sets.push(Set::new());
         }
+        BlockCache { sets }
     }
 
     #[inline(always)]
     fn get_set_index(&self, pc: u32) -> usize {
-        (pc as usize) & (NUM_SETS - 1)
+        ((pc as usize) >> 2) & (NUM_SETS - 1)
     }
 
+    #[inline(always)]
     pub fn get_mut(&mut self, pc: u32) -> Option<&mut Block> {
         let set_index = self.get_set_index(pc);
         let set = &mut self.sets[set_index];
 
-        for entry in set.iter_mut() {
-            if let Some(cache_entry) = entry {
+        for pos in 0..ASSOCIATIVITY {
+            let entry_idx = set.order[pos];
+            if let Some(ref mut cache_entry) = set.entries[entry_idx] {
                 if cache_entry.tag == pc {
-                    return Some(&mut cache_entry.block);
+                    if pos != 0 {
+                        let found = set.order[pos];
+                        for k in (1..=pos).rev() {
+                            set.order[k] = set.order[k - 1];
+                        }
+                        set.order[0] = found;
+                    }
+                    let mru_idx = set.order[0];
+                    return set.entries[mru_idx].as_mut().map(|e| &mut e.block);
                 }
             }
         }
         None
     }
 
+    #[inline(always)]
     pub fn insert(&mut self, pc: u32, block: Block) {
         let set_index = self.get_set_index(pc);
         let set = &mut self.sets[set_index];
 
-        for entry in set.iter_mut() {
-            if entry.is_none() {
-                *entry = Some(CacheEntry { tag: pc, block });
+        for pos in 0..ASSOCIATIVITY {
+            let entry_idx = set.order[pos];
+            if set.entries[entry_idx].is_none() {
+                set.entries[entry_idx] = Some(CacheEntry { tag: pc, block });
+                if pos != 0 {
+                    let found = set.order[pos];
+                    for k in (1..=pos).rev() {
+                        set.order[k] = set.order[k - 1];
+                    }
+                    set.order[0] = found;
+                }
                 return;
             }
         }
 
-        set[0] = Some(CacheEntry { tag: pc, block });
+        let lru_pos = ASSOCIATIVITY - 1;
+        let lru_idx = set.order[lru_pos];
+        set.entries[lru_idx] = Some(CacheEntry { tag: pc, block });
+
+        for k in (1..=lru_pos).rev() {
+            set.order[k] = set.order[k - 1];
+        }
+        set.order[0] = lru_idx;
+    }
+
+    #[inline(always)]
+    pub fn remove(&mut self, pc: u32) -> Option<Block> {
+        let set_index = self.get_set_index(pc);
+        let set = &mut self.sets[set_index];
+
+        for pos in 0..ASSOCIATIVITY {
+            let entry_idx = set.order[pos];
+            if let Some(ref e) = set.entries[entry_idx] {
+                if e.tag == pc {
+                    return set.entries[entry_idx].take().map(|ce| {
+                        if pos != ASSOCIATIVITY - 1 {
+                            for k in pos..(ASSOCIATIVITY - 1) {
+                                set.order[k] = set.order[k + 1];
+                            }
+                            set.order[ASSOCIATIVITY - 1] = entry_idx;
+                        }
+                        ce.block
+                    });
+                }
+            }
+        }
+        None
     }
 }
-
 struct UnsafeSend<T>(T);
 unsafe impl<T> Send for UnsafeSend<T> {}
-
 pub struct JIT {
     pub cpu: EE,
     module: UnsafeSend<JITModule>,
     blocks: BlockCache,
-    max_blocks: usize,
     cycles: usize,
     break_func: FuncId,
     bus_write8_func: FuncId,
@@ -123,8 +196,6 @@ enum BranchInfo {
     ConditionalLikely { cond: Value, target: BranchTarget },
     Eret { target: BranchTarget },
 }
-
-const MAX_BLOCKS: NonZero<usize> = NonZero::new(256).unwrap();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __break(cpu_ptr: *mut EE) {
@@ -467,7 +538,6 @@ impl JIT {
             cpu,
             module: UnsafeSend(module),
             blocks: BlockCache::new(),
-            max_blocks: MAX_BLOCKS.into(),
             cycles: 0,
             break_func,
             bus_write8_func,
@@ -554,11 +624,8 @@ impl JIT {
         let pc = self.cpu.pc();
 
         if let Some(block) = self.blocks.get_mut(pc) {
-            if block.dirty {
-            } else {
-                let ptr = self.module.0.get_finalized_function(block.func_id);
-                let f: fn() = unsafe { std::mem::transmute(ptr) };
-                f();
+            if !block.dirty {
+                (block.func_ptr)();
                 self.cycles += block.cycle_count as usize;
                 return (block.breakpoint, block.cycle_count);
             }
