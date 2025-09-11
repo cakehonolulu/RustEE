@@ -29,6 +29,8 @@ use libc::{
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
+use windows_sys::Win32::System::Memory::VirtualProtect;
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
 use windows_sys::Win32::System::Memory::{
@@ -397,7 +399,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         .encode_wide()
         .chain(Some(0))
         .collect();
-
+    
     let bios_section = unsafe {
         CreateFileMapping2(
             INVALID_HANDLE_VALUE,
@@ -411,7 +413,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
             0,
         )
     };
-    if bios_section == ptr::null_mut() {
+    if bios_section.is_null() {
         return Err(io::Error::new(
             ErrorKind::Other,
             "Failed to create BIOS section",
@@ -420,6 +422,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
     debug!("BIOS section handle: {:?}", bios_section);
 
     let bios_offsets = [0x1FC0_0000usize, 0x9FC0_0000usize, 0xBFC0_0000usize];
+
     for &off in &bios_offsets {
         let addr = unsafe { base.add(off) } as *mut c_void;
         let ok = unsafe { VirtualFree(addr, bios_size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
@@ -431,7 +434,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         }
     }
 
-    for (i, &off) in bios_offsets.iter().enumerate() {
+    for &off in &bios_offsets {
         let view = unsafe {
             MapViewOfFile3(
                 bios_section,
@@ -451,54 +454,33 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
                 format!("Failed to map BIOS view as RW at {:#x}", off),
             ));
         }
-        let ptr = view.Value as *mut u8;
-        debug!("Mapped BIOS as RW at {:p}", ptr);
-
-        if i == 0 {
-            unsafe {
-                std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), ptr, bios_size);
-            }
-            debug!("Copied BIOS data into mapping at {:#x}", off);
-        }
-
-        // Unmap the RW mapping
-        let view_addr = MEMORY_MAPPED_VIEW_ADDRESS {
-            Value: ptr as *mut c_void,
-        };
-        let unmap_result =
-            unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
-        if unmap_result == 0 {
-            return Err(io::Error::new(
-                ErrorKind::Other,
-                format!("Failed to unmap RW BIOS view at {:#x}", off),
-            ));
-        }
-
-        debug!("Unmapped RW BIOS view at {:p}", ptr);
+        debug!("Mapped BIOS as RW at {:p}", view.Value);
     }
 
-    for (i, &off) in bios_offsets.iter().enumerate() {
-        let view = unsafe {
-            MapViewOfFile3(
-                bios_section,
-                GetCurrentProcess(),
-                base.add(off) as *const c_void,
-                0,
+    let first_bios_ptr = unsafe { base.add(bios_offsets[0]) } as *mut u8;
+    unsafe {
+        std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), first_bios_ptr, bios_size);
+    }
+    debug!("Copied BIOS data into the first mapping at {:p}", first_bios_ptr);
+
+    for &off in &bios_offsets {
+        let addr = unsafe { base.add(off) } as *mut c_void;
+        let mut old_protect = 0;
+        let result = unsafe {
+            VirtualProtect(
+                addr,
                 bios_size,
-                MEM_REPLACE_PLACEHOLDER,
                 PAGE_READONLY,
-                ptr::null_mut(),
-                0,
+                &mut old_protect,
             )
         };
-        if view.Value.is_null() {
+        if result == 0 {
             return Err(io::Error::new(
                 ErrorKind::Other,
-                format!("Failed to remap BIOS view as RO at {:#x}", off),
+                format!("Failed to make BIOS view at {:#x} read-only", off),
             ));
         }
-        let ptr = view.Value as *mut u8;
-        debug!("Re-mapped BIOS as RO at {:p}", ptr);
+        debug!("Made BIOS view at {:p} read-only", addr);
     }
 
     Ok((base, size))
@@ -553,30 +535,21 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     ftruncate(&bios_fd, bios_size as i64)
         .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set BIOS size: {}", e)))?;
 
-    let temp_map = mmap(
-        ptr::null_mut(),
-        bios_size,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED,
-        bios_fd.as_raw_fd(),
-        0,
-    );
-
-    if temp_map == libc::MAP_FAILED {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to map BIOS temp"));
-    }
+    let bios_base_ptr = map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
+    map_fixed_region(base, 0x9FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
+    map_fixed_region(base, 0xBFC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
 
     std::ptr::copy_nonoverlapping(
         bus.bios.bytes.as_ptr(),
-        temp_map as *mut u8,
+        bios_base_ptr as *mut u8,
         bus.bios.bytes.len(),
     );
 
-    munmap(temp_map, bios_size);
-
-    map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ)?;
-    map_fixed_region(base, 0x9FC00000, bios_size, &bios_fd, 0, PROT_READ)?;
-    map_fixed_region(base, 0xBFC00000, bios_size, &bios_fd, 0, PROT_READ)?;
+    unsafe {
+        mprotect(bios_base_ptr, bios_size, PROT_READ)?;
+        mprotect(base.offset(0x9FC00000), bios_size, PROT_READ)?;
+        mprotect(base.offset(0xBFC00000), bios_size, PROT_READ)?;
+    }
 
     close(bios_fd)
         .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to close BIOS fd: {}", e)))?;
