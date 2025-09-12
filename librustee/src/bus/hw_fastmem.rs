@@ -23,7 +23,7 @@ use tracing::{debug, error, trace};
 #[cfg(unix)]
 use libc::{
     MAP_ANONYMOUS, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, PROT_NONE, PROT_READ, PROT_WRITE, mmap,
-    munmap,
+    munmap, mprotect
 };
 
 #[cfg(windows)]
@@ -535,7 +535,9 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     ftruncate(&bios_fd, bios_size as i64)
         .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set BIOS size: {}", e)))?;
 
-    let bios_base_ptr = map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
+    let bios_base_ptr = unsafe { base.add(0x1FC00000) } as *mut c_void;
+
+    map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
     map_fixed_region(base, 0x9FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
     map_fixed_region(base, 0xBFC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
 
@@ -546,9 +548,9 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     );
 
     unsafe {
-        mprotect(bios_base_ptr, bios_size, PROT_READ)?;
-        mprotect(base.offset(0x9FC00000), bios_size, PROT_READ)?;
-        mprotect(base.offset(0xBFC00000), bios_size, PROT_READ)?;
+        mprotect(bios_base_ptr, bios_size, PROT_READ);
+        mprotect(base.offset(0x9FC00000) as *mut c_void, bios_size, PROT_READ);
+        mprotect(base.offset(0xBFC00000) as *mut c_void, bios_size, PROT_READ);
     }
 
     close(bios_fd)
