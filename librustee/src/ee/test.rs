@@ -1,20 +1,22 @@
-use std::sync::{Arc, Mutex, RwLock};
+use crate::cpu::{CPU, EmulationBackend};
+use crate::sched::Scheduler;
 use crate::{
-    bus::{Bus, BusMode},
-    ee::{Interpreter, JIT, EE},
     BIOS,
+    bus::{Bus, BusMode},
+    ee::{EE, Interpreter, JIT},
 };
 use mipsasm::Mipsasm;
-use crate::cpu::{CPU, EmulationBackend};
+use portable_atomic::AtomicU32;
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Default)]
 struct GoldenState {
-    pc:   u32,
-    gpr:  [u128; 32],
-    fpr:  [u32; 32],
+    pc: u32,
+    gpr: [u128; 32],
+    fpr: [u32; 32],
     cop0: [u32; 32],
-    lo:   u128,
-    hi:   u128,
+    lo: u128,
+    hi: u128,
     memory_checks: Vec<(u32, u32)>,
 }
 
@@ -41,22 +43,19 @@ fn count_instructions(assembly: &str) -> usize {
         .count()
 }
 
-fn compare_states(
-    ee_interpreter: &EE,
-    ee_jit: &mut EE,
-    golden:         Option<&GoldenState>,
-) {
+fn compare_states(ee_interpreter: &EE, ee_jit: &mut EE, golden: Option<&GoldenState>) {
     let names = [
-        "zero","at","v0","v1","a0","a1","a2","a3",
-        "t0","t1","t2","t3","t4","t5","t6","t7",
-        "s0","s1","s2","s3","s4","s5","s6","s7",
-        "t8","t9","k0","k1","gp","sp","fp","ra",
+        "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+        "t7", "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "t8", "t9", "k0", "k1", "gp", "sp",
+        "fp", "ra",
     ];
 
     assert_eq!(
-        ee_interpreter.pc(), ee_jit.pc(),
+        ee_interpreter.pc(),
+        ee_jit.pc(),
         "PC mismatch: interp=0x{:08X}, jit=0x{:08X}",
-        ee_interpreter.pc(), ee_jit.pc(),
+        ee_interpreter.pc(),
+        ee_jit.pc(),
     );
 
     for i in 0..32 {
@@ -64,7 +63,9 @@ fn compare_states(
             ee_interpreter.read_register(i),
             ee_jit.read_register(i),
             "GPR ${} mismatch: interp=0x{:X}, jit=0x{:X}",
-            names[i], ee_interpreter.read_register(i), ee_jit.read_register(i),
+            names[i],
+            ee_interpreter.read_register(i),
+            ee_jit.read_register(i),
         );
     }
 
@@ -73,7 +74,9 @@ fn compare_states(
             ee_interpreter.read_cop0_register(i),
             ee_jit.read_cop0_register(i),
             "COP0[{}] mismatch: interp=0x{:X}, jit=0x{:X}",
-            i, ee_interpreter.read_cop0_register(i), ee_jit.read_cop0_register(i),
+            i,
+            ee_interpreter.read_cop0_register(i),
+            ee_jit.read_cop0_register(i),
         );
     }
 
@@ -82,26 +85,32 @@ fn compare_states(
             ee_interpreter.read_fpu_register_as_u32(i),
             ee_jit.read_fpu_register_as_u32(i),
             "FPR ${} mismatch: interp=0x{:X}, jit=0x{:X}",
-            names[i], ee_interpreter.read_fpu_register_as_u32(i), ee_jit.read_fpu_register_as_u32(i),
+            names[i],
+            ee_interpreter.read_fpu_register_as_u32(i),
+            ee_jit.read_fpu_register_as_u32(i),
         );
     }
 
     if let Some(g) = golden {
         assert_eq!(
-            ee_interpreter.pc(), g.pc,
+            ee_interpreter.pc(),
+            g.pc,
             "Interpreter PC != golden (0x{:08X} != 0x{:08X})",
-            ee_interpreter.pc(), g.pc,
+            ee_interpreter.pc(),
+            g.pc,
         );
         assert_eq!(
-            ee_jit.pc(), g.pc,
+            ee_jit.pc(),
+            g.pc,
             "      JIT PC != golden (0x{:08X} != 0x{:08X})",
-            ee_jit.pc(), g.pc,
+            ee_jit.pc(),
+            g.pc,
         );
 
         for i in 0..32 {
             let interp_val = ee_interpreter.read_register(i);
-            let jit_val    = ee_jit.read_register(i);
-            let expected   = g.gpr[i].into();
+            let jit_val = ee_jit.read_register(i);
+            let expected = g.gpr[i].into();
             assert_eq!(
                 interp_val, expected,
                 "Interp GPR ${} != golden (0x{:X} != 0x{:X})",
@@ -116,7 +125,7 @@ fn compare_states(
 
         for i in 0..32 {
             let interp_c = ee_interpreter.read_cop0_register(i);
-            let jit_c    = ee_jit.read_cop0_register(i);
+            let jit_c = ee_jit.read_cop0_register(i);
             let expected = g.cop0[i];
             assert_eq!(
                 interp_c, expected,
@@ -132,8 +141,8 @@ fn compare_states(
 
         let interp_hi = ee_interpreter.read_hi();
         let interp_lo = ee_interpreter.read_lo();
-        let jit_hi    = ee_jit.read_hi();
-        let jit_lo    = ee_jit.read_lo();
+        let jit_hi = ee_jit.read_hi();
+        let jit_lo = ee_jit.read_lo();
         let expected_hi = g.hi;
         let expected_lo = g.lo;
 
@@ -164,20 +173,24 @@ fn compare_states(
         for (addr, expected) in golden.unwrap().memory_checks.iter() {
             let interp_val = ee_jit.read32(*addr);
             let jit_val = ee_jit.read32(*addr);
-            assert_eq!(interp_val, *expected,
-                       "Memory at 0x{:08X} mismatch for interpreter: expected 0x{:08X}, got 0x{:08X}",
-                       addr, expected, interp_val);
-            assert_eq!(jit_val, *expected,
-                       "Memory at 0x{:08X} mismatch for JIT: expected 0x{:08X}, got 0x{:08X}",
-                       addr, expected, jit_val);
+            assert_eq!(
+                interp_val, *expected,
+                "Memory at 0x{:08X} mismatch for interpreter: expected 0x{:08X}, got 0x{:08X}",
+                addr, expected, interp_val
+            );
+            assert_eq!(
+                jit_val, *expected,
+                "Memory at 0x{:08X} mismatch for JIT: expected 0x{:08X}, got 0x{:08X}",
+                addr, expected, jit_val
+            );
         }
     }
 }
 
 struct TestCase {
-    name:   &'static str,
-    asm:    &'static str,
-    setup:  fn(&mut EE),
+    name: &'static str,
+    asm: &'static str,
+    setup: fn(&mut EE),
     golden: Option<GoldenState>,
 }
 
@@ -190,29 +203,44 @@ fn run_test(tc: &TestCase) {
 
     // Count the number of instructions to execute
     let instruction_count = count_instructions(tc.asm);
-    
+
     for bus_mode in bus_modes {
-        println!("Running test `{}` for bus mode {:?} ({} instructions)", 
-                 tc.name, bus_mode, instruction_count);
+        println!(
+            "Running test `{}` for bus mode {:?} ({} instructions)",
+            tc.name, bus_mode, instruction_count
+        );
 
         // Create mock BIOS for both interpreter and JIT
         let bios_i = create_mock_bios(tc.asm);
         let bios_j = create_mock_bios(tc.asm);
 
         // Create shared cop0_registers for each EE/Bus pair
-        let cop0_i = Arc::new(RwLock::new([0u32; 32]));
-        let cop0_j = Arc::new(RwLock::new([0u32; 32]));
+        let cop0_i = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
+        let cop0_j = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
+
+        let scheduler_i = Arc::new(Mutex::new(Scheduler::new()));
+        let scheduler_j = Arc::new(Mutex::new(Scheduler::new()));
 
         // Create buses with the current bus mode
-        let bus_i = Bus::new(bus_mode.clone(), bios_i, Arc::clone(&cop0_i));
-        let bus_j = Bus::new(bus_mode.clone(), bios_j, Arc::clone(&cop0_j));
+        let bus_i = Bus::new(bus_mode.clone(), bios_i, Arc::clone(&cop0_i), scheduler_i);
+        let bus_j = Bus::new(bus_mode.clone(), bios_j, Arc::clone(&cop0_j), scheduler_j);
 
         let bus_i = Arc::new(Mutex::new(bus_i));
         let bus_j = Arc::new(Mutex::new(bus_j));
 
+        let bus_ptr_i = {
+            let mut guard = bus_i.lock().unwrap();
+            &mut **guard as *mut Bus
+        };
+
+        let bus_ptr_j = {
+            let mut guard = bus_j.lock().unwrap();
+            &mut **guard as *mut Bus
+        };
+
         // Create EE instances for interpreter and JIT
-        let mut ee_i = EE::new(Arc::clone(&bus_i), Arc::clone(&cop0_i));
-        let mut ee_j = EE::new(Arc::clone(&bus_j), Arc::clone(&cop0_j));
+        let mut ee_i = EE::new(bus_ptr_i, Arc::clone(&cop0_i));
+        let mut ee_j = EE::new(bus_ptr_j, Arc::clone(&cop0_j));
 
         // Test setup
         (tc.setup)(&mut ee_i);
@@ -229,18 +257,17 @@ fn run_test(tc: &TestCase) {
         }
 
         // Run the JIT backend for the required number of steps
-        let mut jit = JIT::new(&mut ee_j);
+        let mut jit = JIT::new(ee_j);
         for _ in 0..instruction_count {
             jit.step();
         }
 
         // Compare CPU states
-        compare_states(&interp.cpu, jit.cpu, tc.golden.as_ref());
+        compare_states(&interp.cpu, &mut jit.cpu, tc.golden.as_ref());
 
         println!("Test `{}` passed for bus mode {:?}", tc.name, bus_mode);
     }
 }
-
 
 #[test]
 fn test_mfc0() {
@@ -890,23 +917,21 @@ fn test_lw() {
 
 #[test]
 fn test_jalr() {
-    let tests = vec![
-        TestCase {
-            name: "jalr_ra_t0",
-            asm: "jalr $ra, $t0",
-            setup: |ee| {
-                ee.write_register32(8, 0xBFC00010);
-            },
-            golden: {
-                let mut g = GoldenState::default();
-                g.pc = 0xBFC00010;
-                g.gpr[31] = 0xBFC00008;
-                g.gpr[8] = 0xBFC00010;
-                g.cop0[15] = 0x59;
-                Some(g)
-            },
+    let tests = vec![TestCase {
+        name: "jalr_ra_t0",
+        asm: "jalr $ra, $t0",
+        setup: |ee| {
+            ee.write_register32(8, 0xBFC00010);
         },
-    ];
+        golden: {
+            let mut g = GoldenState::default();
+            g.pc = 0xBFC00010;
+            g.gpr[31] = 0xBFC00008;
+            g.gpr[8] = 0xBFC00010;
+            g.cop0[15] = 0x59;
+            Some(g)
+        },
+    }];
 
     for test in tests {
         run_test(&test);
@@ -1350,39 +1375,39 @@ fn test_divu() {
     let tests = vec![
         TestCase {
             name: "divu_basic",
-            asm:  "divu $t1, $t2",
+            asm: "divu $t1, $t2",
             setup: |ee| {
                 ee.write_register32(9, 100);
-                ee.write_register32(10,  30);
+                ee.write_register32(10, 30);
             },
             golden: {
                 let mut g = GoldenState::default();
                 g.pc = 0xBFC00004;
                 g.lo = 3u128;
                 g.hi = 10u128;
-                g.gpr[9]  = 100u128;
-                g.gpr[10] =  30u128;
+                g.gpr[9] = 100u128;
+                g.gpr[10] = 30u128;
                 g.cop0[15] = 0x59;
                 Some(g)
-            }
+            },
         },
         TestCase {
             name: "divu_small",
-            asm:  "divu $t3, $t4",
+            asm: "divu $t3, $t4",
             setup: |ee| {
-                ee.write_register32(11,  5);
+                ee.write_register32(11, 5);
                 ee.write_register32(12, 10);
             },
             golden: {
                 let mut g = GoldenState::default();
                 g.pc = 0xBFC00004;
-                g.gpr[11] =  5u128;
+                g.gpr[11] = 5u128;
                 g.gpr[12] = 10u128;
                 g.lo = 0u128;
                 g.hi = 5u128;
                 g.cop0[15] = 0x59;
                 Some(g)
-            }
+            },
         },
     ];
 
