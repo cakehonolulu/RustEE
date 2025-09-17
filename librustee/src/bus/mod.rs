@@ -120,9 +120,8 @@ pub struct Bus {
     page_read: Vec<usize>,
     page_write: Vec<usize>,
 
-    hw_base: *mut u8,
+    hw_base: usize,
     hw_size: usize,
-    arena: Option<region::Allocation>,
 
     pub cop0_registers: Arc<[AtomicU32; 32]>,
 
@@ -142,9 +141,6 @@ pub struct Bus {
 
     pub scheduler: Arc<Mutex<Scheduler>>,
 }
-
-unsafe impl Send for Bus {}
-
 
 #[derive(Debug)]
 struct DmaTag {
@@ -200,9 +196,8 @@ impl Bus {
             write32: Bus::sw_fmem_write32,
             write64: Bus::sw_fmem_write64,
             write128: Bus::sw_fmem_write128,
-            hw_base: null_mut(),
+            hw_base: 0,
             hw_size: 0,
-            arena: None,
             tlb: Tlb::new(),
             operating_mode: OperatingMode::Kernel,
             cop0_registers: Arc::clone(&cop0_registers),

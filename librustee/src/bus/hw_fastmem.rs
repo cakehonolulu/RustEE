@@ -52,7 +52,7 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     let (base, size) = unsafe { init_hardware_arena(bus).expect("Failed to init arena") };
     debug!("Hardware arena initialized");
 
-    bus.hw_base = base;
+    bus.hw_base = base as usize;
     bus.hw_size = size;
 
     HW_LENGTH.store(size, Ordering::SeqCst);
@@ -731,7 +731,7 @@ impl Tlb {
                 };
 
                 unsafe {
-                    let target = bus.hw_base.add(va_start);
+                    let target = (bus.hw_base as *mut u8).add(va_start);
                     let result = mmap(
                         target as *mut c_void,
                         page_size,
@@ -758,7 +758,7 @@ impl Tlb {
                 };
 
                 unsafe {
-                    let target = bus.hw_base.add(va_start_odd);
+                    let target = (bus.hw_base as *mut u8).add(va_start_odd);
                     let result = mmap(
                         target as *mut c_void,
                         page_size,
@@ -849,10 +849,10 @@ impl Tlb {
         );
 
         unsafe {
-            let target = bus.hw_base.add(va_start);
+            let target = (bus.hw_base as *mut u8).add(va_start);
             let _ = munmap(target as *mut c_void, page_size);
 
-            let target_odd = bus.hw_base.add(va_start + page_size);
+            let target_odd = (bus.hw_base as *mut u8).add(va_start + page_size);
             let _ = munmap(target_odd as *mut c_void, page_size);
         }
     }
@@ -911,7 +911,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_read8(&mut self, addr: u32) -> u8 {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *const u8;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *const u8;
             *host_ptr
         }
     }
@@ -919,7 +919,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_read16(&mut self, addr: u32) -> u16 {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *const u16;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *const u16;
             *host_ptr
         }
     }
@@ -927,7 +927,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_read32(&mut self, addr: u32) -> u32 {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *const u32;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *const u32;
             *host_ptr
         }
     }
@@ -935,7 +935,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_read64(&mut self, addr: u32) -> u64 {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *const u64;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *const u64;
             *host_ptr
         }
     }
@@ -943,7 +943,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_read128(&mut self, addr: u32) -> u128 {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *const u128;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *const u128;
             *host_ptr
         }
     }
@@ -951,7 +951,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_write8(&mut self, addr: u32, val: u8) {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *mut u8;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *mut u8;
             *host_ptr = val;
         }
     }
@@ -959,7 +959,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_write16(&mut self, addr: u32, val: u16) {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *mut u16;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *mut u16;
             *host_ptr = val;
         }
     }
@@ -967,7 +967,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_write32(&mut self, addr: u32, val: u32) {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *mut u32;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *mut u32;
             *host_ptr = val;
         }
     }
@@ -975,7 +975,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_write64(&mut self, addr: u32, val: u64) {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *mut u64;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *mut u64;
             *host_ptr = val;
         }
     }
@@ -983,7 +983,7 @@ impl Bus {
     #[unsafe(no_mangle)]
     pub fn hw_write128(&mut self, addr: u32, val: u128) {
         unsafe {
-            let host_ptr = self.hw_base.add(addr as usize) as *mut u128;
+            let host_ptr = (self.hw_base as *mut u8).add(addr as usize) as *mut u128;
             *host_ptr = val;
         }
     }
