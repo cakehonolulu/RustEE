@@ -4,9 +4,6 @@ use crate::cpu::CPU;
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 use std::fs;
-use std::ops::DerefMut;
-use std::process::exit;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 use tracing::{debug, error};
 

@@ -1,9 +1,8 @@
 use crate::bus::Bus;
-use crate::cpu::{CPU, EmulationBackend};
+use crate::cpu::EmulationBackend;
 use crate::ee::EE;
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tracing::trace;
 

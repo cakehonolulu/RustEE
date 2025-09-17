@@ -8,8 +8,7 @@ use std::os::fd::OwnedFd;
 #[cfg(windows)]
 use std::os::windows::raw::HANDLE;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
-use std::{cell::RefCell, ptr::null_mut};
+use std::sync::{Arc, Mutex};
 use portable_atomic::AtomicU32;
 
 pub mod backpatch;
@@ -19,12 +18,12 @@ mod rdram;
 mod sw_fastmem;
 pub mod tlb;
 
-use crate::ee::dmac::{DmaChannel, EEDMAC};
+use crate::ee::dmac::EEDMAC;
 use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
 use crate::ee::timer::Timers;
 use crate::gif::GIF;
-use crate::gs::{GsEvent, GS};
+use crate::gs::GS;
 use crate::ipu::IPU;
 use crate::sif::SIF;
 use crate::vif::{VIF, VIF0_BASE, VIF1_BASE};
@@ -581,7 +580,7 @@ impl Bus {
                     (*gif_ptr).write_dmac_data(self, data, &mut (madr as u32), &mut (qwc as u32), false);
                 }
             } else {
-                debug!("Burst mode PATH3 masked; ignoring GIF FIFO write");;
+                debug!("Burst mode PATH3 masked; ignoring GIF FIFO write");
             }
 
             madr = madr.wrapping_add(16);
@@ -622,8 +621,8 @@ impl Bus {
 
                 if !self.gif.is_path3_masked() {
                     let gif_ptr: *mut GIF = &mut self.gif;
-                    let mut temp_madr = madr;
-                    let mut temp_qwc = qwc;
+                    let temp_madr = madr;
+                    let temp_qwc = qwc;
                     unsafe {
                         (*gif_ptr).write_dmac_data(self, data, &mut (temp_madr as u32), &mut (temp_qwc as u32), true);
                     }

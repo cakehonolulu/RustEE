@@ -1,4 +1,3 @@
-use std::process::exit;
 use tracing::{error, trace};
 use crate::Bus;
 

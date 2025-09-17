@@ -6,8 +6,7 @@ use crate::Bus;
 use crate::cpu::CPU;
 use crate::ee::vu::VU;
 use std::collections::HashSet;
-use std::ptr;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod dmac;
@@ -232,7 +231,7 @@ impl CPU for EE {
     }
 
     fn write_hi0(&mut self, low: u64) {
-        let mut hi = self.hi.load(Ordering::SeqCst);
+        let hi = self.hi.load(Ordering::SeqCst);
         let high_mask = !((1u128 << 64) - 1);
         self.hi.store((hi & high_mask) | (low as u128), Ordering::Relaxed);
     }
@@ -242,7 +241,7 @@ impl CPU for EE {
     }
 
     fn write_lo0(&mut self, low: u64) {
-        let mut lo = self.lo.load(Ordering::SeqCst);
+        let lo = self.lo.load(Ordering::SeqCst);
         let high_mask = !((1u128 << 64) - 1);
         self.lo.store((lo & high_mask) | (low as u128), Ordering::Relaxed);
     }

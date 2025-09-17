@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 
 // Register offsets within a channel
 const CHCR_OFFSET: u32 = 0x00;
@@ -97,7 +97,7 @@ impl DmaChannel {
     pub fn write32(&mut self, offset: u32, value: u32) {
         match offset {
             CHCR_OFFSET => {
-                self.chcr = (((value & 0xFFFF) as u64) | (self.chcr & 0xFFFF_0000));
+                self.chcr = ((value & 0xFFFF) as u64) | (self.chcr & 0xFFFF_0000);
             }
             MADR_OFFSET => {
                 self.madr = (value & !0xF) as u64;
@@ -138,7 +138,7 @@ impl DmaChannel {
     pub fn write64(&mut self, offset: u32, value: u64) {
         match offset {
             CHCR_OFFSET => {
-                self.chcr = ((value & 0xFFFF) | (self.chcr & 0xFFFF_0000));
+                self.chcr = (value & 0xFFFF) | (self.chcr & 0xFFFF_0000);
             }
             MADR_OFFSET => {
                 self.madr = value & !0xF;

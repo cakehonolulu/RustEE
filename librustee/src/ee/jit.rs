@@ -11,12 +11,10 @@ use cranelift_codegen::{isa, settings};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
-use portable_atomic::{AtomicU32, AtomicU128};
-use std::collections::HashMap;
+use portable_atomic::AtomicU128;
 use std::fs;
-use std::num::NonZero;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use target_lexicon::Triple;
 use tracing::{debug, error};
 use std::mem;
@@ -281,9 +279,8 @@ pub extern "C" fn __bus_read128(bus: *mut Bus, addr: u32, lo: *mut u64, hi: *mut
     }
 }
 
-pub extern "C" fn __bus_tlbwi(bus_ptr: *mut Bus) {
+pub extern "C" fn __bus_tlbwi(bus: *mut Bus) {
     unsafe {
-        let bus = crate::bus::BUS_PTR as *mut Bus;
         let tlb = &mut (*bus).tlb;
 
         let index = (((*bus).read_cop0_register(0)) & 0x3F) as usize;
@@ -358,7 +355,7 @@ pub extern "C" fn __integer_overflow_exception(cpu_ptr: *mut EE) {
 }
 
 impl JIT {
-    pub fn new(mut cpu: EE) -> Self {
+    pub fn new(cpu: EE) -> Self {
         let mut shared_builder = settings::builder();
         shared_builder
             .set("enable_llvm_abi_extensions", "true")

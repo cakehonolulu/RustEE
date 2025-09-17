@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use capstone::{arch::DetailsArchInsn, Capstone};
 use capstone::arch::BuildsCapstone;
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 
 use super::Bus;
 
@@ -59,7 +59,7 @@ pub trait ArchHandler {
 }
 
 
-unsafe fn get_mov_instruction_length(ip: *const u8) -> usize {
+unsafe fn get_mov_instruction_length(ip: *const u8) -> usize { unsafe {
     let mut len: usize = 0;
 
     loop {
@@ -130,7 +130,7 @@ unsafe fn get_mov_instruction_length(ip: *const u8) -> usize {
     len += disp_size;
 
     len
-}
+}}
 
     
 pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
@@ -390,7 +390,7 @@ impl ArchHandler for CurrentArchHandler {
             length,
             fault_addr
         );
-        Self::set_instruction_pointer(ctx, (fault_addr as u64 + length as u64));
+        Self::set_instruction_pointer(ctx, fault_addr as u64 + length as u64);
         Ok(())
     }
 
@@ -715,7 +715,7 @@ pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
     ctx: *mut H::Context,
     access: AccessInfo,
     fault_addr: u32,
-) {
+) { unsafe {
     let bus_ptr = super::BUS_PTR as *mut Bus;
     let addr = fault_addr;
 
@@ -771,4 +771,4 @@ pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
             H::set_register_value(ctx, x86_64_impl::X86Register::Rdx, (value >> 64) as u64);
         }
     }
-}
+}}

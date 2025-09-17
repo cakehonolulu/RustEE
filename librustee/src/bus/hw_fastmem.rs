@@ -1,10 +1,9 @@
 use super::tlb::{Tlb, TlbEntry, mask_to_page_size};
 use super::{Bus, HW_BASE};
 use crate::bus::HW_LENGTH;
-use std::ffi::OsStr;
 
 #[cfg(unix)]
-use nix::fcntl::{OFlag, open};
+use nix::fcntl::OFlag;
 #[cfg(unix)]
 use nix::sys::mman::{shm_open, shm_unlink};
 #[cfg(unix)]
@@ -65,7 +64,7 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
 }
 
 #[cfg(unix)]
-pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> {
+pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> { unsafe {
     let size = 1usize << 32; // 4GB virtual address space
 
     let base = mmap(
@@ -131,7 +130,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         base, size
     );
     Ok((base, size))
-}
+}}
 
 #[cfg(windows)]
 pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> {
@@ -494,7 +493,7 @@ unsafe fn map_fixed_region(
     fd: &std::os::fd::OwnedFd,
     offset: i64,
     prot: i32,
-) -> io::Result<()> {
+) -> io::Result<()> { unsafe {
     let target = base.add(virt_addr as usize);
 
     let result = mmap(
@@ -514,10 +513,10 @@ unsafe fn map_fixed_region(
     }
 
     Ok(())
-}
+}}
 
 #[cfg(unix)]
-unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
+unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> { unsafe {
     let bios_size = 0x400000;
     let bios_name = c"/rustee_bios";
     let bios_fd = shm_open(
@@ -535,7 +534,7 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     ftruncate(&bios_fd, bios_size as i64)
         .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set BIOS size: {}", e)))?;
 
-    let bios_base_ptr = unsafe { base.add(0x1FC00000) } as *mut c_void;
+    let bios_base_ptr = base.add(0x1FC00000) as *mut c_void;
 
     map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
     map_fixed_region(base, 0x9FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
@@ -547,11 +546,9 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
         bus.bios.bytes.len(),
     );
 
-    unsafe {
-        mprotect(bios_base_ptr, bios_size, PROT_READ);
-        mprotect(base.offset(0x9FC00000) as *mut c_void, bios_size, PROT_READ);
-        mprotect(base.offset(0xBFC00000) as *mut c_void, bios_size, PROT_READ);
-    }
+    mprotect(bios_base_ptr, bios_size, PROT_READ);
+    mprotect(base.offset(0x9FC00000) as *mut c_void, bios_size, PROT_READ);
+    mprotect(base.offset(0xBFC00000) as *mut c_void, bios_size, PROT_READ);
 
     close(bios_fd)
         .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to close BIOS fd: {}", e)))?;
@@ -563,10 +560,10 @@ unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
     })?;
 
     Ok(())
-}
+}}
 
 #[cfg(unix)]
-unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> {
+unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> { unsafe {
     let iop_size = 0x200000;
     let iop_name = c"/rustee_iop";
     let iop_fd = shm_open(
@@ -612,10 +609,10 @@ unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> {
     })?;
 
     Ok(())
-}
+}}
 
 #[cfg(unix)]
-unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> {
+unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> { unsafe {
     let sp_size = 0x4000;
     let sp_name = c"/rustee_scratchpad";
     let sp_fd = shm_open(
@@ -666,10 +663,10 @@ unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> {
     })?;
 
     Ok(())
-}
+}}
 
 #[cfg(unix)]
-unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
+unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> { unsafe {
     let vu0_size = 0x8000;
     let vu0_target = base.add(0x11000000);
 
@@ -703,7 +700,7 @@ unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
     }
 
     Ok(())
-}
+}}
 
 impl Tlb {
     #[cfg(unix)]

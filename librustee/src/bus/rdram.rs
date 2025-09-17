@@ -27,7 +27,7 @@ enum RDRAMRegister {
 }
 
 #[derive(Clone, Copy)]
-struct RDRAM_IC {
+struct RdramIc {
     init: u16,   // 14-bit register, using u16
     test34: u16, // 16-bit register
     cnfga: u16,  // 16-bit register
@@ -53,7 +53,7 @@ struct RDRAM_IC {
 pub struct RDRAM {
     mch_ricm_: u32,
     mch_drd_: u32,
-    rdram_ic: [RDRAM_IC; 2],
+    rdram_ic: [RdramIc; 2],
 }
 
 impl RDRAM {
@@ -64,7 +64,7 @@ impl RDRAM {
         RDRAM {
             mch_ricm_: 0,
             mch_drd_: 0,
-            rdram_ic: [RDRAM_IC {
+            rdram_ic: [RdramIc {
                 init: 0,
                 test34: 0,
                 cnfga: 0,

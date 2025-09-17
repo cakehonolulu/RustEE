@@ -1,7 +1,4 @@
-use std::sync::{Arc, Mutex};
-use tracing::{error, trace};
-use crate::Bus;
-use crate::sched::{Scheduler, EE_CYCLES_PER_FRAME};
+use tracing::error;
 
 /// Base address for privileged GS registers
 pub const GS_BASE: u32 = 0x1200_0000;
@@ -274,9 +271,9 @@ impl GS {
         let buffer_read_width = ((display_width as u64 + mag_h as u64 - 1) / mag_h as u64) as u32;
         let buffer_read_height = ((display_height as u64 + mag_v as u64 - 1) / mag_v as u64) as u32;
 
-        let base_addr_bytes = (fbp as usize * 2048 * 4);
+        let base_addr_bytes = fbp as usize * 2048 * 4;
 
-        let mut buffer_frame = vec![0u8; (buffer_read_width as usize * buffer_read_height as usize * 4)];
+        let mut buffer_frame = vec![0u8; buffer_read_width as usize * buffer_read_height as usize * 4];
 
         for py in 0..buffer_read_height {
             let src_y = dby + py;
@@ -295,7 +292,7 @@ impl GS {
     
     /// Write a 64-bit value to a GS register
     pub fn write64(&mut self, offset: u32, value: u64) -> GsEvent {
-        let mut event: GsEvent = GsEvent::None;
+        let event: GsEvent = GsEvent::None;
         match offset {
             PMODE_OFFSET => self.pmode = value,
             SMODE1_OFFSET => self.smode1 = value,
@@ -313,7 +310,7 @@ impl GS {
             EXTWRITE_OFFSET => self.extwrite = value,
             BGCOLOR_OFFSET => self.bgcolor = value,
             GS_CSR_OFFSET => {
-                let mut csr_value = value & !(0x60); // Bit 5 and bit 6 should be set to 0 when data is written.
+                let csr_value = value & !(0x60); // Bit 5 and bit 6 should be set to 0 when data is written.
 
                 let reset_bit = (csr_value >> 9) & 1;
                 let bit_3 = (csr_value >> 3) & 1;
@@ -325,7 +322,7 @@ impl GS {
                     self.gs_csr = csr_value;
                 }
 
-                if (value & (1 << 3)) != 0 { ;
+                if (value & (1 << 3)) != 0 {
                     self.gs_csr &= !(1 << 3);
                 }
             }
@@ -876,7 +873,7 @@ impl GS {
 
         let z_value = v.z;
 
-        let frame_base = (self.framebuffer_fbp as usize * 2048 * 4);
+        let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
         let width = self.framebuffer_fbw as usize * 64;
 
         let pixel_addr = frame_base + (y as usize * width + x as usize) * 4;
@@ -884,7 +881,7 @@ impl GS {
             return;
         }
 
-        let mut write_pixel = !z_mask;
+        let write_pixel = !z_mask;
 
         if write_pixel {
             self.vram[pixel_addr] = v.a;
@@ -919,7 +916,7 @@ impl GS {
             (px - a.x) * (b.y - a.y) - (py - a.y) * (b.x - a.x)
         };
 
-        let mut area = edge(&v0, &v1, v2.x, v2.y);
+        let area = edge(&v0, &v1, v2.x, v2.y);
         if area == 0.0 {
             return;
         }
@@ -930,7 +927,7 @@ impl GS {
         let z_format = ((zbuf >> 24) & 0xF) as u32;
         let z_mask = ((zbuf >> 32) & 0x1) != 0;
 
-        let frame_base = (self.framebuffer_fbp as usize * 2048 * 4);
+        let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
         let width = self.framebuffer_fbw as usize * 64;
 
         for y in min_y..=max_y {
@@ -961,7 +958,7 @@ impl GS {
                         continue;
                     }
 
-                    let mut write_pixel = !z_mask;
+                    let write_pixel = !z_mask;
 
                     if write_pixel {
                         self.vram[pixel_addr] = v2.r;
@@ -1002,7 +999,7 @@ impl GS {
 
         let z_value = v1.z;
 
-        let frame_base = (self.framebuffer_fbp as usize * 2048 * 4);
+        let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
         let width = self.framebuffer_fbw as usize * 64;
 
         for y in min_y..=max_y {
@@ -1012,7 +1009,7 @@ impl GS {
                     continue;
                 }
 
-                let mut write_pixel = !z_mask;
+                let write_pixel = !z_mask;
 
                 if write_pixel {
                     self.vram[pixel_addr] = v1.r;
