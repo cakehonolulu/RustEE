@@ -37,6 +37,8 @@ use unix::install_handler;
 #[cfg(windows)]
 use windows::install_handler;
 use crate::sched::Scheduler;
+#[cfg(windows)]
+use std::os::windows::io::{OwnedHandle, FromRawHandle, AsRawHandle};
 
 #[cfg(unix)]
 pub mod unix;
@@ -100,7 +102,7 @@ pub struct Bus {
     ram_fd: Option<OwnedFd>,
 
     #[cfg(windows)]
-    ram_mapping: Option<HANDLE>,
+    ram_mapping: Option<OwnedHandle>,
 
     pub sio: SIO,
     rdram: RDRAM,

@@ -25,6 +25,10 @@ use libc::{
     munmap, mprotect
 };
 
+use std::ops::Add;
+
+#[cfg(windows)]
+use std::ffi::os_str::OsStr;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
@@ -40,6 +44,8 @@ use windows_sys::Win32::System::Memory::{
 };
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
+#[cfg(windows)]
+use std::os::windows::io::{OwnedHandle, AsRawHandle, FromRawHandle};
 
 pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     debug!("Initializing Hardware Fast Memory...");
@@ -216,7 +222,9 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         debug!("Mapped RAM at {:p}", view.Value);
     }
 
-    bus.ram_mapping = Some(ram_section as *mut std::ffi::c_void);
+    let owned = unsafe { OwnedHandle::from_raw_handle(ram_section) };
+
+    bus.ram_mapping = Some(owned);
 
     let iop_size: usize = 0x0020_0000;
 
@@ -783,7 +791,8 @@ impl Tlb {
         }
 
         let ram_size = 0x2000000;
-        let ram_section = bus.ram_mapping.expect("RAM section missing") as HANDLE;
+        let ram_section = bus.ram_mapping.as_ref().expect("RAM section missing");
+
         let proc = unsafe { GetCurrentProcess() };
 
         unsafe {
@@ -808,8 +817,8 @@ impl Tlb {
                     MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
                 );
 
-                let view = MapViewOfFile3(
-                    ram_section,
+                let view: MEMORY_MAPPED_VIEW_ADDRESS = MapViewOfFile3(
+                    ram_section.as_raw_handle(),
                     proc,
                     target as *const c_void,
                     pa as u64,
