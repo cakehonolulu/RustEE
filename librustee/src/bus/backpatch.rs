@@ -531,7 +531,7 @@ pub fn map_cs_reg(cs_reg: u16) -> Option<x86_64_impl::X86Register> {
     match cs_reg {
         x if x == X::X86_REG_RAX as u16 => Some(x86_64_impl::X86Register::Rax),
         x if x == X::X86_REG_RCX as u16 || x == X::X86_REG_ECX as u16 || x == X::X86_REG_CX as u16 || x == X::X86_REG_CL as u16 => Some(x86_64_impl::X86Register::Rcx),
-        x if x == X::X86_REG_RDX as u16 || x == X::X86_REG_EDX as u16 => Some(x86_64_impl::X86Register::Rdx),
+        x if x == X::X86_REG_RDX as u16 || x == X::X86_REG_EDX as u16 || x == X::X86_REG_DX as u16 || x == X::X86_REG_DL as u16 => Some(x86_64_impl::X86Register::Rdx),
         x if x == X::X86_REG_R8  as u16 || x == X::X86_REG_R8D as u16 => Some(x86_64_impl::X86Register::R8),
         x if x == X::X86_REG_R9  as u16 || x == X::X86_REG_R9D as u16 => Some(x86_64_impl::X86Register::R9),
         _ => None,
