@@ -72,6 +72,9 @@ fn main() {
                 .add_directive("naga::front=error".parse().unwrap())
                 .add_directive("wgpu_hal::gles::egl=error".parse().unwrap())
                 .add_directive("sctk_adwaita::config=off".parse().unwrap())
+                .add_directive("naga::proc::overloads::list=off".parse().unwrap())
+                .add_directive("naga::valid::expression=off".parse().unwrap())
+                .add_directive("naga::proc::typifier=off".parse().unwrap())
                 .add_directive("sctk=error".parse().unwrap())
                 .add_directive("cranelift_jit=warn".parse().unwrap()),
         )
