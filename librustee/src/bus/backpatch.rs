@@ -415,6 +415,7 @@ impl ArchHandler for CurrentArchHandler {
             x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
             x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
             x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
+            x86_64_impl::X86Register::Rsi => nix::libc::REG_RSI as usize,
             x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
             x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
             _ => panic!("Unsupported register for value access: {:?}", reg_id),
@@ -426,6 +427,7 @@ impl ArchHandler for CurrentArchHandler {
             x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
             x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
             x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
+            x86_64_impl::X86Register::Rsi => nix::libc::REG_RSI as usize,
             x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
             x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
             _ => panic!("Unsupported register for value access: {:?}", reg_id),
@@ -532,8 +534,9 @@ pub fn map_cs_reg(cs_reg: u16) -> Option<x86_64_impl::X86Register> {
         x if x == X::X86_REG_RAX as u16 => Some(x86_64_impl::X86Register::Rax),
         x if x == X::X86_REG_RCX as u16 || x == X::X86_REG_ECX as u16 || x == X::X86_REG_CX as u16 || x == X::X86_REG_CL as u16 => Some(x86_64_impl::X86Register::Rcx),
         x if x == X::X86_REG_RDX as u16 || x == X::X86_REG_EDX as u16 || x == X::X86_REG_DX as u16 || x == X::X86_REG_DL as u16 => Some(x86_64_impl::X86Register::Rdx),
-        x if x == X::X86_REG_R8  as u16 || x == X::X86_REG_R8D as u16 => Some(x86_64_impl::X86Register::R8),
-        x if x == X::X86_REG_R9  as u16 || x == X::X86_REG_R9D as u16 => Some(x86_64_impl::X86Register::R9),
+        x if x == X::X86_REG_RSI as u16 || x == X::X86_REG_ESI as u16 || x == X::X86_REG_SI as u16 || x == X::X86_REG_SIL as u16 => Some(x86_64_impl::X86Register::Rsi),
+        x if x == X::X86_REG_R8  as u16 || x == X::X86_REG_R8D as u16 || x == X::X86_REG_R8W as u16 || x == X::X86_REG_R8B as u16 => Some(x86_64_impl::X86Register::R8),
+        x if x == X::X86_REG_R9  as u16 || x == X::X86_REG_R9D as u16 || x == X::X86_REG_R9W as u16 || x == X::X86_REG_R9B as u16 => Some(x86_64_impl::X86Register::R9),
         _ => None,
     }
 }
