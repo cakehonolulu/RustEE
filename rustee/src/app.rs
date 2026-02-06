@@ -7,13 +7,14 @@ use egui::{Color32, FontId, Grid, RichText, ScrollArea, TextStyle};
 use egui_extras::{Column, TableBuilder};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
+use wgpu::util::DeviceExt;
 use librustee::Bus;
 use librustee::cpu::CPU;
 use librustee::cpu::EmulationBackend;
 use librustee::ee::{EE, Interpreter, JIT};
 use librustee::sched::Scheduler;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -59,14 +60,15 @@ impl AppState {
                     required_features: features,
                     required_limits: Default::default(),
                     memory_hints: Default::default(),
-                },
-                None,
+                    experimental_features: Default::default(),
+                    trace: Default::default(),
+                }
             )
             .await
             .expect("Failed to create device");
 
         let swapchain_capabilities = surface.get_capabilities(&adapter);
-        let selected_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let selected_format = wgpu::TextureFormat::Bgra8Unorm;
         let swapchain_format = swapchain_capabilities
             .formats
             .iter()
@@ -100,7 +102,7 @@ impl AppState {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -340,7 +342,7 @@ impl App {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -372,14 +374,9 @@ impl App {
             }
 
             state.queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &state.gs_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
+                state.gs_texture.as_image_copy(),
                 &scaled_data,
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(TARGET_WIDTH * 4),
                     rows_per_image: Some(TARGET_HEIGHT),
@@ -748,7 +745,7 @@ impl App {
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
-                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
                             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                             view_formats: &[],
                         });
@@ -765,14 +762,9 @@ impl App {
 
                     if let (Some(texture), Some(_)) = (&self.vram_texture, &self.vram_texture_id) {
                         state.queue.write_texture(
-                            wgpu::ImageCopyTexture {
-                                texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
+                            texture.as_image_copy(),
                             &data,
-                            wgpu::ImageDataLayout {
+                            wgpu::TexelCopyBufferLayout {
                                 offset: 0,
                                 bytes_per_row: Some(vram_width * 4),
                                 rows_per_image: Some(vram_height),
