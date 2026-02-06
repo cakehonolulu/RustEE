@@ -434,9 +434,12 @@ impl App {
                         img_size
                     );
 
-                    ui.allocate_ui_at_rect(image_rect, |ui| {
-                        ui.image((state.gs_texture_id, img_size));
-                    });
+                    ui.scope_builder(
+                        egui::UiBuilder::new().max_rect(image_rect),
+                        |ui| {
+                            ui.image((state.gs_texture_id, img_size));
+                        },
+                    );
                 }
             });
 
