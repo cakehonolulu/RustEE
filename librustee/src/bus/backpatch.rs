@@ -574,10 +574,11 @@ pub fn find_function_end(cs: &Capstone, func_ptr: *const c_void, size: usize) ->
 pub fn find_memory_access_register(
     cs: &Capstone,
     func_ptr: *const c_void,
+    is_write: bool,
     is_128: bool,
 ) -> Option<x86_64_impl::X86Register> {
     let addr = func_ptr as u64;
-    let code_size = 150usize;
+    let code_size = 200usize;
     let code = unsafe { std::slice::from_raw_parts(addr as *const u8, code_size) };
 
     let instructions = cs.disasm_all(code, addr).expect("Disassembly failed");
@@ -586,132 +587,80 @@ pub fn find_memory_access_register(
         let mut low_reg: Option<x86_64_impl::X86Register> = None;
         let mut high_reg: Option<x86_64_impl::X86Register> = None;
 
-        for insn in instructions
-            .iter()
-            .rev()
-            .skip_while(|i| i.mnemonic().map_or(true, |m| m != "ret"))
-            .skip(1)
-        {
+        for insn in instructions.iter() {
+            if insn.mnemonic().map_or(false, |m| m == "ret") {
+                break;
+            }
+
             if let Ok(detail) = cs.insn_detail(&insn) {
                 if let capstone::arch::ArchDetail::X86Detail(x86) = detail.arch_detail() {
                     let ops: Vec<_> = x86.operands().collect();
 
                     if insn.mnemonic() == Some("mov") && ops.len() == 2 {
-                        trace!(
-                            "insn {:#x}: found mov (len={} bytes={:x?})",
-                            insn.address(),
-                            ops.len(),
-                            insn.bytes()
-                        );
-
                         use capstone::arch::x86::X86OperandType;
 
-                        if let X86OperandType::Reg(src_cs) = ops[0].op_type {
-                            if let X86OperandType::Mem(mem) = ops[1].op_type {
+                        if is_write {
+                            if let (X86OperandType::Mem(mem), X86OperandType::Reg(src_cs)) = (&ops[0].op_type, &ops[1].op_type) {
                                 if mem.base().0 != 0 {
-                                    let src_name = cs.reg_name(src_cs).unwrap_or("??".to_string());
-                                    let base_name = cs.reg_name(mem.base()).unwrap_or("??".to_string());
-                                    trace!(
-                                        "mov detected: src={} -> mem[{} + {:#x}]",
-                                        src_name,
-                                        base_name,
-                                        mem.disp()
-                                    );
-
                                     if let Some(src) = map_cs_reg(src_cs.0) {
                                         if mem.disp() == 0 {
-                                            trace!("setting low_reg = {} ({:?})", src_name, src);
                                             low_reg = Some(src);
                                         } else if mem.disp() == 8 {
-                                            trace!("setting high_reg = {} ({:?})", src_name, src);
                                             high_reg = Some(src);
                                         }
-
-                                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
-                                            unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
-                                            trace!("found 128-bit pair early: low={:?}, high={:?}; REGISTER_PAIR set", l, h);
-                                            return Some(l);
-                                        }
-                                    } else {
-                                        panic!("unmapped src reg: {}", src_name);
                                     }
                                 }
                             }
-                        } else if let X86OperandType::Mem(mem) = ops[0].op_type {
-                            if let X86OperandType::Reg(src_cs) = ops[1].op_type {
+                        }
+                        else {
+                            if let (X86OperandType::Reg(dest_cs), X86OperandType::Mem(mem)) = (&ops[0].op_type, &ops[1].op_type) {
                                 if mem.base().0 != 0 {
-                                    let src_name = cs.reg_name(src_cs).unwrap_or("??".to_string());
-                                    let base_name = cs.reg_name(mem.base()).unwrap_or("??".to_string());
-                                    trace!(
-                                        "mov detected (rev): src={} -> mem[{} + {:#x}]",
-                                        src_name,
-                                        base_name,
-                                        mem.disp()
-                                    );
-
-                                    if let Some(src) = map_cs_reg(src_cs.0) {
+                                    if let Some(src) = map_cs_reg(dest_cs.0) {
                                         if mem.disp() == 0 {
-                                            trace!("setting low_reg = {} ({:?})", src_name, src);
                                             low_reg = Some(src);
                                         } else if mem.disp() == 8 {
-                                            trace!("setting high_reg = {} ({:?})", src_name, src);
                                             high_reg = Some(src);
                                         }
-
-                                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
-                                            unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
-                                            trace!("found 128-bit pair early: low={:?}, high={:?}; REGISTER_PAIR set", l, h);
-                                            return Some(l);
-                                        }
-                                    } else {
-                                        panic!("unmapped src reg (rev): {}", src_name);
                                     }
                                 }
                             }
+                        }
+
+                        if let (Some(l), Some(h)) = (low_reg, high_reg) {
+                            unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
+                            return Some(l);
                         }
                     }
                 }
             }
         }
-
-        panic!(
-            "no 128-bit pair found (low={:?}, high={:?}) for function at {:#x}",
-            low_reg, high_reg, addr
-        );
+        panic!("no 128-bit pair found for function at {:#x}", addr);
     }
 
-    for insn in instructions
-        .iter()
-        .rev()
-        .skip_while(|i| i.mnemonic().map_or(true, |m| m != "ret"))
-        .skip(1)
-    {
+    for insn in instructions.iter() {
+        if insn.mnemonic().map_or(false, |m| m == "ret") {
+            break;
+        }
+
         if let Ok(detail) = cs.insn_detail(&insn) {
             if let capstone::arch::ArchDetail::X86Detail(x86) = detail.arch_detail() {
                 let ops: Vec<_> = x86.operands().collect();
 
                 if insn.mnemonic() == Some("mov") && ops.len() == 2 {
-                    trace!(
-                        "insn {:#x}: found mov (len={} bytes={:x?}) op_str='{}'",
-                        insn.address(),
-                        ops.len(),
-                        insn.bytes(),
-                        insn.op_str().unwrap_or("")
-                    );
-
                     use capstone::arch::x86::X86OperandType;
 
-                    for op in ops.iter() {
-                        if let X86OperandType::Reg(regop) = op.op_type {
-                            if regop.0 != 0 {
-                                let reg_name = cs.reg_name(regop).unwrap_or("??".to_string());
-
-                                if let Some(mapped) = map_cs_reg(regop.0) {
-                                    trace!("mapped reg {} -> {:?}", reg_name, mapped);
-                                    return Some(mapped);
-                                } else {
-                                    panic!("encountered unmapped register: {}", reg_name);
-                                }
+                    if is_write {
+                        if let (X86OperandType::Mem(_), X86OperandType::Reg(reg_op)) = (&ops[0].op_type, &ops[1].op_type) {
+                            if let Some(mapped) = map_cs_reg(reg_op.0) {
+                                trace!("Found WRITE register: {:?} at {:#x}", mapped, insn.address());
+                                return Some(mapped);
+                            }
+                        }
+                    } else {
+                        if let (X86OperandType::Reg(reg_op), X86OperandType::Mem(_)) = (&ops[0].op_type, &ops[1].op_type) {
+                            if let Some(mapped) = map_cs_reg(reg_op.0) {
+                                trace!("Found READ register: {:?} at {:#x}", mapped, insn.address());
+                                return Some(mapped);
                             }
                         }
                     }
@@ -720,7 +669,7 @@ pub fn find_memory_access_register(
         }
     }
 
-    panic!("no single-register mov found for function at {:#x}", addr);
+    panic!("no matching mov found for function at {:#x} (is_write={})", addr, is_write);
 }
 
 pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(

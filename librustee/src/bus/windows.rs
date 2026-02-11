@@ -373,7 +373,7 @@ pub fn install_handler() -> io::Result<()> {
     }
 
     for (func_ptr, index) in write_functions.iter() {
-        if let Some(reg) = find_memory_access_register(&cs, *func_ptr, *index == 4) {
+        if let Some(reg) = find_memory_access_register(&cs, *func_ptr, true, *index == 4) {
             unsafe {
                 super::backpatch::REGISTER_MAP[*index] = Some(reg);
             }
