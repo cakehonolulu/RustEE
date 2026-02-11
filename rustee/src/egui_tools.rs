@@ -34,8 +34,8 @@ impl EguiRenderer {
     pub fn new(
         device: &Device,
         output_color_format: TextureFormat,
-        output_depth_format: Option<TextureFormat>,
-        msaa_samples: u32,
+        _output_depth_format: Option<TextureFormat>,
+        _msaa_samples: u32,
         window: &Window,
     ) -> EguiRenderer {
         window.set_title("RustEE");

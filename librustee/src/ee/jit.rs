@@ -1915,8 +1915,8 @@ impl JIT {
     fn break_(
         &mut self,
         builder: &mut FunctionBuilder,
-        opcode: u32,
-        current_pc: &mut u32,
+        _opcode: u32,
+        _current_pc: &mut u32,
     ) -> Option<BranchInfo> {
         let cpu_ptr = &mut self.cpu as *mut EE as i64;
         let cpu_arg = builder.ins().iconst(types::I64, cpu_ptr);
@@ -2262,7 +2262,7 @@ impl JIT {
 
     fn j(
         &mut self,
-        builder: &mut FunctionBuilder,
+        _builder: &mut FunctionBuilder,
         opcode: u32,
         current_pc: &mut u32,
     ) -> Option<BranchInfo> {
@@ -3044,7 +3044,7 @@ impl JIT {
 
         let invalid = builder.ins().bor(rs_invalid, rt_invalid);
         let invalid_or_zero = builder.ins().bor(invalid, rt_zero);
-        let valid = builder.ins().bnot(invalid_or_zero);
+        let _valid = builder.ins().bnot(invalid_or_zero);
 
         let dividend64 = builder.ins().uextend(types::I64, rs_val_i32);
         let divisor64 = builder.ins().uextend(types::I64, rt_val_i32);
@@ -3400,7 +3400,7 @@ impl JIT {
             16,
         );
         let lo64 = builder.ins().uextend(types::I64, lo32);
-        let zero64_rd = builder.ins().iconst(types::I64, 0);
+        let _zero64_rd = builder.ins().iconst(types::I64, 0);
         let current_rd = builder.ins().load(types::I64, MemFlags::new(), rd_addr, 0);
         let rd_final = builder.ins().select(store_rd, lo64, current_rd);
         builder.ins().store(MemFlags::new(), rd_final, rd_addr, 0);
@@ -4609,10 +4609,10 @@ impl JIT {
         let erl_true_block = builder.create_block();
         let erl_false_block = builder.create_block();
         let sideload_block = builder.create_block();
-        let epc_param_val = builder.append_block_param(sideload_block, types::I32);
+        let _epc_param_val = builder.append_block_param(sideload_block, types::I32);
         let sideload_true_block = builder.create_block();
         let end_block = builder.create_block();
-        let final_param_val = builder.append_block_param(end_block, types::I32);
+        let _final_param_val = builder.append_block_param(end_block, types::I32);
 
         builder
             .ins()

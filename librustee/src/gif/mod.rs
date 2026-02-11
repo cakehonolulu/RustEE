@@ -66,7 +66,7 @@ impl GIF {
         (self.mode & 0x1) != 0
     }
 
-    pub fn write_dmac_data(&mut self, bus: &mut Bus, data: u128, madr: &mut u32, qwc: &mut u32, chain: bool) {
+    pub fn write_dmac_data(&mut self, bus: &mut Bus, data: u128, madr: &mut u32, _qwc: &mut u32, _chain: bool) {
         match self.state {
             State::Idle => {
                 self.current_gif_addr = *madr;
@@ -76,7 +76,7 @@ impl GIF {
                 let low = data as u64;
 
                 self.nloop = (low & 0x7FFF) as u32; // bits 0-14
-                let eop = ((low >> 15) & 0x1) != 0; // bit 15
+                let _eop = ((low >> 15) & 0x1) != 0; // bit 15
                 let enable_prim = ((low >> 46) & 0x1) != 0; // bit 46
                 let prim = ((low >> 47) & 0x7FF) as u32; // bits 47-57
                 let format = ((low >> 58) & 0x3) as u8; // bits 58-59

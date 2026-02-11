@@ -88,7 +88,7 @@ impl Bus {
                 AccessType::ReadByte,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -123,7 +123,7 @@ impl Bus {
                 AccessType::ReadHalfword,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -158,7 +158,7 @@ impl Bus {
                 AccessType::ReadWord,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -193,7 +193,7 @@ impl Bus {
                 AccessType::ReadDoubleword,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -228,7 +228,7 @@ impl Bus {
                 AccessType::ReadDoubleword,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -264,7 +264,7 @@ impl Bus {
                 AccessType::WriteByte,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -297,7 +297,7 @@ impl Bus {
                 AccessType::WriteHalfword,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -330,7 +330,7 @@ impl Bus {
                 AccessType::WriteWord,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -363,7 +363,7 @@ impl Bus {
                 AccessType::WriteDoubleword,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -409,7 +409,7 @@ impl Bus {
                 AccessType::WriteDoubleword,
                 operating_mode,
                 cop0_asid,
-            ).unwrap_or_else(|e| va)
+            ).unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {

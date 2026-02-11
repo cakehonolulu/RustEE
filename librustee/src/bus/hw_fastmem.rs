@@ -25,8 +25,6 @@ use libc::{
     munmap, mprotect
 };
 
-use std::ops::Add;
-
 #[cfg(windows)]
 use std::ffi::os_str::OsStr;
 #[cfg(windows)]

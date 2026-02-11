@@ -5,13 +5,11 @@ use librustee::{
     cpu::CPU,
     ee::EE,
 };
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::path::Path;
 use portable_atomic::AtomicU32;
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::util::SubscriberInitExt;
 use winit::event_loop::{ControlFlow, EventLoop};
-use librustee::ee::Interpreter;
 use librustee::sched::Scheduler;
 
 mod app;

@@ -151,7 +151,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_read8(pa)
         }
@@ -185,7 +185,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_read16(pa)
         }
@@ -219,7 +219,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_read32(pa)
         }
@@ -253,7 +253,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_read64(pa)
         }
@@ -287,7 +287,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_read128(pa)
         }
@@ -321,7 +321,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_write8(pa, value)
         }
@@ -356,7 +356,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_write16(pa, value)
         }
@@ -391,7 +391,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_write32(pa, value)
         }
@@ -426,7 +426,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_write64(pa, value)
         }
@@ -461,7 +461,7 @@ impl Bus {
                     AccessType::WriteDoubleword,
                     operating_mode,
                     cop0_asid,
-                ).unwrap_or_else(|e| va)
+                ).unwrap_or_else(|_e| va)
             };
             self.io_write128(pa, value)
         }

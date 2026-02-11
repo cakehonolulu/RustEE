@@ -677,7 +677,7 @@ impl GS {
         self.current_prim = data & 0x7;
     }
 
-    fn add_vertex(&mut self, data: u64, kick: bool) {
+    fn add_vertex(&mut self, data: u64, _kick: bool) {
         let x_fixed = ((data >> 0) & 0xFFFF) as i16;
         let y_fixed = ((data >> 16) & 0xFFFF) as i16;
 
@@ -687,7 +687,7 @@ impl GS {
         let x_fixed = x_fixed.wrapping_sub(xoffset_1);
         let y_fixed = y_fixed.wrapping_sub(yoffset_1);
 
-        let z = ((data >> 48) & 0xFFFFFF) as i32;
+        let _z = ((data >> 48) & 0xFFFFFF) as i32;
 
         let x = x_fixed as f32 / 16.0;
         let y = y_fixed as f32 / 16.0;
@@ -867,11 +867,11 @@ impl GS {
 
         let zbuf = self.registers[0x4E];
         let zbp = (zbuf & 0x1FF) as usize;
-        let z_base = zbp * 2048 * 4;
-        let z_format = ((zbuf >> 24) & 0xF) as u32;
+        let _z_base = zbp * 2048 * 4;
+        let _z_format = ((zbuf >> 24) & 0xF) as u32;
         let z_mask = ((zbuf >> 32) & 0x1) != 0;
 
-        let z_value = v.z;
+        let _z_value = v.z;
 
         let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
         let width = self.framebuffer_fbw as usize * 64;
@@ -923,8 +923,8 @@ impl GS {
 
         let zbuf = self.registers[0x4E];
         let zbp = (zbuf & 0x1FF) as usize;
-        let z_base = zbp * 2048 * 4;
-        let z_format = ((zbuf >> 24) & 0xF) as u32;
+        let _z_base = zbp * 2048 * 4;
+        let _z_format = ((zbuf >> 24) & 0xF) as u32;
         let z_mask = ((zbuf >> 32) & 0x1) != 0;
 
         let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
@@ -951,7 +951,7 @@ impl GS {
                     w2 /= area;
 
                     let zf = w0 * v0.z as f32 + w1 * v1.z as f32 + w2 * v2.z as f32;
-                    let z_value = zf as u32;
+                    let _z_value = zf as u32;
 
                     let pixel_addr = frame_base + (y as usize * width + x as usize) * 4;
                     if pixel_addr + 4 > self.vram.len() {
@@ -993,11 +993,11 @@ impl GS {
 
         let zbuf = self.registers[0x4E];
         let zbp = (zbuf & 0x1FF) as usize;
-        let z_base = zbp * 2048 * 4;
-        let z_format = ((zbuf >> 24) & 0xF) as u32;
+        let _z_base = zbp * 2048 * 4;
+        let _z_format = ((zbuf >> 24) & 0xF) as u32;
         let z_mask = ((zbuf >> 32) & 0x1) != 0;
 
-        let z_value = v1.z;
+        let _z_value = v1.z;
 
         let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
         let width = self.framebuffer_fbw as usize * 64;

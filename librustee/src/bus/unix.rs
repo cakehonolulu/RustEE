@@ -38,70 +38,70 @@ static STUB_ADDRS: Lazy<HashMap<AccessInfo, u64>> = Lazy::new(|| {
             kind: Write,
             width: B8,
         },
-        io_write8_stub as u64,
+        io_write8_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Write,
             width: B16,
         },
-        io_write16_stub as u64,
+        io_write16_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Write,
             width: B32,
         },
-        io_write32_stub as u64,
+        io_write32_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Write,
             width: B64,
         },
-        io_write64_stub as u64,
+        io_write64_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Write,
             width: B128,
         },
-        io_write128_stub as u64,
+        io_write128_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Read,
             width: B8,
         },
-        io_read8_stub as u64,
+        io_read8_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Read,
             width: B16,
         },
-        io_read16_stub as u64,
+        io_read16_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Read,
             width: B32,
         },
-        io_read32_stub as u64,
+        io_read32_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Read,
             width: B64,
         },
-        io_read64_stub as u64,
+        io_read64_stub as *const () as u64,
     );
     m.insert(
         AccessInfo {
             kind: Read,
             width: B128,
         },
-        io_read128_stub as u64,
+        io_read128_stub as *const () as u64,
     );
     m
 });
@@ -289,7 +289,7 @@ fn generic_segv_handler<
         }
 
         for &(mov_off, mov_reg) in &mov_hits {
-            for &(call_off, call_reg, _) in &call_hits {
+            for &(_call_off, call_reg, _) in &call_hits {
                 if mov_reg == call_reg {
                     let movabs_addr = buf_start + mov_off;
                     let Some(reg) = H::parse_register_from_operand(&mov_reg) else {

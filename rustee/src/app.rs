@@ -7,7 +7,6 @@ use egui::{Color32, FontId, Grid, RichText, ScrollArea, TextStyle};
 use egui_extras::{Column, TableBuilder};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
-use wgpu::util::DeviceExt;
 use librustee::Bus;
 use librustee::cpu::CPU;
 use librustee::cpu::EmulationBackend;
