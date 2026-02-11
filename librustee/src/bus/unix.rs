@@ -419,7 +419,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in write_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 150);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((
                 start,
@@ -438,7 +438,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in read_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 150);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((
                 start,
@@ -457,7 +457,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in jit_write_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 400);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((
                 start,
@@ -476,7 +476,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in jit_read_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 500);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((
                 start,

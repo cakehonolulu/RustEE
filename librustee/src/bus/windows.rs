@@ -338,7 +338,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in write_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 150);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((start, end, BusFnId { is_write: true, width_index: idx as u8, is_jit: false }));
             trace!("Registered write stub: idx={} start={:#x} end={:#x}", idx, start, end);
@@ -346,7 +346,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in read_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 150);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((start, end, BusFnId { is_write: false, width_index: idx, is_jit: false }));
             trace!("Registered read  stub: idx={} start={:#x} end={:#x}", idx, start, end);
@@ -354,7 +354,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in jit_write_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 250);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((start, end, BusFnId { is_write: true, width_index: idx as u8, is_jit: true }));
             trace!("Registered JIT write stub: idx={} start={:#x} end={:#x}", idx, start, end);
@@ -362,7 +362,7 @@ pub fn install_handler() -> io::Result<()> {
 
         for &(fp, idx) in jit_read_functions.iter() {
             let start = fp as u64;
-            let end_ptr = find_function_end(&cs, fp, 500);
+            let end_ptr = find_function_end(&cs, fp);
             let end = end_ptr as u64;
             ranges.push((start, end, BusFnId { is_write: false, width_index: idx, is_jit: true }));
             trace!("Registered JIT read  stub: idx={} start={:#x} end={:#x}", idx, start, end);
