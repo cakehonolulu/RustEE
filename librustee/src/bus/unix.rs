@@ -332,11 +332,19 @@ fn generic_segv_handler<
 }
 
 fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
+    let len = patch_bytes.len();
+    if len == 0 {
+        return Ok(());
+    }
+
     let page_size = nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
         .map_err(|e| format!("Failed to get page size: {}", e))?
         .ok_or("Page size not available")? as usize;
 
-    let page_start = (addr as usize) & !(page_size - 1);
+    let start = addr as usize;
+    let end = start + len;
+    let page_start = start & !(page_size - 1);
+    let page_end = ((end - 1) & !(page_size - 1)) + page_size;
 
     trace!(
         "Preparing to patch at 0x{:x}, page_start=0x{:x}, page_size=0x{:x}",
@@ -346,7 +354,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     unsafe {
         mprotect(
             std::ptr::NonNull::new_unchecked(page_start as *mut c_void),
-            page_size,
+            page_end - page_start,
             ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
         )
         .map_err(|e| format!("mprotect→WRITE failed: {}", e))?;
@@ -354,13 +362,13 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
 
     unsafe {
         let dest = addr as *mut u8;
-        std::ptr::copy_nonoverlapping(patch_bytes.as_ptr(), dest, patch_bytes.len());
+        std::ptr::copy_nonoverlapping(patch_bytes.as_ptr(), dest, len);
     }
 
     unsafe {
         mprotect(
             std::ptr::NonNull::new_unchecked(page_start as *mut c_void),
-            page_size,
+            page_end - page_start,
             ProtFlags::PROT_READ | ProtFlags::PROT_EXEC,
         )
         .map_err(|e| format!("mprotect→RX failed: {}", e))?;

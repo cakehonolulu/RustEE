@@ -241,11 +241,19 @@ unsafe fn generic_exception_handler<
 }
 
 fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
+    let len = patch_bytes.len();
+    if len == 0 {
+        return Ok(());
+    }
+
     let mut system_info: SYSTEM_INFO = unsafe { zeroed() };
     unsafe { GetSystemInfo(&mut system_info) };
     let page_size = system_info.dwPageSize as usize;
 
-    let page_start = (addr as usize) & !(page_size - 1);
+    let start = addr as usize;
+    let end = start + len;
+    let page_start = start & !(page_size - 1);
+    let page_end = ((end - 1) & !(page_size - 1)) + page_size;
 
     trace!(
         "Preparing to patch at 0x{:x}, page_start=0x{:x}, page_size=0x{:x}",
@@ -257,7 +265,7 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
     let result = unsafe {
         VirtualProtect(
             page_start as *const c_void,
-            page_size,
+            page_end - page_start,
             PAGE_READWRITE,
             &mut old_protect,
         )
@@ -269,13 +277,13 @@ fn patch_instruction(addr: u64, patch_bytes: &[u8]) -> Result<(), String> {
 
     unsafe {
         let dest = addr as *mut u8;
-        ptr::copy_nonoverlapping(patch_bytes.as_ptr(), dest, patch_bytes.len());
+        ptr::copy_nonoverlapping(patch_bytes.as_ptr(), dest, len);
     }
 
     let result = unsafe {
         VirtualProtect(
             page_start as *const c_void,
-            page_size,
+            page_end - page_start,
             PAGE_EXECUTE_READ,
             &mut old_protect,
         )
