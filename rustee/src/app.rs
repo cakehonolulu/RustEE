@@ -319,10 +319,10 @@ impl App {
             Ok(_) => {}
         };
 
-        let bus = self.bus.lock().unwrap();
-        let gs = &bus.gs;
-        let (frame_data, original_width, original_height) = gs.get_framebuffer_data();
-        drop(bus);
+        let (frame_data, original_width, original_height) = {
+            let bus = self.bus.lock().unwrap();
+            bus.gs.get_framebuffer_data()
+        };
 
         const TARGET_WIDTH: u32 = 640;
         const TARGET_HEIGHT: u32 = 480;

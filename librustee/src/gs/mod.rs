@@ -1,3 +1,5 @@
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
 use tracing::error;
 
 /// Base address for privileged GS registers
@@ -132,6 +134,12 @@ pub struct GS {
     current_prim: u64,
     vertex_queue: Vec<Vertex>,
     pub(crate) buffered_primitives: Vec<Primitive>,
+
+    front_buffer: Vec<u8>,
+    back_buffer: Vec<u8>,
+    buffer_width: u32,
+    buffer_height: u32,
+    buffer_ready: Arc<AtomicBool>,
 }
 
 impl Default for GS {
@@ -187,6 +195,11 @@ impl Default for GS {
             current_prim: 0,
             vertex_queue: Vec::with_capacity(3),
             buffered_primitives: Vec::new(),
+            front_buffer: vec![0u8; 4 * 1024 * 1024],
+            back_buffer: vec![0u8; 4 * 1024 * 1024],
+            buffer_width: 640,
+            buffer_height: 480,
+            buffer_ready: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -198,6 +211,11 @@ impl GS {
             registers: [0u64; 0x63],
             hwreg: 0,
             vram: vec![0; 4 * 1024 * 1024], // 4MB VRAM
+            front_buffer: vec![0u8; 4 * 1024 * 1024],
+            back_buffer: vec![0u8; 4 * 1024 * 1024],
+            buffer_width: 0,
+            buffer_height: 0,
+            buffer_ready: Arc::new(AtomicBool::new(false)),
             ..Default::default()
         }
     }
@@ -234,60 +252,17 @@ impl GS {
     }
 
     pub fn get_framebuffer_data(&self) -> (Option<Vec<u8>>, u32, u32) {
+        if !self.buffer_ready.load(Ordering::Acquire) {
+            return (None, 0, 0);
+        }
+
         let en1 = (self.pmode & 1) != 0;
         let en2 = (self.pmode & 2) != 0;
         if !en1 && !en2 {
             return (None, 0, 0);
         }
 
-        let (dispfb, display) = if en1 {
-            (self.dispfb1, self.display1)
-        } else {
-            (self.dispfb2, self.display2)
-        };
-
-        let fbp = (dispfb & 0x1FF) as u32;
-        let fbw = ((dispfb >> 9) & 0x3F) as u32;
-        let psm = ((dispfb >> 15) & 0x1F) as u32;
-        if psm != 0 {
-            return (None, 0, 0);
-        }
-        let dbx = ((dispfb >> 32) & 0x7FF) as u32;
-        let dby = ((dispfb >> 43) & 0x7FF) as u32;
-
-        let magh = ((display >> 23) & 0xF) as u32;
-        let magv = ((display >> 27) & 0x3) as u32;
-        let dw = ((display >> 32) & 0xFFF) as u32;
-        let dh = ((display >> 44) & 0x7FF) as u32;
-
-        let display_width = dw + 1;
-        let display_height = dh + 1;
-
-        let buffer_width_pixels = fbw * 64;
-
-        let mag_h = magh + 1;
-        let mag_v = magv + 1;
-
-        let buffer_read_width = ((display_width as u64 + mag_h as u64 - 1) / mag_h as u64) as u32;
-        let buffer_read_height = ((display_height as u64 + mag_v as u64 - 1) / mag_v as u64) as u32;
-
-        let base_addr_bytes = fbp as usize * 2048 * 4;
-
-        let mut buffer_frame = vec![0u8; buffer_read_width as usize * buffer_read_height as usize * 4];
-
-        for py in 0..buffer_read_height {
-            let src_y = dby + py;
-            for px in 0..buffer_read_width {
-                let src_x = dbx + px;
-                let src_addr = base_addr_bytes + (src_y as usize * buffer_width_pixels as usize + src_x as usize) * 4;
-                let dst_addr = (py as usize * buffer_read_width as usize + px as usize) * 4;
-                if src_addr + 4 <= self.vram.len() {
-                    buffer_frame[dst_addr..dst_addr + 4].copy_from_slice(&self.vram[src_addr..src_addr + 4]);
-                }
-            }
-        }
-
-        (Some(buffer_frame), buffer_read_width, buffer_read_height)
+        (Some(self.front_buffer.clone()), self.buffer_width, self.buffer_height)
     }
     
     /// Write a 64-bit value to a GS register
@@ -758,6 +733,73 @@ impl GS {
         self.framebuffer_fbp = old_fbp;
         self.framebuffer_fbw = old_fbw;
         self.framebuffer_psm = old_psm;
+
+        let en1 = (self.pmode & 1) != 0;
+        let en2 = (self.pmode & 2) != 0;
+
+        if !(en1 || en2) {
+            return;
+        }
+
+        let (dispfb, display) = if en1 {
+            (self.dispfb1, self.display1)
+        } else {
+            (self.dispfb2, self.display2)
+        };
+
+        let fbp = (dispfb & 0x1FF) as u32;
+        let fbw = ((dispfb >> 9) & 0x3F) as u32;
+        let psm = ((dispfb >> 15) & 0x1F) as u32;
+
+        if psm != 0 {
+            return;
+        }
+
+        let dbx = ((dispfb >> 32) & 0x7FF) as u32;
+        let dby = ((dispfb >> 43) & 0x7FF) as u32;
+        let magh = ((display >> 23) & 0xF) as u32;
+        let magv = ((display >> 27) & 0x3) as u32;
+        let dw = ((display >> 32) & 0xFFF) as u32;
+        let dh = ((display >> 44) & 0x7FF) as u32;
+
+        let display_width = dw + 1;
+        let display_height = dh + 1;
+        let buffer_width_pixels = fbw * 64;
+        let mag_h = magh + 1;
+        let mag_v = magv + 1;
+
+        let buffer_read_width = ((display_width as u64 + mag_h as u64 - 1) / mag_h as u64) as u32;
+        let buffer_read_height = ((display_height as u64 + mag_v as u64 - 1) / mag_v as u64) as u32;
+
+        let needed_size = (buffer_read_width * buffer_read_height * 4) as usize;
+        if self.back_buffer.len() != needed_size {
+            self.back_buffer.resize(needed_size, 0);
+            self.buffer_width = buffer_read_width;
+            self.buffer_height = buffer_read_height;
+        }
+
+        let base_addr_bytes = fbp as usize * 2048 * 4;
+        for py in 0..buffer_read_height {
+            let src_y = dby + py;
+            for px in 0..buffer_read_width {
+                let src_x = dbx + px;
+                let src_addr = base_addr_bytes + (src_y as usize * buffer_width_pixels as usize + src_x as usize) * 4;
+                let dst_addr = (py as usize * buffer_read_width as usize + px as usize) * 4;
+
+                if src_addr + 4 <= self.vram.len() && dst_addr + 4 <= self.back_buffer.len() {
+                    self.back_buffer[dst_addr..dst_addr + 4]
+                        .copy_from_slice(&self.vram[src_addr..src_addr + 4]);
+                }
+            }
+        }
+
+        std::mem::swap(&mut self.front_buffer, &mut self.back_buffer);
+
+        if self.front_buffer.len() != needed_size {
+            self.front_buffer.resize(needed_size, 0);
+        }
+
+        self.buffer_ready.store(true, Ordering::Release);
     }
 
     fn update_framebuffer_info(&mut self, data: u64) {
