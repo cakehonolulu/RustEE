@@ -942,6 +942,19 @@ impl JIT {
 
                 match subfunction {
                     0x12 => self.mflo1(builder, opcode, current_pc),
+                    0x09 => {
+                        let mmi2_function = (opcode >> 6) & 0x1F;
+
+                        match mmi2_function {
+                            0x0E => self.pcpyld(builder, opcode, current_pc),
+                            _ => {
+                                panic!(
+                                    "Unimplemented MMI2 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
+                                    mmi2_function, current_pc
+                                );
+                            }
+                        }
+                    }
                     0x18 => self.mult1(builder, opcode, current_pc),
                     0x1B => self.divu1(builder, opcode, current_pc),
                     0x28 => {
@@ -962,6 +975,7 @@ impl JIT {
 
                         match mmi3_function {
                             0x12 => self.or(builder, opcode, current_pc),
+                            0x1B => self.pcpyh(builder, opcode, current_pc),
                             _ => {
                                 panic!(
                                     "Unimplemented MMI3 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
@@ -4544,7 +4558,7 @@ impl JIT {
         let call_status = builder.ins().call(read_cop0, &[cpu_arg, status_idx]);
         let status = builder.inst_results(call_status)[0];
 
-        let edi_shift = builder.ins().ushr_imm(status, 10);
+        let edi_shift = builder.ins().ushr_imm(status, 17);
         let edi = builder.ins().band_imm(edi_shift, 0x1);
 
         let exl_shift = builder.ins().ushr_imm(status, 1);
@@ -4565,7 +4579,7 @@ impl JIT {
         let cond2 = builder.ins().bor(cond1, erl_cond);
         let final_cond = builder.ins().bor(cond2, ksu_cond);
 
-        let mask = builder.ins().iconst(types::I32, !(1u32) as i64);
+        let mask = builder.ins().iconst(types::I32, !(1u32 << 16) as i64);
         let new_status = builder.ins().band(status, mask);
 
         let final_status = builder.ins().select(final_cond, new_status, status);
@@ -4767,7 +4781,7 @@ impl JIT {
         let call_status = builder.ins().call(read_cop0, &[cpu_arg, status_idx]);
         let status = builder.inst_results(call_status)[0];
 
-        let edi_shift = builder.ins().ushr_imm(status, 10);
+        let edi_shift = builder.ins().ushr_imm(status, 17);
         let edi = builder.ins().band_imm(edi_shift, 0x1);
 
         let exl_shift = builder.ins().ushr_imm(status, 1);
@@ -4788,7 +4802,7 @@ impl JIT {
         let cond2 = builder.ins().bor(cond1, erl_cond);
         let final_cond = builder.ins().bor(cond2, ksu_cond);
 
-        let mask = builder.ins().iconst(types::I32, 1u32 as i64); // Set EIE bit (bit 0)
+        let mask = builder.ins().iconst(types::I32, (1u32 << 16) as i64);
         let new_status = builder.ins().bor(status, mask);
 
         let final_status = builder.ins().select(final_cond, new_status, status);
@@ -5048,6 +5062,105 @@ impl JIT {
         builder.seal_block(overflow_block);
         builder.seal_block(no_overflow_block);
         builder.seal_block(merge_block);
+
+        None
+    }
+
+    fn pcpyh(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rt_addr = Self::ptr_add(
+            builder,
+            Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64,
+            rt,
+            16,
+        );
+        let rt_val = builder.ins().load(types::I128, MemFlags::new(), rt_addr, 0);
+
+        let lo_64 = builder.ins().ireduce(types::I64, rt_val);
+        let hi_64_shifted = builder.ins().ushr_imm(rt_val, 64);
+        let hi_64 = builder.ins().ireduce(types::I64, hi_64_shifted);
+
+        let multiplier = builder.ins().iconst(types::I64, 0x0001_0001_0001_0001);
+
+        let lo_16 = builder.ins().ireduce(types::I16, lo_64);
+        let lo_ext = builder.ins().uextend(types::I64, lo_16);
+        let lo_res = builder.ins().imul(lo_ext, multiplier);
+
+        let hi_16 = builder.ins().ireduce(types::I16, hi_64);
+        let hi_ext = builder.ins().uextend(types::I64, hi_16);
+        let hi_res = builder.ins().imul(hi_ext, multiplier);
+
+        let lo_res_128 = builder.ins().uextend(types::I128, lo_res);
+        let hi_res_128 = builder.ins().uextend(types::I128, hi_res);
+        let hi_shifted = builder.ins().ishl_imm(hi_res_128, 64);
+        let result = builder.ins().bor(lo_res_128, hi_shifted);
+
+        let rd_addr = Self::ptr_add(
+            builder,
+            Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64,
+            rd,
+            16,
+        );
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+
+        Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
+        *current_pc = current_pc.wrapping_add(4);
+
+        None
+    }
+
+    fn pcpyld(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        opcode: u32,
+        current_pc: &mut u32,
+    ) -> Option<BranchInfo> {
+        let rs = ((opcode >> 21) & 0x1F) as i64;
+        let rt = ((opcode >> 16) & 0x1F) as i64;
+        let rd = ((opcode >> 11) & 0x1F) as i64;
+
+        let rs_addr = Self::ptr_add(
+            builder,
+            Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64,
+            rs,
+            16,
+        );
+        let rs_val = builder.ins().load(types::I128, MemFlags::new(), rs_addr, 0);
+
+        let rt_addr = Self::ptr_add(
+            builder,
+            Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64,
+            rt,
+            16,
+        );
+        let rt_val = builder.ins().load(types::I128, MemFlags::new(), rt_addr, 0);
+
+        let rs_lo = builder.ins().ireduce(types::I64, rs_val);
+        let rt_lo = builder.ins().ireduce(types::I64, rt_val);
+
+        let rs_lo_128 = builder.ins().uextend(types::I128, rs_lo);
+        let rt_lo_128 = builder.ins().uextend(types::I128, rt_lo);
+
+        let rs_shifted = builder.ins().ishl_imm(rs_lo_128, 64);
+        let result = builder.ins().bor(rs_shifted, rt_lo_128);
+
+        let rd_addr = Self::ptr_add(
+            builder,
+            Arc::as_ptr(&self.cpu.registers) as *const AtomicU128 as i64,
+            rd,
+            16,
+        );
+        builder.ins().store(MemFlags::new(), result, rd_addr, 0);
+
+        Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
+        *current_pc = current_pc.wrapping_add(4);
 
         None
     }

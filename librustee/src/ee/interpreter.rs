@@ -344,6 +344,19 @@ impl Interpreter {
                 let subfunction = opcode & 0x3F;
 
                 match subfunction {
+                    0x09 => {
+                        let mmi2_function = (opcode >> 6) & 0x1F;
+
+                        match mmi2_function {
+                            0x0E => self.pcpyld(opcode),
+                            _ => {
+                                panic!(
+                                    "Unimplemented MMI2 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
+                                    mmi2_function, self.cpu.pc()
+                                );
+                            }
+                        }
+                    }
                     0x12 => {
                         self.mflo1(opcode);
                     }
@@ -372,6 +385,7 @@ impl Interpreter {
 
                         match mmi3_function {
                             0x12 => self.or(opcode),
+                            0x1B => self.pcpyh(opcode),
                             _ => {
                                 panic!(
                                     "Unimplemented MMI3 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
@@ -1679,13 +1693,13 @@ impl Interpreter {
 
     fn di(&mut self) {
         let status = self.cpu.read_cop0_register(12);
-        let edi = (status >> 10) & 0x1; // Bit 10: EDI
+        let edi = (status >> 17) & 0x1;
         let exl = (status >> 1) & 0x1; // Bit 1: EXL
         let erl = (status >> 2) & 0x1; // Bit 2: ERL
         let ksu = (status >> 3) & 0x3; // Bits 4:3: KSU
 
         if edi == 1 || exl == 1 || erl == 1 || ksu == 0 {
-            let new_status = status & !(1u32); // Clear EIE (bit 0)
+            let new_status = status & !(1u32 << 16);
             self.cpu.write_cop0_register(12, new_status);
         }
 
@@ -1829,16 +1843,52 @@ impl Interpreter {
 
     fn ei(&mut self) {
         let status = self.cpu.read_cop0_register(12);
-        let edi = (status >> 10) & 0x1; // Bit 10: EDI
+        let edi = (status >> 17) & 0x1;
         let exl = (status >> 1) & 0x1;  // Bit 1: EXL
         let erl = (status >> 2) & 0x1;  // Bit 2: ERL
         let ksu = (status >> 3) & 0x3;  // Bits 4:3: KSU
 
         if edi == 1 || exl == 1 || erl == 1 || ksu == 0 {
-            let new_status = status | 1u32; // Set EIE (bit 0)
+            let new_status = status | (1u32 << 16);
             self.cpu.write_cop0_register(12, new_status);
         }
 
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn pcpyh(&mut self, opcode: u32) {
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rt_val = self.cpu.read_register(rt);
+
+        let lo_half = (rt_val & 0xFFFF) as u64;
+        let hi_half = ((rt_val >> 64) & 0xFFFF) as u64;
+
+        let pattern: u64 = 0x0001_0001_0001_0001;
+        let lo_res = lo_half.wrapping_mul(pattern);
+        let hi_res = hi_half.wrapping_mul(pattern);
+
+        let result = (lo_res as u128) | ((hi_res as u128) << 64);
+
+        self.cpu.write_register(rd, result);
+        self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
+    }
+
+    fn pcpyld(&mut self, opcode: u32) {
+        let rs = ((opcode >> 21) & 0x1F) as usize;
+        let rt = ((opcode >> 16) & 0x1F) as usize;
+        let rd = ((opcode >> 11) & 0x1F) as usize;
+
+        let rs_val = self.cpu.read_register(rs);
+        let rt_val = self.cpu.read_register(rt);
+
+        let rs_low = rs_val & 0xFFFFFFFFFFFFFFFF;
+        let rt_low = rt_val & 0xFFFFFFFFFFFFFFFF;
+
+        let result = (rs_low << 64) | rt_low;
+
+        self.cpu.write_register(rd, result);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 }
