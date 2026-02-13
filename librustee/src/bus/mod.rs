@@ -476,6 +476,9 @@ impl Bus {
     pub fn io_read32(&mut self, mut addr: u32) -> u32 {
         addr &= 0x1FFFFFFF;
         match addr {
+            0x10000000..=0x10001830 => {
+                self.ee_timer.read32(addr)
+            }
             0x10002000 | 0x10002010 => self.ipu.read32(addr),
             0x10003020 => self.gif.read32(addr),
             0x10008000..=0x1000D4FF => self.ee_dmac.read_register(addr),
