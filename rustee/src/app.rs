@@ -11,6 +11,7 @@ use librustee::Bus;
 use librustee::cpu::CPU;
 use librustee::cpu::EmulationBackend;
 use librustee::ee::{EE, Interpreter, JIT};
+use librustee::gs::renderer::RendererKind;
 use librustee::sched::Scheduler;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -204,6 +205,7 @@ pub struct App {
     vram_view_open: bool,
     vram_texture: Option<wgpu::Texture>,
     vram_texture_id: Option<egui::TextureId>,
+    selected_renderer: RendererKind,
 }
 
 impl App {
@@ -250,6 +252,7 @@ impl App {
             vram_view_open: false,
             vram_texture: None,
             vram_texture_id: None,
+            selected_renderer: RendererKind::Software,
         }
     }
 
@@ -715,6 +718,29 @@ impl App {
                     if ui.button("View VRAM").clicked() {
                         self.vram_view_open = !self.vram_view_open;
                     }
+
+                    ui.separator();
+
+                    ui.label("Renderer:");
+                    let current_label = self.selected_renderer.display_name();
+                    egui::ComboBox::from_id_salt("renderer_selector")
+                        .selected_text(current_label)
+                        .show_ui(ui, |ui| {
+                            for kind in RendererKind::all() {
+                                let label = kind.display_name();
+                                let is_selected = *kind == self.selected_renderer;
+                                if ui
+                                    .selectable_label(is_selected, label)
+                                    .clicked()
+                                    && !is_selected
+                                {
+                                    if let Ok(mut bus) = self.bus.lock() {
+                                        bus.gs.swap_renderer(*kind);
+                                    }
+                                    self.selected_renderer = *kind;
+                                }
+                            }
+                        });
                 });
             });
 

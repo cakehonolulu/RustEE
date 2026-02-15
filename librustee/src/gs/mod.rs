@@ -1,6 +1,11 @@
+pub mod renderer;
+pub mod software_renderer;
+
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use tracing::error;
+use renderer::{GsRenderer, Vertex, RendererKind};
+use software_renderer::SoftwareRenderer;
 
 /// Base address for privileged GS registers
 pub const GS_BASE: u32 = 0x1200_0000;
@@ -29,31 +34,6 @@ const GS_IMR_OFFSET: u32 = GS_BASE + 0x1010; // GS_IMR
 const BUSDIR_OFFSET: u32 = GS_BASE + 0x1040; // BUSDIR
 const SIGLBLID_OFFSET: u32 = GS_BASE + 0x1080; // SIGLBLID
 
-#[derive(Debug, Clone, Copy)]
-struct Vertex {
-    x: f32,
-    y: f32,
-    z: u32,
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
-}
-
-impl Default for Vertex {
-    fn default() -> Self {
-        Vertex {
-            x: 0.0,
-            y: 0.0,
-            z: 0,
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 0,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Primitive {
     prim_type: u64,
@@ -69,8 +49,13 @@ pub enum GsEvent {
     None
 }
 
+fn create_renderer(kind: RendererKind) -> Box<dyn GsRenderer> {
+    match kind {
+        RendererKind::Software => Box::new(SoftwareRenderer),
+    }
+}
+
 /// Privileged GS register block
-#[derive(Debug)]
 pub struct GS {
     pub pmode: u64,
     pub smode1: u64,
@@ -140,6 +125,18 @@ pub struct GS {
     buffer_width: u32,
     buffer_height: u32,
     buffer_ready: Arc<AtomicBool>,
+
+    renderer: Box<dyn GsRenderer>,
+}
+
+impl std::fmt::Debug for GS {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GS")
+            .field("renderer", &self.renderer.name())
+            .field("pmode", &self.pmode)
+            .field("vram_len", &self.vram.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for GS {
@@ -200,6 +197,7 @@ impl Default for GS {
             buffer_width: 640,
             buffer_height: 480,
             buffer_ready: Arc::new(AtomicBool::new(false)),
+            renderer: Box::new(SoftwareRenderer),
         }
     }
 }
@@ -216,7 +214,23 @@ impl GS {
             buffer_width: 0,
             buffer_height: 0,
             buffer_ready: Arc::new(AtomicBool::new(false)),
+            renderer: Box::new(SoftwareRenderer),
             ..Default::default()
+        }
+    }
+
+    pub fn swap_renderer(&mut self, kind: RendererKind) {
+        self.renderer = create_renderer(kind);
+    }
+
+    pub fn current_renderer_name(&self) -> &'static str {
+        self.renderer.name()
+    }
+
+    pub fn current_renderer_kind(&self) -> RendererKind {
+        match self.renderer.name() {
+            "Software" => RendererKind::Software,
+            _ => RendererKind::Software,
         }
     }
 
@@ -264,7 +278,7 @@ impl GS {
 
         (Some(self.front_buffer.clone()), self.buffer_width, self.buffer_height)
     }
-    
+
     /// Write a 64-bit value to a GS register
     pub fn write64(&mut self, offset: u32, value: u64) -> GsEvent {
         let event: GsEvent = GsEvent::None;
@@ -622,26 +636,21 @@ impl GS {
 
     fn transfer_vram(&mut self) {
         if self.transmission_direction == 0 { // Host to Local
-            let base_addr_words = self.destination_base_pointer;
+            let renderer = &mut *self.renderer;
+            let vram = &mut self.vram;
+            let hwreg = self.hwreg;
+            let base = self.destination_base_pointer;
             let rect_x = self.destination_rectangle_x;
             let rect_y = self.destination_rectangle_y;
-            let buffer_width_pixels = self.destination_buffer_width;
+            let buf_width = self.destination_buffer_width;
+            let area_width = self.transmission_area_pixel_width;
+            let dest_x = &mut self.destination_x;
+            let dest_y = &mut self.destination_y;
 
-            let pixel_offset = (rect_y + self.destination_y) * buffer_width_pixels + (rect_x + self.destination_x);
-            let byte_addr = (base_addr_words * 4 + pixel_offset * 4) as usize;
-
-            let data_bytes = self.hwreg.to_le_bytes();
-
-            if byte_addr + 8 <= self.vram.len() {
-                self.vram[byte_addr..byte_addr + 8].copy_from_slice(&data_bytes);
-            }
-
-            self.destination_x += 2;
-
-            if self.destination_x >= self.transmission_area_pixel_width {
-                self.destination_x = 0;
-                self.destination_y += 1;
-            }
+            renderer.transfer_hwreg(
+                vram, hwreg, base, rect_x, rect_y, buf_width,
+                dest_x, dest_y, area_width,
+            );
         }
     }
 
@@ -722,11 +731,17 @@ impl GS {
                 self.framebuffer_psm = ((self.registers[0x4D] >> 24) & 0x3F) as u32;
             }
 
+            let renderer = &mut *self.renderer;
+            let vram = &mut self.vram;
+            let registers = &self.registers;
+            let fbp = self.framebuffer_fbp;
+            let fbw = self.framebuffer_fbw;
+
             match prim.prim_type {
-                0 => self.draw_point(&prim.vertices),
-                3 => self.draw_triangle(&prim.vertices),
-                6 => self.draw_sprite(&prim.vertices),
-                _ => {},
+                0 => renderer.draw_point(vram, &prim.vertices[0], registers, fbp, fbw),
+                3 => renderer.draw_triangle(vram, &prim.vertices, registers, fbp, fbw),
+                6 => renderer.draw_sprite(vram, &prim.vertices, registers, fbp, fbw),
+                _ => {}
             }
         }
 
@@ -853,213 +868,26 @@ impl GS {
         self.destination_y = 0;
 
         if self.transmission_direction == 2 {
-            self.blit_vram();
+            self.do_blit_vram();
         }
     }
 
-    fn blit_vram(&mut self) {
-        let width_words = self.transmission_area_pixel_width as usize;
-        let height = self.transmission_area_pixel_height as usize;
+    fn do_blit_vram(&mut self) {
+        let renderer = &mut *self.renderer;
+        let vram = &mut self.vram;
 
-        let vram_words = VRAM_SIZE / 4;
-        let vram_bytes = self.vram.len();
-
-        for y in 0..height {
-            let src_words = (self.source_base_pointer as usize)
-                .saturating_add(self.source_rectangle_x as usize)
-                .saturating_add((self.source_rectangle_y as usize).saturating_mul(self.source_buffer_width as usize))
-                .saturating_add(y.saturating_mul(self.source_buffer_width as usize));
-
-            let dst_words = (self.destination_base_pointer as usize)
-                .saturating_add(self.destination_rectangle_x as usize)
-                .saturating_add((self.destination_rectangle_y as usize).saturating_mul(self.destination_buffer_width as usize))
-                .saturating_add(y.saturating_mul(self.destination_buffer_width as usize));
-
-            if src_words.checked_add(width_words).map_or(false, |v| v <= vram_words)
-                && dst_words.checked_add(width_words).map_or(false, |v| v <= vram_words)
-            {
-                let src_b = src_words * 4;
-                let dst_b = dst_words * 4;
-                let len_b = width_words * 4;
-
-                if src_b + len_b <= vram_bytes && dst_b + len_b <= vram_bytes {
-                    self.vram.copy_within(src_b..src_b + len_b, dst_b);
-                } else {
-                    error!("VRAM blit out of bounds (byte range)");
-                    panic!("VRAM blit out of bounds");
-                }
-            } else {
-                error!("VRAM blit out of bounds (word range)");
-                panic!("VRAM blit out of bounds");
-            }
-        }
-    }
-
-
-    fn draw_point(&mut self, vertices: &[Vertex]) {
-        let v = vertices.get(0).unwrap();
-        let scissor = self.registers[0x40];
-        let scax0 = (scissor & 0x7FF) as i32;
-        let scax1 = ((scissor >> 16) & 0x7FF) as i32;
-        let scay0 = ((scissor >> 32) & 0x7FF) as i32;
-        let scay1 = ((scissor >> 48) & 0x7FF) as i32;
-
-        let x = (v.x.floor() as i32).clamp(scax0, scax1);
-        let y = (v.y.floor() as i32).clamp(scay0, scay1);
-
-        let zbuf = self.registers[0x4E];
-        let zbp = (zbuf & 0x1FF) as usize;
-        let _z_base = zbp * 2048 * 4;
-        let _z_format = ((zbuf >> 24) & 0xF) as u32;
-        let z_mask = ((zbuf >> 32) & 0x1) != 0;
-
-        let _z_value = v.z;
-
-        let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
-        let width = self.framebuffer_fbw as usize * 64;
-
-        let pixel_addr = frame_base + (y as usize * width + x as usize) * 4;
-        if pixel_addr + 4 > self.vram.len() {
-            return;
-        }
-
-        let write_pixel = !z_mask;
-
-        if write_pixel {
-            self.vram[pixel_addr] = v.a;
-            self.vram[pixel_addr + 1] = v.r;
-            self.vram[pixel_addr + 2] = v.g;
-            self.vram[pixel_addr + 3] = v.b;
-        }
-    }
-
-    fn draw_triangle(&mut self, vertices: &[Vertex]) {
-        let v0 = vertices.get(0).unwrap();
-        let v1 = vertices.get(1).unwrap();
-        let v2 = vertices.get(2).unwrap();
-
-        let scissor = self.registers[0x40];
-        let scax0 = (scissor & 0x7FF) as i32;
-        let scax1 = ((scissor >> 16) & 0x7FF) as i32;
-        let scay0 = ((scissor >> 32) & 0x7FF) as i32;
-        let scay1 = ((scissor >> 48) & 0x7FF) as i32;
-
-        let min_x = [v0.x, v1.x, v2.x].iter().fold(f32::INFINITY, |m, &v| m.min(v)).floor() as i32;
-        let max_x = [v0.x, v1.x, v2.x].iter().fold(f32::NEG_INFINITY, |m, &v| m.max(v)).ceil() as i32;
-        let min_y = [v0.y, v1.y, v2.y].iter().fold(f32::INFINITY, |m, &v| m.min(v)).floor() as i32;
-        let max_y = [v0.y, v1.y, v2.y].iter().fold(f32::NEG_INFINITY, |m, &v| m.max(v)).ceil() as i32;
-
-        let min_x = min_x.max(scax0);
-        let max_x = max_x.min(scax1);
-        let min_y = min_y.max(scay0);
-        let max_y = max_y.min(scay1);
-
-        let edge = |a: &Vertex, b: &Vertex, px: f32, py: f32| {
-            (px - a.x) * (b.y - a.y) - (py - a.y) * (b.x - a.x)
-        };
-
-        let area = edge(&v0, &v1, v2.x, v2.y);
-        if area == 0.0 {
-            return;
-        }
-
-        let zbuf = self.registers[0x4E];
-        let zbp = (zbuf & 0x1FF) as usize;
-        let _z_base = zbp * 2048 * 4;
-        let _z_format = ((zbuf >> 24) & 0xF) as u32;
-        let z_mask = ((zbuf >> 32) & 0x1) != 0;
-
-        let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
-        let width = self.framebuffer_fbw as usize * 64;
-
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let px = x as f32 + 0.5;
-                let py = y as f32 + 0.5;
-
-                let mut w0 = edge(&v1, &v2, px, py);
-                let mut w1 = edge(&v2, &v0, px, py);
-                let mut w2 = edge(&v0, &v1, px, py);
-
-                if area < 0.0 {
-                    w0 = -w0;
-                    w1 = -w1;
-                    w2 = -w2;
-                }
-
-                if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
-                    w0 /= area;
-                    w1 /= area;
-                    w2 /= area;
-
-                    let zf = w0 * v0.z as f32 + w1 * v1.z as f32 + w2 * v2.z as f32;
-                    let _z_value = zf as u32;
-
-                    let pixel_addr = frame_base + (y as usize * width + x as usize) * 4;
-                    if pixel_addr + 4 > self.vram.len() {
-                        continue;
-                    }
-
-                    let write_pixel = !z_mask;
-
-                    if write_pixel {
-                        self.vram[pixel_addr] = v2.r;
-                        self.vram[pixel_addr + 1] = v2.g;
-                        self.vram[pixel_addr + 2] = v2.b;
-                        self.vram[pixel_addr + 3] = v2.a;
-                    }
-                }
-            }
-        }
-    }
-
-    fn draw_sprite(&mut self, vertices: &[Vertex]) {
-        let v0 = vertices.get(0).unwrap();
-        let v1 = vertices.get(1).unwrap();
-
-        let scissor = self.registers[0x40];
-        let scax0 = (scissor & 0x7FF) as i32;
-        let scax1 = ((scissor >> 16) & 0x7FF) as i32;
-        let scay0 = ((scissor >> 32) & 0x7FF) as i32;
-        let scay1 = ((scissor >> 48) & 0x7FF) as i32;
-
-        let min_x = v0.x.min(v1.x).floor() as i32;
-        let max_x = v0.x.max(v1.x).ceil() as i32;
-        let min_y = v0.y.min(v1.y).floor() as i32;
-        let max_y = v0.y.max(v1.y).ceil() as i32;
-
-        let min_x = min_x.max(scax0);
-        let max_x = max_x.min(scax1);
-        let min_y = min_y.max(scay0);
-        let max_y = max_y.min(scay1);
-
-        let zbuf = self.registers[0x4E];
-        let zbp = (zbuf & 0x1FF) as usize;
-        let _z_base = zbp * 2048 * 4;
-        let _z_format = ((zbuf >> 24) & 0xF) as u32;
-        let z_mask = ((zbuf >> 32) & 0x1) != 0;
-
-        let _z_value = v1.z;
-
-        let frame_base = self.framebuffer_fbp as usize * 2048 * 4;
-        let width = self.framebuffer_fbw as usize * 64;
-
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let pixel_addr = frame_base + (y as usize * width + x as usize) * 4;
-                if pixel_addr + 4 > self.vram.len() {
-                    continue;
-                }
-
-                let write_pixel = !z_mask;
-
-                if write_pixel {
-                    self.vram[pixel_addr] = v1.r;
-                    self.vram[pixel_addr + 1] = v1.g;
-                    self.vram[pixel_addr + 2] = v1.b;
-                    self.vram[pixel_addr + 3] = v1.a;
-                }
-            }
-        }
+        renderer.blit_vram(
+            vram,
+            self.source_base_pointer,
+            self.source_buffer_width,
+            self.source_rectangle_x,
+            self.source_rectangle_y,
+            self.destination_base_pointer,
+            self.destination_buffer_width,
+            self.destination_rectangle_x,
+            self.destination_rectangle_y,
+            self.transmission_area_pixel_width,
+            self.transmission_area_pixel_height,
+        );
     }
 }
