@@ -44,6 +44,8 @@ use windows_sys::Win32::System::Memory::{
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 #[cfg(windows)]
 use std::os::windows::io::{OwnedHandle, AsRawHandle, FromRawHandle};
+#[cfg(windows)]
+use std::ops::Add;
 
 pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     debug!("Initializing Hardware Fast Memory...");
