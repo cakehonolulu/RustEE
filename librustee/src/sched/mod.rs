@@ -250,4 +250,15 @@ impl Scheduler {
         let mut scheduler = scheduler_clone.lock().unwrap();
         scheduler.add_event(VBLANK_START_CYCLES, Self::vblank_start_callback);
     }
+
+    pub fn reset_timeline(&mut self) {
+        if self.current_cycle > 0 {
+            let emulated_secs = self.current_cycle as f64 / EE_FREQUENCY as f64;
+            let now = Instant::now();
+            let offset = Duration::from_secs_f64(emulated_secs);
+            self.real_time_start = now.checked_sub(offset).or(Some(now));
+        } else {
+            self.real_time_start = Some(Instant::now());
+        }
+    }
 }

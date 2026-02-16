@@ -308,18 +308,24 @@ impl App {
                 * state.scale_factor,
         };
 
-        let surface_texture = state.surface.get_current_texture();
-
-        match surface_texture {
+        let surface_texture = match state.surface.get_current_texture() {
+            Ok(texture) => texture,
             Err(SurfaceError::Outdated) => {
                 println!("wgpu surface outdated");
                 return;
             }
-            Err(_) => {
-                surface_texture.expect("Failed to acquire next swap chain texture");
+            Err(SurfaceError::Timeout) => {
+                println!("wgpu surface timeout");
                 return;
             }
-            Ok(_) => {}
+            Err(SurfaceError::Lost) => {
+                println!("wgpu surface lost, reconfiguring");
+                state.surface.configure(&state.device, &state.surface_config);
+                return;
+            }
+            Err(e) => {
+                panic!("Failed to acquire next swap chain texture: {:?}", e);
+            }
         };
 
         let (frame_data, original_width, original_height) = {
@@ -390,8 +396,6 @@ impl App {
                 },
             );
         }
-
-        let surface_texture = surface_texture.unwrap();
 
         let surface_view = surface_texture
             .texture
@@ -691,10 +695,22 @@ impl App {
                     }
 
                     let mut sched = self.scheduler.lock().unwrap();
-                    ui.checkbox(&mut sched.disable_throttle, "Disable Frame Capping");
+
+                    let mut disable_throttle = sched.disable_throttle;
+
+                    if ui.checkbox(&mut disable_throttle, "Disable Frame Capping").changed() {
+                        sched.disable_throttle = disable_throttle;
+
+                        if !disable_throttle {
+                            sched.reset_timeline();
+                        }
+                    }
+
+                    let current_fps = sched.internal_fps;
+                    drop(sched);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("| VSYNC/s: : {:.1}", sched.internal_fps));
+                        ui.label(format!("| VSYNC/s: : {:.1}", current_fps));
                         ui.label(format!("| GS Resolution: {}x{}", original_width, original_height));
                         ui.label(format!("Frontend Frame Time: {:.2} ms", delta * 1000.0));
                     });
