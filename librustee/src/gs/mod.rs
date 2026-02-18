@@ -1,11 +1,13 @@
 pub mod renderer;
 pub mod software_renderer;
+pub mod compute_renderer;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use tracing::error;
 use renderer::{GsRenderer, Vertex, RendererKind};
 use software_renderer::SoftwareRenderer;
+use compute_renderer::ComputeRenderer;
 
 /// Base address for privileged GS registers
 pub const GS_BASE: u32 = 0x1200_0000;
@@ -52,6 +54,7 @@ pub enum GsEvent {
 fn create_renderer(kind: RendererKind) -> Box<dyn GsRenderer> {
     match kind {
         RendererKind::Software => Box::new(SoftwareRenderer),
+        RendererKind::Compute => Box::new(ComputeRenderer::new()),
     }
 }
 
@@ -220,7 +223,10 @@ impl GS {
     }
 
     pub fn swap_renderer(&mut self, kind: RendererKind) {
+        self.renderer.read_vram(&mut self.vram);
         self.renderer = create_renderer(kind);
+        self.renderer.write_vram(&self.vram);
+        println!("Swapped renderer to: {}", self.renderer.name());
     }
 
     pub fn current_renderer_name(&self) -> &'static str {
@@ -230,11 +236,12 @@ impl GS {
     pub fn current_renderer_kind(&self) -> RendererKind {
         match self.renderer.name() {
             "Software" => RendererKind::Software,
+            "Compute" => RendererKind::Compute,
             _ => RendererKind::Software,
         }
     }
 
-    pub fn get_vram_data(&self) -> (Option<Vec<u8>>, u32, u32) {
+    pub fn get_vram_data(&mut self) -> (Option<Vec<u8>>, u32, u32) {
         let fbp = self.framebuffer_fbp;
         let fbw = self.framebuffer_fbw;
         let psm = self.framebuffer_psm;
@@ -248,6 +255,10 @@ impl GS {
 
         let base_addr_bytes = (fbp * 2048 * 4) as usize;
         let buffer_width_pixels = fbw * 64;
+
+        let read_len = (height as usize * buffer_width_pixels as usize * 4);
+
+        self.renderer.read_vram_region(&mut self.vram, base_addr_bytes, read_len);
 
         let mut frame = vec![0u8; (width * height * 4) as usize];
 
@@ -715,9 +726,9 @@ impl GS {
     pub fn draw_buffered(&mut self) {
         let primitives_to_draw: Vec<Primitive> = self.buffered_primitives.drain(..).collect();
 
-            let old_fbp = self.framebuffer_fbp;
-            let old_fbw = self.framebuffer_fbw;
-            let old_psm = self.framebuffer_psm;
+        let old_fbp = self.framebuffer_fbp;
+        let old_fbw = self.framebuffer_fbw;
+        let old_psm = self.framebuffer_psm;
 
         for prim in primitives_to_draw {
             if prim.ctx == 0 {
@@ -744,6 +755,7 @@ impl GS {
                 _ => {}
             }
         }
+
 
         self.framebuffer_fbp = old_fbp;
         self.framebuffer_fbw = old_fbw;
@@ -794,16 +806,45 @@ impl GS {
         }
 
         let base_addr_bytes = fbp as usize * 2048 * 4;
-        for py in 0..buffer_read_height {
-            let src_y = dby + py;
-            for px in 0..buffer_read_width {
-                let src_x = dbx + px;
-                let src_addr = base_addr_bytes + (src_y as usize * buffer_width_pixels as usize + src_x as usize) * 4;
-                let dst_addr = (py as usize * buffer_read_width as usize + px as usize) * 4;
 
-                if src_addr + 4 <= self.vram.len() && dst_addr + 4 <= self.back_buffer.len() {
-                    self.back_buffer[dst_addr..dst_addr + 4]
-                        .copy_from_slice(&self.vram[src_addr..src_addr + 4]);
+        if self.current_renderer_kind() == RendererKind::Compute {
+            let stride_bytes = buffer_width_pixels as usize * 4;
+            let start_offset = base_addr_bytes + dby as usize * stride_bytes;
+            let byte_len     = buffer_read_height as usize * stride_bytes;
+            let vram_len     = self.vram.len();
+
+            if start_offset < vram_len {
+                let safe_len = byte_len.min(vram_len - start_offset);
+                self.renderer.submit_frame(start_offset, safe_len);
+            }
+        }
+
+        {
+            let renderer    = &mut *self.renderer;
+            let back_buffer = &mut self.back_buffer;
+            let handled = renderer.collect_to_display(
+                back_buffer,
+                dbx,
+                buffer_width_pixels,
+                buffer_read_width,
+                buffer_read_height,
+            );
+
+            if !handled {
+                renderer.collect_readback(&mut self.vram, 0, 0);
+
+                let stride     = buffer_width_pixels as usize * 4;
+                let row_bytes  = buffer_read_width  as usize * 4;
+                let vram_len   = self.vram.len();
+                let bb_len     = back_buffer.len();
+
+                for py in 0..buffer_read_height as usize {
+                    let src = base_addr_bytes + (dby as usize + py) * stride + dbx as usize * 4;
+                    let dst = py * row_bytes;
+                    if src + row_bytes <= vram_len && dst + row_bytes <= bb_len {
+                        back_buffer[dst..dst + row_bytes]
+                            .copy_from_slice(&self.vram[src..src + row_bytes]);
+                    }
                 }
             }
         }

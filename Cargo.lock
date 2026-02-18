@@ -1833,6 +1833,7 @@ name = "librustee"
 version = "0.0.1"
 dependencies = [
  "backtrace",
+ "bytemuck",
  "capstone",
  "colored",
  "cranelift-codegen",
@@ -1848,12 +1849,14 @@ dependencies = [
  "mipsasm",
  "nix",
  "once_cell",
+ "pollster",
  "portable-atomic",
  "regex",
  "region",
  "target-lexicon",
  "tracing",
  "tracing-subscriber",
+ "wgpu 27.0.1",
  "windows-sys 0.61.2",
 ]
 

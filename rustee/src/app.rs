@@ -336,15 +336,18 @@ impl App {
         const TARGET_WIDTH: u32 = 640;
         const TARGET_HEIGHT: u32 = 480;
 
+        let tex_width  = if original_width  > 0 { original_width  } else { TARGET_WIDTH  };
+        let tex_height = if original_height > 0 { original_height } else { TARGET_HEIGHT };
+
         let current_texture_size = state.gs_texture.size();
-        if current_texture_size.width != TARGET_WIDTH || current_texture_size.height != TARGET_HEIGHT {
+        if current_texture_size.width != tex_width || current_texture_size.height != tex_height {
             state.egui_renderer.renderer.free_texture(&state.gs_texture_id);
 
             state.gs_texture = state.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("GS Framebuffer"),
                 size: wgpu::Extent3d {
-                    width: TARGET_WIDTH,
-                    height: TARGET_HEIGHT,
+                    width: tex_width,
+                    height: tex_height,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -355,8 +358,6 @@ impl App {
                 view_formats: &[],
             });
 
-            println!("Created GS texture at fixed 640x480");
-
             state.gs_texture_id = state.egui_renderer.renderer.register_native_texture(
                 &state.device,
                 &state.gs_texture.create_view(&Default::default()),
@@ -365,33 +366,17 @@ impl App {
         }
 
         if let Some(original_data) = &frame_data {
-            let mut scaled_data = vec![0u8; (TARGET_WIDTH * TARGET_HEIGHT * 4) as usize];
-
-            for y in 0..TARGET_HEIGHT {
-                for x in 0..TARGET_WIDTH {
-                    let src_x = ((x * original_width) / TARGET_WIDTH).min(original_width - 1);
-                    let src_y = ((y * original_height) / TARGET_HEIGHT).min(original_height - 1);
-
-                    let src_idx = ((src_y * original_width + src_x) * 4) as usize;
-                    let dst_idx = ((y * TARGET_WIDTH + x) * 4) as usize;
-
-                    if src_idx + 4 <= original_data.len() && dst_idx + 4 <= scaled_data.len() {
-                        scaled_data[dst_idx..dst_idx + 4].copy_from_slice(&original_data[src_idx..src_idx + 4]);
-                    }
-                }
-            }
-
             state.queue.write_texture(
                 state.gs_texture.as_image_copy(),
-                &scaled_data,
+                original_data,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(TARGET_WIDTH * 4),
-                    rows_per_image: Some(TARGET_HEIGHT),
+                    bytes_per_row:  Some(original_width * 4),
+                    rows_per_image: Some(original_height),
                 },
                 wgpu::Extent3d {
-                    width: TARGET_WIDTH,
-                    height: TARGET_HEIGHT,
+                    width:                 original_width,
+                    height:                original_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -761,9 +746,8 @@ impl App {
             });
 
             if self.vram_view_open {
-                let bus = self.bus.lock().unwrap();
-                let gs = &bus.gs;
-                let (vram_data, vram_width, vram_height) = gs.get_vram_data();
+                let mut bus = self.bus.lock().unwrap();
+                let (vram_data, vram_width, vram_height) = bus.gs.get_vram_data();
                 drop(bus);
 
                 if let Some(data) = vram_data {

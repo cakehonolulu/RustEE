@@ -1,4 +1,5 @@
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct Vertex {
     pub x: f32,
     pub y: f32,
@@ -68,21 +69,56 @@ pub trait GsRenderer: Send {
         dest_y: &mut u64,
         area_width: u64,
     );
+
+    fn read_vram(&mut self, _vram: &mut [u8]) {}
+
+    fn read_vram_region(&mut self, vram: &mut [u8], byte_offset: usize, byte_len: usize) {
+        let _ = (byte_offset, byte_len);
+        self.read_vram(vram);
+    }
+
+    fn write_vram(&mut self, _vram: &[u8]) {}
+
+    fn submit_frame(
+        &mut self,
+        readback_byte_offset: usize,
+        readback_byte_len: usize,
+    ) {}
+
+    fn collect_readback(
+        &mut self,
+        vram: &mut [u8],
+        readback_byte_offset: usize,
+        readback_byte_len: usize,
+    ) {}
+
+    fn collect_to_display(
+        &mut self,
+        _back_buffer:         &mut [u8],
+        _dbx:                 u32,
+        _buffer_width_pixels: u32,
+        _read_width:          u32,
+        _read_height:         u32,
+    ) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererKind {
     Software,
+    Compute,
 }
 
 impl RendererKind {
     pub fn all() -> &'static [RendererKind] {
-        &[RendererKind::Software]
+        &[RendererKind::Software, RendererKind::Compute]
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
             RendererKind::Software => "Software",
+            RendererKind::Compute => "Compute (GPU)",
         }
     }
 }
