@@ -79,26 +79,23 @@ pub trait GsRenderer: Send {
 
     fn write_vram(&mut self, _vram: &[u8]) {}
 
-    fn submit_frame(
-        &mut self,
-        readback_byte_offset: usize,
-        readback_byte_len: usize,
-    ) {}
+    fn submit_frame(&mut self, _readback_byte_offset: usize, _readback_byte_len: usize) {}
 
     fn collect_readback(
         &mut self,
-        vram: &mut [u8],
-        readback_byte_offset: usize,
-        readback_byte_len: usize,
-    ) {}
+        _vram: &mut [u8],
+        _readback_byte_offset: usize,
+        _readback_byte_len: usize,
+    ) {
+    }
 
     fn collect_to_display(
         &mut self,
-        _back_buffer:         &mut [u8],
-        _dbx:                 u32,
+        _back_buffer: &mut [u8],
+        _dbx: u32,
         _buffer_width_pixels: u32,
-        _read_width:          u32,
-        _read_height:         u32,
+        _read_width: u32,
+        _read_height: u32,
     ) -> bool {
         false
     }

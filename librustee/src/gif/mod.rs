@@ -1,5 +1,5 @@
-use tracing::{error, trace};
 use crate::Bus;
+use tracing::{error, trace};
 
 /// Base address for GIF I/O registers
 pub const GIF_BASE: u32 = 0x1000_3000;
@@ -66,7 +66,14 @@ impl GIF {
         (self.mode & 0x1) != 0
     }
 
-    pub fn write_dmac_data(&mut self, bus: &mut Bus, data: u128, madr: &mut u32, _qwc: &mut u32, _chain: bool) {
+    pub fn write_dmac_data(
+        &mut self,
+        bus: &mut Bus,
+        data: u128,
+        madr: &mut u32,
+        _qwc: &mut u32,
+        _chain: bool,
+    ) {
         match self.state {
             State::Idle => {
                 self.current_gif_addr = *madr;
@@ -111,7 +118,10 @@ impl GIF {
                         trace!("GIF: switching to ProcessingImage");
                     }
                     other => {
-                        panic!("Unsupported GIF data format: {} (tag low: 0x{:016X})", other, low);
+                        panic!(
+                            "Unsupported GIF data format: {} (tag low: 0x{:016X})",
+                            other, low
+                        );
                     }
                 }
             }
@@ -135,11 +145,8 @@ impl GIF {
                 }
 
                 if self.current_nloop == 0 {
-                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0
-                    {
-                    }
-                    else
-                    {
+                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0 {
+                    } else {
                         self.ctrl |= 0x1;
                     }
 
@@ -154,11 +161,8 @@ impl GIF {
                 self.current_nloop -= 1;
 
                 if self.current_nloop == 0 {
-                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0
-                    {
-                    }
-                    else
-                    {
+                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0 {
+                    } else {
                         self.ctrl |= 0x1;
                     }
                     self.state = State::Idle;

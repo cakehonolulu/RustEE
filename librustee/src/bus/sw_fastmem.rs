@@ -129,29 +129,21 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_read[page];
         if host != 0 {
-            unsafe {
-                (host as *const u8)
-                    .add(offset)
-                    .read_unaligned()
-            }
+            unsafe { (host as *const u8).add(offset).read_unaligned() }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u8).read_unaligned() };
+                return unsafe {
+                    (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u8).read_unaligned()
+                };
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_read8(pa)
         }
@@ -170,22 +162,19 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u16).read_unaligned() };
+                return unsafe {
+                    (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u16)
+                        .read_unaligned()
+                };
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_read16(pa)
         }
@@ -204,22 +193,19 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u32).read_unaligned() };
+                return unsafe {
+                    (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u32)
+                        .read_unaligned()
+                };
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_read32(pa)
         }
@@ -238,22 +224,19 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u64).read_unaligned() };
+                return unsafe {
+                    (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u64)
+                        .read_unaligned()
+                };
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_read64(pa)
         }
@@ -272,22 +255,19 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                return unsafe { (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u128).read_unaligned() };
+                return unsafe {
+                    (self.scratchpad.as_ptr().add(sp_offset as usize) as *const u128)
+                        .read_unaligned()
+                };
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_read128(pa)
         }
@@ -298,30 +278,23 @@ impl Bus {
         let offset = (va as usize) & (PAGE_SIZE - 1);
         let host = self.page_write[page];
         if host != 0 {
-            unsafe {
-                (host as *mut u8)
-                    .add(offset)
-                    .write_unaligned(value)
-            }
+            unsafe { (host as *mut u8).add(offset).write_unaligned(value) }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u8).write_unaligned(value) }
+                unsafe {
+                    (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u8)
+                        .write_unaligned(value)
+                }
                 return;
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_write8(pa, value)
         }
@@ -340,23 +313,20 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u16).write_unaligned(value) }
+                unsafe {
+                    (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u16)
+                        .write_unaligned(value)
+                }
                 return;
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_write16(pa, value)
         }
@@ -375,23 +345,20 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u32).write_unaligned(value) }
+                unsafe {
+                    (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u32)
+                        .write_unaligned(value)
+                }
                 return;
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_write32(pa, value)
         }
@@ -410,23 +377,20 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u64).write_unaligned(value) }
+                unsafe {
+                    (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u64)
+                        .write_unaligned(value)
+                }
                 return;
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_write64(pa, value)
         }
@@ -445,23 +409,20 @@ impl Bus {
             }
         } else {
             if let Some(sp_offset) = map::SCRATCHPAD.contains(va) {
-                unsafe { (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u128).write_unaligned(value) }
+                unsafe {
+                    (self.scratchpad.as_mut_ptr().add(sp_offset as usize) as *mut u128)
+                        .write_unaligned(value)
+                }
                 return;
             }
 
-            let cop0_asid = {
-                self.read_cop0_asid()
-            };
+            let cop0_asid = { self.read_cop0_asid() };
             let operating_mode = self.operating_mode;
 
             let pa = {
                 let tlb = &mut self.tlb;
-                tlb.translate_address(
-                    va,
-                    AccessType::WriteDoubleword,
-                    operating_mode,
-                    cop0_asid,
-                ).unwrap_or_else(|_e| va)
+                tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                    .unwrap_or_else(|_e| va)
             };
             self.io_write128(pa, value)
         }

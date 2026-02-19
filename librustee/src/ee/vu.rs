@@ -1,4 +1,3 @@
-
 #[derive(Clone)]
 pub struct VU {
     // Vector floating-point registers

@@ -14,8 +14,8 @@ use librustee::ee::{EE, Interpreter, JIT};
 use librustee::gs::renderer::RendererKind;
 use librustee::sched::Scheduler;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -54,16 +54,14 @@ impl AppState {
 
         let features = wgpu::Features::empty();
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: features,
-                    required_limits: Default::default(),
-                    memory_hints: Default::default(),
-                    experimental_features: Default::default(),
-                    trace: Default::default(),
-                }
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: features,
+                required_limits: Default::default(),
+                memory_hints: Default::default(),
+                experimental_features: Default::default(),
+                trace: Default::default(),
+            })
             .await
             .expect("Failed to create device");
 
@@ -107,7 +105,11 @@ impl AppState {
             view_formats: &[],
         });
 
-        let gs_texture_id = egui_renderer.renderer.register_native_texture(&device, &gs_texture.create_view(&Default::default()), wgpu::FilterMode::Linear);
+        let gs_texture_id = egui_renderer.renderer.register_native_texture(
+            &device,
+            &gs_texture.create_view(&Default::default()),
+            wgpu::FilterMode::Linear,
+        );
 
         Self {
             device,
@@ -209,16 +211,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(ee: Arc<Mutex<EE>>, bus: Arc<Mutex<Box<Bus>>>, backend: String, scheduler: Arc<Mutex<Scheduler>>) -> Self {
+    pub fn new(
+        ee: Arc<Mutex<EE>>,
+        bus: Arc<Mutex<Box<Bus>>>,
+        backend: String,
+        scheduler: Arc<Mutex<Scheduler>>,
+    ) -> Self {
         let is_paused = ee.lock().unwrap().is_paused.clone();
         let cloned_ee = ee.lock().unwrap().clone();
         let emu_backend: Box<dyn EmulationBackend<EE> + Send> = match backend.as_str() {
-            "interpreter" => {
-                Box::new(Interpreter::new(cloned_ee))
-            }
-            "jit" => {
-                Box::new(JIT::new(cloned_ee))
-            }
+            "interpreter" => Box::new(Interpreter::new(cloned_ee)),
+            "jit" => Box::new(JIT::new(cloned_ee)),
             _ => panic!("Unsupported backend: {}", backend),
         };
 
@@ -275,7 +278,7 @@ impl App {
             initial_width,
             initial_width,
         )
-            .await;
+        .await;
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
@@ -320,7 +323,9 @@ impl App {
             }
             Err(SurfaceError::Lost) => {
                 println!("wgpu surface lost, reconfiguring");
-                state.surface.configure(&state.device, &state.surface_config);
+                state
+                    .surface
+                    .configure(&state.device, &state.surface_config);
                 return;
             }
             Err(e) => {
@@ -336,12 +341,23 @@ impl App {
         const TARGET_WIDTH: u32 = 640;
         const TARGET_HEIGHT: u32 = 480;
 
-        let tex_width  = if original_width  > 0 { original_width  } else { TARGET_WIDTH  };
-        let tex_height = if original_height > 0 { original_height } else { TARGET_HEIGHT };
+        let tex_width = if original_width > 0 {
+            original_width
+        } else {
+            TARGET_WIDTH
+        };
+        let tex_height = if original_height > 0 {
+            original_height
+        } else {
+            TARGET_HEIGHT
+        };
 
         let current_texture_size = state.gs_texture.size();
         if current_texture_size.width != tex_width || current_texture_size.height != tex_height {
-            state.egui_renderer.renderer.free_texture(&state.gs_texture_id);
+            state
+                .egui_renderer
+                .renderer
+                .free_texture(&state.gs_texture_id);
 
             state.gs_texture = state.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("GS Framebuffer"),
@@ -371,12 +387,12 @@ impl App {
                 original_data,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row:  Some(original_width * 4),
+                    bytes_per_row: Some(original_width * 4),
                     rows_per_image: Some(original_height),
                 },
                 wgpu::Extent3d {
-                    width:                 original_width,
-                    height:                original_height,
+                    width: original_width,
+                    height: original_height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -399,7 +415,7 @@ impl App {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
-                    egui::Color32::BLACK
+                    egui::Color32::BLACK,
                 );
 
                 if frame_data.is_some() {
@@ -420,20 +436,14 @@ impl App {
 
                     let center_x = available_rect.center().x - scaled_width / 2.0;
                     let center_y = available_rect.center().y - scaled_height / 2.0;
-                    let image_rect = egui::Rect::from_min_size(
-                        egui::pos2(center_x, center_y),
-                        img_size
-                    );
+                    let image_rect =
+                        egui::Rect::from_min_size(egui::pos2(center_x, center_y), img_size);
 
-                    ui.scope_builder(
-                        egui::UiBuilder::new().max_rect(image_rect),
-                        |ui| {
-                            ui.image((state.gs_texture_id, img_size));
-                        },
-                    );
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(image_rect), |ui| {
+                        ui.image((state.gs_texture_id, img_size));
+                    });
                 }
             });
-
 
             if self.ee_ctl_display_open {
                 egui::Window::new("EE CPU State")
@@ -481,9 +491,9 @@ impl App {
 
                             match self.selected_ee_tab {
                                 0 => {
-                                    ScrollArea::both()
-                                        .max_height(ui.available_height())
-                                        .show(ui, |ui| {
+                                    ScrollArea::both().max_height(ui.available_height()).show(
+                                        ui,
+                                        |ui| {
                                             TableBuilder::new(ui)
                                                 .striped(true)
                                                 .column(Column::auto().resizable(true))
@@ -497,16 +507,19 @@ impl App {
                                                     });
                                                 })
                                                 .body(|mut body| {
-                                                    for (i, reg) in ee.registers.iter().enumerate() {
+                                                    for (i, reg) in ee.registers.iter().enumerate()
+                                                    {
                                                         let value = reg.load(Ordering::SeqCst);
                                                         let name = [
-                                                            "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3",
-                                                            "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
-                                                            "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
-                                                            "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra",
+                                                            "zr", "at", "v0", "v1", "a0", "a1",
+                                                            "a2", "a3", "t0", "t1", "t2", "t3",
+                                                            "t4", "t5", "t6", "t7", "s0", "s1",
+                                                            "s2", "s3", "s4", "s5", "s6", "s7",
+                                                            "t8", "t9", "k0", "k1", "gp", "sp",
+                                                            "fp", "ra",
                                                         ]
-                                                            .get(i)
-                                                            .unwrap_or(&"UNK");
+                                                        .get(i)
+                                                        .unwrap_or(&"UNK");
 
                                                         let animation_progress = self
                                                             .change_ee_timers
@@ -514,7 +527,8 @@ impl App {
                                                             .cloned()
                                                             .unwrap_or(0.0);
 
-                                                        let text_color = if animation_progress > 0.0 {
+                                                        let text_color = if animation_progress > 0.0
+                                                        {
                                                             let t = animation_progress;
                                                             let r = 255.0;
                                                             let g = 255.0 * (1.0 - t);
@@ -552,7 +566,10 @@ impl App {
                                                         row.col(|ui| {
                                                             ui.colored_label(
                                                                 egui::Color32::WHITE,
-                                                                format!("{:#034X}", ee.hi.load(Ordering::Relaxed)),
+                                                                format!(
+                                                                    "{:#034X}",
+                                                                    ee.hi.load(Ordering::Relaxed)
+                                                                ),
                                                             );
                                                         });
                                                     });
@@ -563,7 +580,10 @@ impl App {
                                                         row.col(|ui| {
                                                             ui.colored_label(
                                                                 egui::Color32::WHITE,
-                                                                format!("{:#034X}", ee.lo.load(Ordering::Relaxed)),
+                                                                format!(
+                                                                    "{:#034X}",
+                                                                    ee.lo.load(Ordering::Relaxed)
+                                                                ),
                                                             );
                                                         });
                                                     });
@@ -574,12 +594,16 @@ impl App {
                                                         row.col(|ui| {
                                                             ui.colored_label(
                                                                 egui::Color32::WHITE,
-                                                                format!("{:#010X}", ee.pc.load(Ordering::Relaxed)),
+                                                                format!(
+                                                                    "{:#010X}",
+                                                                    ee.pc.load(Ordering::Relaxed)
+                                                                ),
                                                             );
                                                         });
                                                     });
                                                 });
-                                        });
+                                        },
+                                    );
                                 }
                                 1 => {
                                     ScrollArea::both()
@@ -599,18 +623,22 @@ impl App {
                                                     });
                                                 })
                                                 .body(|mut body| {
-                                                    for (i, reg) in ee.cop0_registers.iter().enumerate() {
+                                                    for (i, reg) in
+                                                        ee.cop0_registers.iter().enumerate()
+                                                    {
                                                         let value = reg.load(Ordering::SeqCst);
                                                         let name = [
-                                                            "Index", "Random", "EntryLo0", "EntryLo1",
-                                                            "Context", "PageMask", "Wired", "", "BadVAddr",
-                                                            "Count", "EntryHi", "Compare", "Status",
-                                                            "Cause", "EPC", "PRId", "Config", "", "", "",
-                                                            "", "", "", "BadPAddr", "Debug", "Perf", "",
-                                                            "", "TagLo", "TagHi", "ErrorEPC", "",
+                                                            "Index", "Random", "EntryLo0",
+                                                            "EntryLo1", "Context", "PageMask",
+                                                            "Wired", "", "BadVAddr", "Count",
+                                                            "EntryHi", "Compare", "Status",
+                                                            "Cause", "EPC", "PRId", "Config", "",
+                                                            "", "", "", "", "", "BadPAddr",
+                                                            "Debug", "Perf", "", "", "TagLo",
+                                                            "TagHi", "ErrorEPC", "",
                                                         ]
-                                                            .get(i)
-                                                            .unwrap_or(&"UNK");
+                                                        .get(i)
+                                                        .unwrap_or(&"UNK");
 
                                                         if name.is_empty() {
                                                             continue;
@@ -622,7 +650,8 @@ impl App {
                                                             .copied()
                                                             .unwrap_or(0.0);
 
-                                                        let text_color = if animation_progress > 0.0 {
+                                                        let text_color = if animation_progress > 0.0
+                                                        {
                                                             let t = animation_progress;
                                                             let r = 255.0;
                                                             let g = 255.0 * (1.0 - t);
@@ -659,7 +688,14 @@ impl App {
 
             egui::TopBottomPanel::bottom("EE Taskbar").show(state.egui_renderer.context(), |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button(if self.is_paused.load(Ordering::SeqCst) { "Run" } else { "Pause" }).clicked() {
+                    if ui
+                        .button(if self.is_paused.load(Ordering::SeqCst) {
+                            "Run"
+                        } else {
+                            "Pause"
+                        })
+                        .clicked()
+                    {
                         if self.emulation_thread.is_none() {
                             let mut backend = self.emu_backend.take().unwrap();
                             let bus_arc = self.bus.clone();
@@ -683,7 +719,10 @@ impl App {
 
                     let mut disable_throttle = sched.disable_throttle;
 
-                    if ui.checkbox(&mut disable_throttle, "Disable Frame Capping").changed() {
+                    if ui
+                        .checkbox(&mut disable_throttle, "Disable Frame Capping")
+                        .changed()
+                    {
                         sched.disable_throttle = disable_throttle;
 
                         if !disable_throttle {
@@ -696,7 +735,10 @@ impl App {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(format!("| VSYNC/s: : {:.1}", current_fps));
-                        ui.label(format!("| GS Resolution: {}x{}", original_width, original_height));
+                        ui.label(format!(
+                            "| GS Resolution: {}x{}",
+                            original_width, original_height
+                        ));
                         ui.label(format!("Frontend Frame Time: {:.2} ms", delta * 1000.0));
                     });
                 });
@@ -730,10 +772,7 @@ impl App {
                             for kind in RendererKind::all() {
                                 let label = kind.display_name();
                                 let is_selected = *kind == self.selected_renderer;
-                                if ui
-                                    .selectable_label(is_selected, label)
-                                    .clicked()
-                                    && !is_selected
+                                if ui.selectable_label(is_selected, label).clicked() && !is_selected
                                 {
                                     if let Ok(mut bus) = self.bus.lock() {
                                         bus.gs.swap_renderer(*kind);
@@ -774,7 +813,8 @@ impl App {
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
                             format: wgpu::TextureFormat::Rgba8Unorm,
-                            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                | wgpu::TextureUsages::COPY_DST,
                             view_formats: &[],
                         });
 
@@ -1089,17 +1129,17 @@ impl App {
                                                         addr_str.trim_start_matches("0x"),
                                                         16,
                                                     )
-                                                        .unwrap_or(0);
+                                                    .unwrap_or(0);
                                                     let addr_text = RichText::new(format!(
                                                         "0x{:08x}:",
                                                         address
                                                     ))
-                                                        .font(mono_font.clone())
-                                                        .color(if address == current_pc {
-                                                            Color32::LIGHT_BLUE
-                                                        } else {
-                                                            Color32::GRAY
-                                                        });
+                                                    .font(mono_font.clone())
+                                                    .color(if address == current_pc {
+                                                        Color32::LIGHT_BLUE
+                                                    } else {
+                                                        Color32::GRAY
+                                                    });
 
                                                     let (mnemonic, operands) =
                                                         if let Some((m, ops)) =

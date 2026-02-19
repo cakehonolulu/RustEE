@@ -21,9 +21,9 @@ use crate::bus::map;
 use crate::bus::tlb::AccessType;
 use goblin::elf::Elf;
 use goblin::elf::program_header::PT_LOAD;
-use portable_atomic::{AtomicU128, AtomicU32};
 pub use interpreter::Interpreter;
 pub use jit::JIT;
+use portable_atomic::{AtomicU32, AtomicU128};
 use tracing::{error, info};
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
@@ -233,7 +233,8 @@ impl CPU for EE {
     fn write_hi0(&mut self, low: u64) {
         let hi = self.hi.load(Ordering::SeqCst);
         let high_mask = !((1u128 << 64) - 1);
-        self.hi.store((hi & high_mask) | (low as u128), Ordering::Relaxed);
+        self.hi
+            .store((hi & high_mask) | (low as u128), Ordering::Relaxed);
     }
 
     fn write_hi(&mut self, value: Self::RegisterType) {
@@ -243,7 +244,8 @@ impl CPU for EE {
     fn write_lo0(&mut self, low: u64) {
         let lo = self.lo.load(Ordering::SeqCst);
         let high_mask = !((1u128 << 64) - 1);
-        self.lo.store((lo & high_mask) | (low as u128), Ordering::Relaxed);
+        self.lo
+            .store((lo & high_mask) | (low as u128), Ordering::Relaxed);
     }
 
     fn write_lo(&mut self, value: Self::RegisterType) {
@@ -255,12 +257,14 @@ impl CPU for EE {
     }
 
     fn write_register32(&mut self, index: usize, value: u32) {
-        let upper_bits = self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        let upper_bits =
+            self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
         self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
     }
 
     fn write_register64(&mut self, index: usize, value: u64) {
-        let upper_bits = self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        let upper_bits =
+            self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
         self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
     }
 
@@ -319,12 +323,8 @@ impl CPU for EE {
         let bus = unsafe { &mut *self.bus_ptr.0 };
         let tlb = &mut (*bus).tlb;
         let operating_mode = bus.operating_mode;
-        let pa = match tlb.translate_address(
-            addr,
-            AccessType::ReadWord,
-            operating_mode,
-            cop0_asid,
-        ) {
+        let pa = match tlb.translate_address(addr, AccessType::ReadWord, operating_mode, cop0_asid)
+        {
             Ok(pa) => pa,
             Err(_) => return 0,
         };

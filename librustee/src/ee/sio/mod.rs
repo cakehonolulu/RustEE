@@ -70,7 +70,12 @@ impl SIO {
     }
 
     pub fn write<V: SIOValue>(&mut self, address: u32, value: V) {
-        trace!("SIO::write: self={:p}, address=0x{:08X}, value=0x{:08X}", self, address, value.to_u32());
+        trace!(
+            "SIO::write: self={:p}, address=0x{:08X}, value=0x{:08X}",
+            self,
+            address,
+            value.to_u32()
+        );
         match address {
             0x1000F100 => {
                 trace!("LCR Write: 0x{:08X}", value.to_u32());
@@ -116,7 +121,11 @@ impl SIO {
                 self.registers.rxfifo = value.to_u32();
             }
             _ => {
-                error!("Unknown SIO write address: 0x{:08X}, value: 0x{:08X}", address, value.to_u32());
+                error!(
+                    "Unknown SIO write address: 0x{:08X}, value: 0x{:08X}",
+                    address,
+                    value.to_u32()
+                );
             }
         }
     }

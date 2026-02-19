@@ -58,8 +58,8 @@ pub const EE_CYCLES_PER_FRAME: u64 = EE_FREQUENCY / 60;
 
 // NTSC Interlaced timing constants (59.94 Hz)
 // Based on DobieStation
-const VBLANK_START_CYCLES: u64 = 4_489_019;  // Non-VBLANK period (~240 scanlines)
-const VBLANK_DURATION: u64 = 431_096;        // VBLANK period (~22-23 scanlines)
+const VBLANK_START_CYCLES: u64 = 4_489_019; // Non-VBLANK period (~240 scanlines)
+const VBLANK_DURATION: u64 = 431_096; // VBLANK period (~22-23 scanlines)
 // Total frame: 4_920_115 cycles
 
 impl Default for Scheduler {
@@ -132,9 +132,7 @@ impl Scheduler {
         }
 
         loop {
-            let cycles_to_run = {
-                scheduler_arc.lock().unwrap().cycles_for_next_timeslice()
-            };
+            let cycles_to_run = { scheduler_arc.lock().unwrap().cycles_for_next_timeslice() };
 
             if cycles_to_run > 0 {
                 backend.run_for_cycles(cycles_to_run);
@@ -168,8 +166,7 @@ impl Scheduler {
         let target_cycle = self.current_cycle.wrapping_add(in_cycles);
         trace!(
             "Adding event for cycle {} (in {} cycles)",
-            target_cycle,
-            in_cycles
+            target_cycle, in_cycles
         );
         self.events.push(Event {
             cycle: target_cycle,
@@ -221,9 +218,15 @@ impl Scheduler {
 
     /* When vertical blanking period starts, set VBLANK bit in GS CSR */
     fn vblank_start_callback(bus: &mut Bus) {
-        trace!("vsync_callback CSR state before toggling: 0x{:08X}", bus.gs.gs_csr);
+        trace!(
+            "vsync_callback CSR state before toggling: 0x{:08X}",
+            bus.gs.gs_csr
+        );
         bus.gs.gs_csr |= 8;
-        trace!("vsync_callback CSR state after toggling: 0x{:08X}", bus.gs.gs_csr);
+        trace!(
+            "vsync_callback CSR state after toggling: 0x{:08X}",
+            bus.gs.gs_csr
+        );
 
         let mut scheduler = bus.scheduler.lock().unwrap();
         scheduler.vsync_count += 1;
@@ -241,7 +244,10 @@ impl Scheduler {
     /* When vertical blanking period ends, flush all draws to active framebuffer */
     fn vblank_end_callback(bus: &mut Bus) {
         bus.gs.draw_buffered();
-        trace!("Draw batch at cycle {}", bus.scheduler.lock().unwrap().current_cycle);
+        trace!(
+            "Draw batch at cycle {}",
+            bus.scheduler.lock().unwrap().current_cycle
+        );
 
         // XXX: Needed?
         // bus.gs.gs_csr &= !8;

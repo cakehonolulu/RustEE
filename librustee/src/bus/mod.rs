@@ -3,13 +3,13 @@ pub mod bios;
 use bios::BIOS;
 use tracing::{debug, info, trace};
 
+use portable_atomic::AtomicU32;
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
 #[cfg(windows)]
 use std::os::windows::raw::HANDLE;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use portable_atomic::AtomicU32;
 
 pub mod backpatch;
 mod hw_fastmem;
@@ -19,6 +19,7 @@ mod sw_fastmem;
 pub mod tlb;
 
 use crate::ee::dmac::EEDMAC;
+use crate::ee::dmac::{ChannelType, GIF_BASE};
 use crate::ee::intc::INTC;
 use crate::ee::sio::SIO;
 use crate::ee::timer::Timers;
@@ -27,18 +28,17 @@ use crate::gs::GS;
 use crate::ipu::IPU;
 use crate::sif::SIF;
 use crate::vif::{VIF, VIF0_BASE, VIF1_BASE};
-use crate::ee::dmac::{GIF_BASE,ChannelType};
 
 use tlb::{OperatingMode, Tlb};
 
 use crate::bus::rdram::RDRAM;
+use crate::sched::Scheduler;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 #[cfg(unix)]
 use unix::install_handler;
 #[cfg(windows)]
 use windows::install_handler;
-use crate::sched::Scheduler;
-#[cfg(windows)]
-use std::os::windows::io::{OwnedHandle, FromRawHandle, AsRawHandle};
 
 #[cfg(unix)]
 pub mod unix;
@@ -162,7 +162,12 @@ fn parse_dmatag(tag: u128) -> DmaTag {
 }
 
 impl Bus {
-    pub fn new(mode: BusMode, bios: BIOS, cop0_registers: Arc<[AtomicU32; 32]>, scheduler: Arc<Mutex<Scheduler>>) -> Box<Bus> {
+    pub fn new(
+        mode: BusMode,
+        bios: BIOS,
+        cop0_registers: Arc<[AtomicU32; 32]>,
+        scheduler: Arc<Mutex<Scheduler>>,
+    ) -> Box<Bus> {
         let mut bus = Box::new(Bus {
             bios,
             ram: vec![0; 32 * 1024 * 1024],
@@ -365,8 +370,8 @@ impl Bus {
             }
             0x12001000 => {
                 self.gs.write64(addr, value as u64);
-            },
-            0x1C0003E0 => {},
+            }
+            0x1C0003E0 => {}
             0x1F80141C => self.dev9_delay3 = value,
             _ => {
                 panic!(
@@ -394,12 +399,11 @@ impl Bus {
                     self.service_dma_channel(channel_type);
                 }
             }
-            0x12000000 | 0x12000010 | 0x12000020 | 0x12000030 | 0x12000040
-            | 0x12000050 | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090
-            | 0x120000A0 | 0x120000B0 | 0x120000C0 | 0x120000D0 | 0x120000E0
-            | 0x12001010 | 0x12001000 => {
+            0x12000000 | 0x12000010 | 0x12000020 | 0x12000030 | 0x12000040 | 0x12000050
+            | 0x12000060 | 0x12000070 | 0x12000080 | 0x12000090 | 0x120000A0 | 0x120000B0
+            | 0x120000C0 | 0x120000D0 | 0x120000E0 | 0x12001010 | 0x12001000 => {
                 self.gs.write64(addr, value);
-            },
+            }
             _ => {
                 panic!(
                     "Invalid IO write64: addr=0x{:08X}, value=0x{:08X}",
@@ -476,9 +480,7 @@ impl Bus {
     pub fn io_read32(&mut self, mut addr: u32) -> u32 {
         addr &= 0x1FFFFFFF;
         match addr {
-            0x10000000..=0x10001830 => {
-                self.ee_timer.read32(addr)
-            }
+            0x10000000..=0x10001830 => self.ee_timer.read32(addr),
             0x10002000 | 0x10002010 => self.ipu.read32(addr),
             0x10003020 => self.gif.read32(addr),
             0x10008000..=0x1000D4FF => self.ee_dmac.read_register(addr),
@@ -524,7 +526,10 @@ impl Bus {
     fn service_dma_channel(&mut self, channel_type: ChannelType) {
         let base_addr = match channel_type {
             ChannelType::Gif => GIF_BASE,
-            ChannelType::Sif0 => { debug!("Unimplemented SIF0 DMA transfer"); return; },
+            ChannelType::Sif0 => {
+                debug!("Unimplemented SIF0 DMA transfer");
+                return;
+            }
             _ => {
                 todo!("Implement DMA step for {:?}", channel_type);
             }
@@ -544,7 +549,10 @@ impl Bus {
         trace!("Starting GIF DMA transfer");
 
         let transfer_mode = {
-            let ch = self.ee_dmac.channels.get(&base_addr)
+            let ch = self
+                .ee_dmac
+                .channels
+                .get(&base_addr)
                 .expect("GIF channel missing");
             (ch.chcr >> 2) & 0x3
         };
@@ -568,7 +576,10 @@ impl Bus {
     fn process_burst_mode(&mut self, base_addr: u32) {
         loop {
             let (mut madr, mut qwc) = {
-                let ch = self.ee_dmac.channels.get(&base_addr)
+                let ch = self
+                    .ee_dmac
+                    .channels
+                    .get(&base_addr)
                     .expect("GIF channel missing");
                 (ch.madr, ch.qwc)
             };
@@ -582,7 +593,13 @@ impl Bus {
             if !self.gif.is_path3_masked() {
                 let gif_ptr: *mut GIF = &mut self.gif;
                 unsafe {
-                    (*gif_ptr).write_dmac_data(self, data, &mut (madr as u32), &mut (qwc as u32), false);
+                    (*gif_ptr).write_dmac_data(
+                        self,
+                        data,
+                        &mut (madr as u32),
+                        &mut (qwc as u32),
+                        false,
+                    );
                 }
             } else {
                 debug!("Burst mode PATH3 masked; ignoring GIF FIFO write");
@@ -592,7 +609,10 @@ impl Bus {
             qwc = qwc.saturating_sub(1);
 
             {
-                let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
+                let ch_mut = self
+                    .ee_dmac
+                    .channels
+                    .get_mut(&base_addr)
                     .expect("GIF channel missing (mut)");
                 ch_mut.madr = madr;
                 ch_mut.qwc = qwc;
@@ -607,7 +627,10 @@ impl Bus {
         while !tag_end {
             loop {
                 let qwc = {
-                    let ch = self.ee_dmac.channels.get(&base_addr)
+                    let ch = self
+                        .ee_dmac
+                        .channels
+                        .get(&base_addr)
                         .expect("GIF channel missing for QWC read");
                     ch.qwc
                 };
@@ -617,7 +640,10 @@ impl Bus {
                 }
 
                 let madr = {
-                    let ch = self.ee_dmac.channels.get(&base_addr)
+                    let ch = self
+                        .ee_dmac
+                        .channels
+                        .get(&base_addr)
                         .expect("GIF channel missing for MADR read");
                     ch.madr
                 };
@@ -629,14 +655,23 @@ impl Bus {
                     let temp_madr = madr;
                     let temp_qwc = qwc;
                     unsafe {
-                        (*gif_ptr).write_dmac_data(self, data, &mut (temp_madr as u32), &mut (temp_qwc as u32), true);
+                        (*gif_ptr).write_dmac_data(
+                            self,
+                            data,
+                            &mut (temp_madr as u32),
+                            &mut (temp_qwc as u32),
+                            true,
+                        );
                     }
                 } else {
                     debug!("Chain mode PATH3 masked; ignoring GIF FIFO write");
                 }
 
                 {
-                    let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
+                    let ch_mut = self
+                        .ee_dmac
+                        .channels
+                        .get_mut(&base_addr)
                         .expect("GIF channel missing for update");
                     ch_mut.madr = ch_mut.madr.wrapping_add(16);
                     ch_mut.qwc = ch_mut.qwc.saturating_sub(1);
@@ -644,7 +679,10 @@ impl Bus {
             }
 
             let tadr = {
-                let ch = self.ee_dmac.channels.get(&base_addr)
+                let ch = self
+                    .ee_dmac
+                    .channels
+                    .get(&base_addr)
                     .expect("GIF channel missing for TADR read");
                 ch.tadr
             };
@@ -655,7 +693,10 @@ impl Bus {
             trace!("Chain tag processed: {:?}", tag);
 
             {
-                let ch_mut = self.ee_dmac.channels.get_mut(&base_addr)
+                let ch_mut = self
+                    .ee_dmac
+                    .channels
+                    .get_mut(&base_addr)
                     .expect("GIF channel missing for tag processing");
 
                 ch_mut.qwc = tag.qwc as u64;

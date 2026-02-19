@@ -1,13 +1,16 @@
+pub mod compute_renderer;
 pub mod renderer;
 pub mod software_renderer;
-pub mod compute_renderer;
 
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
-use tracing::error;
-use renderer::{GsRenderer, Vertex, RendererKind};
-use software_renderer::SoftwareRenderer;
 use compute_renderer::ComputeRenderer;
+use renderer::{GsRenderer, RendererKind, Vertex};
+use software_renderer::SoftwareRenderer;
+use tracing::error;
 
 /// Base address for privileged GS registers
 pub const GS_BASE: u32 = 0x1200_0000;
@@ -43,12 +46,12 @@ pub struct Primitive {
     scissor: u64,
     zbuf: u64,
     frame: u64,
-    ctx: u64
+    ctx: u64,
 }
 
 #[derive(Debug)]
 pub enum GsEvent {
-    None
+    None,
 }
 
 fn create_renderer(kind: RendererKind) -> Box<dyn GsRenderer> {
@@ -256,19 +259,22 @@ impl GS {
         let base_addr_bytes = (fbp * 2048 * 4) as usize;
         let buffer_width_pixels = fbw * 64;
 
-        let read_len = (height as usize * buffer_width_pixels as usize * 4);
+        let read_len = height as usize * buffer_width_pixels as usize * 4;
 
-        self.renderer.read_vram_region(&mut self.vram, base_addr_bytes, read_len);
+        self.renderer
+            .read_vram_region(&mut self.vram, base_addr_bytes, read_len);
 
         let mut frame = vec![0u8; (width * height * 4) as usize];
 
         for y in 0..height {
             for x in 0..width {
-                let src_addr = base_addr_bytes + ((y as usize * buffer_width_pixels as usize) + x as usize) * 4;
+                let src_addr = base_addr_bytes
+                    + ((y as usize * buffer_width_pixels as usize) + x as usize) * 4;
                 let dst_addr = (y as usize * width as usize + x as usize) * 4;
 
                 if src_addr + 4 <= self.vram.len() && dst_addr + 4 <= frame.len() {
-                    frame[dst_addr..dst_addr + 4].copy_from_slice(&self.vram[src_addr..src_addr + 4]);
+                    frame[dst_addr..dst_addr + 4]
+                        .copy_from_slice(&self.vram[src_addr..src_addr + 4]);
                 }
             }
         }
@@ -287,7 +293,11 @@ impl GS {
             return (None, 0, 0);
         }
 
-        (Some(self.front_buffer.clone()), self.buffer_width, self.buffer_height)
+        (
+            Some(self.front_buffer.clone()),
+            self.buffer_width,
+            self.buffer_height,
+        )
     }
 
     /// Write a 64-bit value to a GS register
@@ -367,11 +377,13 @@ impl GS {
 
     pub fn write_internal_reg(&mut self, reg: u64, data: u64) {
         match reg {
-            0x00 => { // PRIM
+            0x00 => {
+                // PRIM
                 self.registers[0x00] = data;
                 self.handle_prim_selection(data);
             }
-            0x01 => { // RGBAQ
+            0x01 => {
+                // RGBAQ
                 let r = data & 0xFF;
                 let g = (data >> 8) & 0xFF;
                 let b = (data >> 16) & 0xFF;
@@ -380,13 +392,16 @@ impl GS {
                 let v = b | (g << 8) | (r << 16) | (a << 24) | (q << 32);
                 self.registers[0x01] = v;
             }
-            0x02 => { // ST
+            0x02 => {
+                // ST
                 self.registers[0x02] = data;
             }
-            0x03 => { // UV
+            0x03 => {
+                // UV
                 self.registers[0x03] = data;
             }
-            0x04 => { // XYZF2
+            0x04 => {
+                // XYZF2
                 let x = data & 0xFFFF;
                 let y = (data >> 16) & 0xffff;
                 let z = data >> 32;
@@ -394,7 +409,8 @@ impl GS {
                 self.registers[0x04] = v;
                 self.add_vertex(v, true);
             }
-            0x05 => { // XYZ2
+            0x05 => {
+                // XYZ2
                 let x = data & 0xFFFF;
                 let y = (data >> 16) & 0xffff;
                 let z = data >> 32;
@@ -402,22 +418,28 @@ impl GS {
                 self.registers[0x05] = data;
                 self.add_vertex(v, true);
             }
-            0x06 => { // TEX0_1
+            0x06 => {
+                // TEX0_1
                 self.registers[0x06] = data;
             }
-            0x07 => { // TEX0_2
+            0x07 => {
+                // TEX0_2
                 self.registers[0x07] = data;
             }
-            0x08 => { // CLAMP_1
+            0x08 => {
+                // CLAMP_1
                 self.registers[0x08] = data;
             }
-            0x09 => { // CLAMP_2
+            0x09 => {
+                // CLAMP_2
                 self.registers[0x09] = data;
             }
-            0x0A => { // FOG
+            0x0A => {
+                // FOG
                 self.registers[0x0A] = data;
             }
-            0x0C => { // XYZF3
+            0x0C => {
+                // XYZF3
                 let x = data & 0xffff;
                 let y = (data >> 16) & 0xffff;
                 let z = data >> 32;
@@ -425,7 +447,8 @@ impl GS {
                 self.registers[0x0C] = v;
                 self.add_vertex(v, false);
             }
-            0x0D => { // XYZ3
+            0x0D => {
+                // XYZ3
                 let x = data & 0xffff;
                 let y = (data >> 16) & 0xffff;
                 let z = data >> 32;
@@ -433,133 +456,177 @@ impl GS {
                 self.registers[0x0D] = v;
                 self.add_vertex(v, false);
             }
-            0x14 => { // TEX1_1
+            0x14 => {
+                // TEX1_1
                 self.registers[0x14] = data;
             }
-            0x15 => { // TEX1_2
+            0x15 => {
+                // TEX1_2
                 self.registers[0x15] = data;
             }
-            0x16 => { // TEX2_1
+            0x16 => {
+                // TEX2_1
                 self.registers[0x16] = data;
             }
-            0x17 => { // TEX2_2
+            0x17 => {
+                // TEX2_2
                 self.registers[0x17] = data;
             }
-            0x18 => { // XYOFFSET_1
+            0x18 => {
+                // XYOFFSET_1
                 self.registers[0x18] = data;
             }
-            0x19 => { // XYOFFSET_2
+            0x19 => {
+                // XYOFFSET_2
                 self.registers[0x19] = data;
             }
-            0x1A => { // PRMODECONT
+            0x1A => {
+                // PRMODECONT
                 self.registers[0x1A] = data;
             }
-            0x1B => { // PRMODE
+            0x1B => {
+                // PRMODE
                 self.registers[0x1B] = data;
             }
-            0x1C => { // TEXCLUT
+            0x1C => {
+                // TEXCLUT
                 self.registers[0x1C] = data;
             }
-            0x22 => { // SCANMSK
+            0x22 => {
+                // SCANMSK
                 self.registers[0x22] = data;
             }
-            0x34 => { // MIPTBP1_1
+            0x34 => {
+                // MIPTBP1_1
                 self.registers[0x34] = data;
             }
-            0x35 => { // MIPTBP1_2
+            0x35 => {
+                // MIPTBP1_2
                 self.registers[0x35] = data;
             }
-            0x36 => { // MIPTBP2_1
+            0x36 => {
+                // MIPTBP2_1
                 self.registers[0x36] = data;
             }
-            0x37 => { // MIPTBP2_2
+            0x37 => {
+                // MIPTBP2_2
                 self.registers[0x37] = data;
             }
-            0x3B => { // TEXA
+            0x3B => {
+                // TEXA
                 self.registers[0x3B] = data;
             }
-            0x3D => { // FOGCOL
+            0x3D => {
+                // FOGCOL
                 self.registers[0x3D] = data;
             }
-            0x3F => { // TEXFLUSH
+            0x3F => {
+                // TEXFLUSH
                 self.registers[0x3F] = data;
             }
-            0x40 => { // SCISSOR_1
+            0x40 => {
+                // SCISSOR_1
                 self.registers[0x40] = data;
             }
-            0x41 => { // SCISSOR_2
+            0x41 => {
+                // SCISSOR_2
                 self.registers[0x41] = data;
             }
-            0x42 => { // ALPHA_1
+            0x42 => {
+                // ALPHA_1
                 self.registers[0x42] = data;
             }
-            0x43 => { // ALPHA_2
+            0x43 => {
+                // ALPHA_2
                 self.registers[0x43] = data;
             }
-            0x44 => { // DIMX
+            0x44 => {
+                // DIMX
                 self.registers[0x44] = data;
             }
-            0x45 => { // DTHE
+            0x45 => {
+                // DTHE
                 self.registers[0x45] = data;
             }
-            0x46 => { // COLCLAMP
+            0x46 => {
+                // COLCLAMP
                 self.registers[0x46] = data;
             }
-            0x47 => { // TEST_1
+            0x47 => {
+                // TEST_1
                 self.registers[0x47] = data;
             }
-            0x48 => { // TEST_2
+            0x48 => {
+                // TEST_2
                 self.registers[0x48] = data;
             }
-            0x49 => { // PABE
+            0x49 => {
+                // PABE
                 self.registers[0x49] = data;
             }
-            0x4A => { // FBA_1
+            0x4A => {
+                // FBA_1
                 self.registers[0x4A] = data;
             }
-            0x4B => { // FBA_2
+            0x4B => {
+                // FBA_2
                 self.registers[0x4B] = data;
             }
-            0x4C => { // FRAME_1
+            0x4C => {
+                // FRAME_1
                 self.registers[0x4C] = data;
                 self.update_framebuffer_info(data);
             }
-            0x4D => { // FRAME_2
+            0x4D => {
+                // FRAME_2
                 self.registers[0x4D] = data;
                 self.update_framebuffer_info(data);
             }
-            0x4E => { // ZBUF_1
+            0x4E => {
+                // ZBUF_1
                 self.registers[0x4E] = data;
             }
-            0x4F => { // ZBUF_2
+            0x4F => {
+                // ZBUF_2
                 self.registers[0x4F] = data;
             }
-            0x50 => { // BITBLTBUF
+            0x50 => {
+                // BITBLTBUF
                 self.set_bitbltbuf(data);
             }
-            0x51 => { // TRXPOS
+            0x51 => {
+                // TRXPOS
                 self.set_trxpos(data);
             }
-            0x52 => { // TRXREG
+            0x52 => {
+                // TRXREG
                 self.set_trxreg(data);
             }
-            0x53 => { // TRXDIR
+            0x53 => {
+                // TRXDIR
                 self.set_trxdir(data);
             }
-            0x54 => { // HWREG
+            0x54 => {
+                // HWREG
                 self.write_hwreg(data);
             }
-            0x60 => { // SIGNAL
+            0x60 => {
+                // SIGNAL
                 self.registers[0x60] = data;
             }
-            0x61 => { // FINISH
+            0x61 => {
+                // FINISH
                 self.registers[0x61] = data;
             }
-            0x62 => { // LABEL
+            0x62 => {
+                // LABEL
                 self.registers[0x62] = data;
             }
             _ => {
-                panic!("GS: write_internal_reg invalid reg 0x{:02X} = 0x{:016X}", reg, data);
+                panic!(
+                    "GS: write_internal_reg invalid reg 0x{:02X} = 0x{:016X}",
+                    reg, data
+                );
             }
         }
     }
@@ -570,12 +637,14 @@ impl GS {
         let high = (data >> 64) as u64;
 
         match reg {
-            0x00 => { // PRIM
+            0x00 => {
+                // PRIM
                 let prim_value = low & 0x3FF;
                 self.registers[0x00] = prim_value;
                 self.handle_prim_selection(prim_value);
             }
-            0x01 => { // RGBAQ
+            0x01 => {
+                // RGBAQ
                 let r = low & 0xFF;
                 let g = (low >> 32) & 0xFF;
                 let b = high & 0xFF;
@@ -583,14 +652,17 @@ impl GS {
                 let v = (a << 24) | (r << 16) | (g << 8) | b;
                 self.registers[0x01] = v;
             }
-            0x02 => { // ST
+            0x02 => {
+                // ST
                 q = high as u32;
                 self.registers[0x02] = low;
             }
-            0x03 => { // UV
+            0x03 => {
+                // UV
                 self.registers[0x03] = (low & 0x3fff) | (low >> 16);
             }
-            0x04 => { // XYZ2F/XYZ3F
+            0x04 => {
+                // XYZ2F/XYZ3F
                 let x = low & 0xffff;
                 let y = (low >> 32) & 0xffff;
                 let z = high >> 32;
@@ -605,7 +677,8 @@ impl GS {
                 self.add_vertex(v, !disable_drawing);
                 self.registers[idx as usize] = v;
             }
-            0x05 => { // XYZ2/XYZ3
+            0x05 => {
+                // XYZ2/XYZ3
                 let x = low & 0xffff;
                 let y = (low >> 32) & 0xffff;
                 let z = high >> 32;
@@ -622,13 +695,16 @@ impl GS {
             }
             0x08 => {}
             0x09 => {}
-            0x0A => { // FOG
+            0x0A => {
+                // FOG
                 self.registers[0xA] = high << 20;
             }
-            0x0C => { // FOG
+            0x0C => {
+                // FOG
                 self.registers[0xC] = low;
             }
-            0x0E => { // A+D
+            0x0E => {
+                // A+D
                 let dst_reg = high;
                 self.write_internal_reg(dst_reg, low);
             }
@@ -646,7 +722,8 @@ impl GS {
     }
 
     fn transfer_vram(&mut self) {
-        if self.transmission_direction == 0 { // Host to Local
+        if self.transmission_direction == 0 {
+            // Host to Local
             let renderer = &mut *self.renderer;
             let vram = &mut self.vram;
             let hwreg = self.hwreg;
@@ -659,8 +736,7 @@ impl GS {
             let dest_y = &mut self.destination_y;
 
             renderer.transfer_hwreg(
-                vram, hwreg, base, rect_x, rect_y, buf_width,
-                dest_x, dest_y, area_width,
+                vram, hwreg, base, rect_x, rect_y, buf_width, dest_x, dest_y, area_width,
             );
         }
     }
@@ -695,24 +771,35 @@ impl GS {
 
         //println!("Vertex: x={}, y={}, z={}, r={}, g={}, b={}, a={}", x, y, z, r, g, b, a);
 
-        let vertex = Vertex { x: x as f32, y: y as f32, z: 0, r, g, b, a };
+        let vertex = Vertex {
+            x: x as f32,
+            y: y as f32,
+            z: 0,
+            r,
+            g,
+            b,
+            a,
+        };
 
         self.vertex_queue.push(vertex);
 
         let prim_type = self.current_prim & 0x7;
 
         let required_vertices = match prim_type {
-            0 => 1, // Point
-            3 => 3, // Triangle
-            6 => 2, // Sprite (actually uses 2 vertices, generates rectangle)
+            0 => 1,      // Point
+            3 => 3,      // Triangle
+            6 => 2,      // Sprite (actually uses 2 vertices, generates rectangle)
             _ => return, // Ignore others for now
         };
 
         if self.vertex_queue.len() >= required_vertices as usize {
             let vertices_to_take = required_vertices as usize;
-            let vertices = self.vertex_queue.drain(0..vertices_to_take).collect::<Vec<_>>();
+            let vertices = self
+                .vertex_queue
+                .drain(0..vertices_to_take)
+                .collect::<Vec<_>>();
 
-                self.buffered_primitives.push(Primitive {
+            self.buffered_primitives.push(Primitive {
                 prim_type,
                 vertices,
                 scissor: self.registers[0x40],
@@ -755,7 +842,6 @@ impl GS {
                 _ => {}
             }
         }
-
 
         self.framebuffer_fbp = old_fbp;
         self.framebuffer_fbw = old_fbw;
@@ -810,8 +896,8 @@ impl GS {
         if self.current_renderer_kind() == RendererKind::Compute {
             let stride_bytes = buffer_width_pixels as usize * 4;
             let start_offset = base_addr_bytes + dby as usize * stride_bytes;
-            let byte_len     = buffer_read_height as usize * stride_bytes;
-            let vram_len     = self.vram.len();
+            let byte_len = buffer_read_height as usize * stride_bytes;
+            let vram_len = self.vram.len();
 
             if start_offset < vram_len {
                 let safe_len = byte_len.min(vram_len - start_offset);
@@ -820,7 +906,7 @@ impl GS {
         }
 
         {
-            let renderer    = &mut *self.renderer;
+            let renderer = &mut *self.renderer;
             let back_buffer = &mut self.back_buffer;
             let handled = renderer.collect_to_display(
                 back_buffer,
@@ -833,10 +919,10 @@ impl GS {
             if !handled {
                 renderer.collect_readback(&mut self.vram, 0, 0);
 
-                let stride     = buffer_width_pixels as usize * 4;
-                let row_bytes  = buffer_read_width  as usize * 4;
-                let vram_len   = self.vram.len();
-                let bb_len     = back_buffer.len();
+                let stride = buffer_width_pixels as usize * 4;
+                let row_bytes = buffer_read_width as usize * 4;
+                let vram_len = self.vram.len();
+                let bb_len = back_buffer.len();
 
                 for py in 0..buffer_read_height as usize {
                     let src = base_addr_bytes + (dby as usize + py) * stride + dbx as usize * 4;

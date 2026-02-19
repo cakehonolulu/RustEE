@@ -22,17 +22,21 @@ use tracing::{debug, error, trace};
 #[cfg(unix)]
 use libc::{
     MAP_ANONYMOUS, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, PROT_NONE, PROT_READ, PROT_WRITE, mmap,
-    munmap, mprotect
+    mprotect, munmap,
 };
 
 #[cfg(windows)]
 use std::ffi::os_str::OsStr;
 #[cfg(windows)]
+use std::ops::Add;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
-use windows_sys::Win32::System::Memory::VirtualProtect;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+#[cfg(windows)]
+use windows_sys::Win32::System::Memory::VirtualProtect;
 #[cfg(windows)]
 use windows_sys::Win32::System::Memory::{
     CreateFileMapping2, FILE_MAP_READ, FILE_MAP_WRITE, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE,
@@ -42,10 +46,6 @@ use windows_sys::Win32::System::Memory::{
 };
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
-#[cfg(windows)]
-use std::os::windows::io::{OwnedHandle, AsRawHandle, FromRawHandle};
-#[cfg(windows)]
-use std::ops::Add;
 
 pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
     debug!("Initializing Hardware Fast Memory...");
@@ -70,73 +70,78 @@ pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
 }
 
 #[cfg(unix)]
-pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> { unsafe {
-    let size = 1usize << 32; // 4GB virtual address space
+pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> {
+    unsafe {
+        let size = 1usize << 32; // 4GB virtual address space
 
-    let base = mmap(
-        ptr::null_mut(),
-        size,
-        PROT_NONE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0,
-    );
+        let base = mmap(
+            ptr::null_mut(),
+            size,
+            PROT_NONE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0,
+        );
 
-    if base == libc::MAP_FAILED {
-        return Err(io::Error::new(
-            ErrorKind::Other,
-            "Failed to reserve address space",
-        ));
+        if base == libc::MAP_FAILED {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                "Failed to reserve address space",
+            ));
+        }
+
+        let base = base as *mut u8;
+
+        let ram_size = 0x2000000;
+        let ram_name = c"/rustee_ram";
+        let ram_fd = shm_open(
+            ram_name,
+            OFlag::O_CREAT | OFlag::O_RDWR,
+            Mode::S_IRUSR | Mode::S_IWUSR,
+        )
+        .map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to create RAM shm: {}", e))
+        })?;
+
+        ftruncate(&ram_fd, ram_size as i64).map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to set RAM size: {}", e))
+        })?;
+
+        map_fixed_region(
+            base,
+            0x80000000,
+            ram_size,
+            &ram_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
+        map_fixed_region(
+            base,
+            0xA0000000,
+            ram_size,
+            &ram_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
+
+        bus.ram_fd = Some(ram_fd);
+        shm_unlink(ram_name).map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to unlink RAM shm: {}", e))
+        })?;
+
+        map_bios(bus, base)?;
+
+        map_iop_ram(base)?;
+        map_scratchpad(base)?;
+        map_vu_memory(base)?;
+
+        debug!(
+            "Hardware arena initialized: base={:?}, size={} bytes",
+            base, size
+        );
+        Ok((base, size))
     }
-
-    let base = base as *mut u8;
-
-    let ram_size = 0x2000000;
-    let ram_name = c"/rustee_ram";
-    let ram_fd = shm_open(
-        ram_name,
-        OFlag::O_CREAT | OFlag::O_RDWR,
-        Mode::S_IRUSR | Mode::S_IWUSR,
-    )
-    .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to create RAM shm: {}", e)))?;
-
-    ftruncate(&ram_fd, ram_size as i64)
-        .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set RAM size: {}", e)))?;
-
-    map_fixed_region(
-        base,
-        0x80000000,
-        ram_size,
-        &ram_fd,
-        0,
-        PROT_READ | PROT_WRITE,
-    )?;
-    map_fixed_region(
-        base,
-        0xA0000000,
-        ram_size,
-        &ram_fd,
-        0,
-        PROT_READ | PROT_WRITE,
-    )?;
-
-    bus.ram_fd = Some(ram_fd);
-    shm_unlink(ram_name).map_err(|e| {
-        io::Error::new(ErrorKind::Other, format!("Failed to unlink RAM shm: {}", e))
-    })?;
-
-    map_bios(bus, base)?;
-
-    map_iop_ram(base)?;
-    map_scratchpad(base)?;
-    map_vu_memory(base)?;
-
-    debug!(
-        "Hardware arena initialized: base={:?}, size={} bytes",
-        base, size
-    );
-    Ok((base, size))
-}}
+}
 
 #[cfg(windows)]
 pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)> {
@@ -406,7 +411,7 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
         .encode_wide()
         .chain(Some(0))
         .collect();
-    
+
     let bios_section = unsafe {
         CreateFileMapping2(
             INVALID_HANDLE_VALUE,
@@ -468,19 +473,15 @@ pub unsafe fn init_hardware_arena(bus: &mut Bus) -> io::Result<(*mut u8, usize)>
     unsafe {
         std::ptr::copy_nonoverlapping(bus.bios.bytes.as_ptr(), first_bios_ptr, bios_size);
     }
-    debug!("Copied BIOS data into the first mapping at {:p}", first_bios_ptr);
+    debug!(
+        "Copied BIOS data into the first mapping at {:p}",
+        first_bios_ptr
+    );
 
     for &off in &bios_offsets {
         let addr = unsafe { base.add(off) } as *mut c_void;
         let mut old_protect = 0;
-        let result = unsafe {
-            VirtualProtect(
-                addr,
-                bios_size,
-                PAGE_READONLY,
-                &mut old_protect,
-            )
-        };
+        let result = unsafe { VirtualProtect(addr, bios_size, PAGE_READONLY, &mut old_protect) };
         if result == 0 {
             return Err(io::Error::new(
                 ErrorKind::Other,
@@ -501,214 +502,248 @@ unsafe fn map_fixed_region(
     fd: &std::os::fd::OwnedFd,
     offset: i64,
     prot: i32,
-) -> io::Result<()> { unsafe {
-    let target = base.add(virt_addr as usize);
+) -> io::Result<()> {
+    unsafe {
+        let target = base.add(virt_addr as usize);
 
-    let result = mmap(
-        target as *mut c_void,
-        size,
-        prot,
-        MAP_SHARED | MAP_FIXED,
-        fd.as_raw_fd(),
-        offset,
-    );
+        let result = mmap(
+            target as *mut c_void,
+            size,
+            prot,
+            MAP_SHARED | MAP_FIXED,
+            fd.as_raw_fd(),
+            offset,
+        );
 
-    if result == libc::MAP_FAILED {
-        return Err(io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to map fixed region at 0x{:08X}", virt_addr),
-        ));
+        if result == libc::MAP_FAILED {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to map fixed region at 0x{:08X}", virt_addr),
+            ));
+        }
+
+        Ok(())
     }
-
-    Ok(())
-}}
+}
 
 #[cfg(unix)]
-unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> { unsafe {
-    let bios_size = 0x400000;
-    let bios_name = c"/rustee_bios";
-    let bios_fd = shm_open(
-        bios_name,
-        OFlag::O_CREAT | OFlag::O_RDWR,
-        Mode::S_IRUSR | Mode::S_IWUSR,
-    )
-    .map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to create BIOS shm: {}", e),
+unsafe fn map_bios(bus: &mut Bus, base: *mut u8) -> io::Result<()> {
+    unsafe {
+        let bios_size = 0x400000;
+        let bios_name = c"/rustee_bios";
+        let bios_fd = shm_open(
+            bios_name,
+            OFlag::O_CREAT | OFlag::O_RDWR,
+            Mode::S_IRUSR | Mode::S_IWUSR,
         )
-    })?;
+        .map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to create BIOS shm: {}", e),
+            )
+        })?;
 
-    ftruncate(&bios_fd, bios_size as i64)
-        .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to set BIOS size: {}", e)))?;
+        ftruncate(&bios_fd, bios_size as i64).map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to set BIOS size: {}", e))
+        })?;
 
-    let bios_base_ptr = base.add(0x1FC00000) as *mut c_void;
+        let bios_base_ptr = base.add(0x1FC00000) as *mut c_void;
 
-    map_fixed_region(base, 0x1FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
-    map_fixed_region(base, 0x9FC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
-    map_fixed_region(base, 0xBFC00000, bios_size, &bios_fd, 0, PROT_READ | PROT_WRITE)?;
+        map_fixed_region(
+            base,
+            0x1FC00000,
+            bios_size,
+            &bios_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
+        map_fixed_region(
+            base,
+            0x9FC00000,
+            bios_size,
+            &bios_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
+        map_fixed_region(
+            base,
+            0xBFC00000,
+            bios_size,
+            &bios_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
 
-    std::ptr::copy_nonoverlapping(
-        bus.bios.bytes.as_ptr(),
-        bios_base_ptr as *mut u8,
-        bus.bios.bytes.len(),
-    );
+        std::ptr::copy_nonoverlapping(
+            bus.bios.bytes.as_ptr(),
+            bios_base_ptr as *mut u8,
+            bus.bios.bytes.len(),
+        );
 
-    mprotect(bios_base_ptr, bios_size, PROT_READ);
-    mprotect(base.offset(0x9FC00000) as *mut c_void, bios_size, PROT_READ);
-    mprotect(base.offset(0xBFC00000) as *mut c_void, bios_size, PROT_READ);
+        mprotect(bios_base_ptr, bios_size, PROT_READ);
+        mprotect(base.offset(0x9FC00000) as *mut c_void, bios_size, PROT_READ);
+        mprotect(base.offset(0xBFC00000) as *mut c_void, bios_size, PROT_READ);
 
-    close(bios_fd)
-        .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to close BIOS fd: {}", e)))?;
-    shm_unlink(bios_name).map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to unlink BIOS shm: {}", e),
-        )
-    })?;
+        close(bios_fd).map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to close BIOS fd: {}", e))
+        })?;
+        shm_unlink(bios_name).map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to unlink BIOS shm: {}", e),
+            )
+        })?;
 
-    Ok(())
-}}
+        Ok(())
+    }
+}
 
 #[cfg(unix)]
-unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> { unsafe {
-    let iop_size = 0x200000;
-    let iop_name = c"/rustee_iop";
-    let iop_fd = shm_open(
-        iop_name,
-        OFlag::O_CREAT | OFlag::O_RDWR,
-        Mode::S_IRUSR | Mode::S_IWUSR,
-    )
-    .map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to create IOP RAM shm: {}", e),
+unsafe fn map_iop_ram(base: *mut u8) -> io::Result<()> {
+    unsafe {
+        let iop_size = 0x200000;
+        let iop_name = c"/rustee_iop";
+        let iop_fd = shm_open(
+            iop_name,
+            OFlag::O_CREAT | OFlag::O_RDWR,
+            Mode::S_IRUSR | Mode::S_IWUSR,
         )
-    })?;
+        .map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to create IOP RAM shm: {}", e),
+            )
+        })?;
 
-    ftruncate(&iop_fd, iop_size as i64).map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to set IOP RAM size: {}", e),
-        )
-    })?;
+        ftruncate(&iop_fd, iop_size as i64).map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to set IOP RAM size: {}", e),
+            )
+        })?;
 
-    map_fixed_region(
-        base,
-        0x9C000000,
-        iop_size,
-        &iop_fd,
-        0,
-        PROT_READ | PROT_WRITE,
-    )?;
-    map_fixed_region(
-        base,
-        0xBC000000,
-        iop_size,
-        &iop_fd,
-        0,
-        PROT_READ | PROT_WRITE,
-    )?;
+        map_fixed_region(
+            base,
+            0x9C000000,
+            iop_size,
+            &iop_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
+        map_fixed_region(
+            base,
+            0xBC000000,
+            iop_size,
+            &iop_fd,
+            0,
+            PROT_READ | PROT_WRITE,
+        )?;
 
-    close(iop_fd)
-        .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to close IOP fd: {}", e)))?;
-    shm_unlink(iop_name).map_err(|e| {
-        io::Error::new(ErrorKind::Other, format!("Failed to unlink IOP shm: {}", e))
-    })?;
+        close(iop_fd).map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to close IOP fd: {}", e))
+        })?;
+        shm_unlink(iop_name).map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("Failed to unlink IOP shm: {}", e))
+        })?;
 
-    Ok(())
-}}
+        Ok(())
+    }
+}
 
 #[cfg(unix)]
-unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> { unsafe {
-    let sp_size = 0x4000;
-    let sp_name = c"/rustee_scratchpad";
-    let sp_fd = shm_open(
-        sp_name,
-        OFlag::O_CREAT | OFlag::O_RDWR,
-        Mode::S_IRUSR | Mode::S_IWUSR,
-    )
-    .map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to create scratchpad shm: {}", e),
+unsafe fn map_scratchpad(base: *mut u8) -> io::Result<()> {
+    unsafe {
+        let sp_size = 0x4000;
+        let sp_name = c"/rustee_scratchpad";
+        let sp_fd = shm_open(
+            sp_name,
+            OFlag::O_CREAT | OFlag::O_RDWR,
+            Mode::S_IRUSR | Mode::S_IWUSR,
         )
-    })?;
+        .map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to create scratchpad shm: {}", e),
+            )
+        })?;
 
-    ftruncate(&sp_fd, sp_size as i64).map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to set scratchpad size: {}", e),
-        )
-    })?;
+        ftruncate(&sp_fd, sp_size as i64).map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to set scratchpad size: {}", e),
+            )
+        })?;
 
-    let sp_target = base.add(0x70000000);
+        let sp_target = base.add(0x70000000);
 
-    let result = mmap(
-        sp_target as *mut c_void,
-        sp_size,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED | MAP_FIXED,
-        sp_fd.as_raw_fd(),
-        0,
-    );
+        let result = mmap(
+            sp_target as *mut c_void,
+            sp_size,
+            PROT_READ | PROT_WRITE,
+            MAP_SHARED | MAP_FIXED,
+            sp_fd.as_raw_fd(),
+            0,
+        );
 
-    if result == libc::MAP_FAILED {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to map scratchpad"));
+        if result == libc::MAP_FAILED {
+            return Err(io::Error::new(ErrorKind::Other, "Failed to map scratchpad"));
+        }
+
+        close(sp_fd).map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to close scratchpad fd: {}", e),
+            )
+        })?;
+        shm_unlink(sp_name).map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to unlink scratchpad shm: {}", e),
+            )
+        })?;
+
+        Ok(())
     }
-
-    close(sp_fd).map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to close scratchpad fd: {}", e),
-        )
-    })?;
-    shm_unlink(sp_name).map_err(|e| {
-        io::Error::new(
-            ErrorKind::Other,
-            format!("Failed to unlink scratchpad shm: {}", e),
-        )
-    })?;
-
-    Ok(())
-}}
+}
 
 #[cfg(unix)]
-unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> { unsafe {
-    let vu0_size = 0x8000;
-    let vu0_target = base.add(0x11000000);
+unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
+    unsafe {
+        let vu0_size = 0x8000;
+        let vu0_target = base.add(0x11000000);
 
-    let result = mmap(
-        vu0_target as *mut c_void,
-        vu0_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
-        -1,
-        0,
-    );
+        let result = mmap(
+            vu0_target as *mut c_void,
+            vu0_size,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+            -1,
+            0,
+        );
 
-    if result == libc::MAP_FAILED {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to map VU0"));
+        if result == libc::MAP_FAILED {
+            return Err(io::Error::new(ErrorKind::Other, "Failed to map VU0"));
+        }
+
+        let vu1_size = 0x8000;
+        let vu1_target = base.add(0x11008000);
+
+        let result = mmap(
+            vu1_target as *mut c_void,
+            vu1_size,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+            -1,
+            0,
+        );
+
+        if result == libc::MAP_FAILED {
+            return Err(io::Error::new(ErrorKind::Other, "Failed to map VU1"));
+        }
+
+        Ok(())
     }
-
-    let vu1_size = 0x8000;
-    let vu1_target = base.add(0x11008000);
-
-    let result = mmap(
-        vu1_target as *mut c_void,
-        vu1_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
-        -1,
-        0,
-    );
-
-    if result == libc::MAP_FAILED {
-        return Err(io::Error::new(ErrorKind::Other, "Failed to map VU1"));
-    }
-
-    Ok(())
-}}
+}
 
 impl Tlb {
     #[cfg(unix)]

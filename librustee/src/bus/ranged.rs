@@ -73,22 +73,16 @@ impl Bus {
     pub fn ranged_read8(&mut self, va: u32) -> u8 {
         if let Some(offset) = map::SCRATCHPAD.contains(va) {
             let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u8;
-            return unsafe { ptr.read_unaligned() }
+            return unsafe { ptr.read_unaligned() };
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::ReadByte,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::ReadByte, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -108,22 +102,16 @@ impl Bus {
     pub fn ranged_read16(&mut self, va: u32) -> u16 {
         if let Some(offset) = map::SCRATCHPAD.contains(va) {
             let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u16;
-            return unsafe { ptr.read_unaligned() }
+            return unsafe { ptr.read_unaligned() };
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::ReadHalfword,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::ReadHalfword, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -143,22 +131,16 @@ impl Bus {
     pub fn ranged_read32(&mut self, va: u32) -> u32 {
         if let Some(offset) = map::SCRATCHPAD.contains(va) {
             let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u32;
-            return unsafe { ptr.read_unaligned() }
+            return unsafe { ptr.read_unaligned() };
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::ReadWord,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::ReadWord, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -178,22 +160,16 @@ impl Bus {
     pub fn ranged_read64(&mut self, va: u32) -> u64 {
         if let Some(offset) = map::SCRATCHPAD.contains(va) {
             let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u64;
-            return unsafe { ptr.read_unaligned() }
+            return unsafe { ptr.read_unaligned() };
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::ReadDoubleword,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::ReadDoubleword, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -213,22 +189,16 @@ impl Bus {
     pub fn ranged_read128(&mut self, va: u32) -> u128 {
         if let Some(offset) = map::SCRATCHPAD.contains(va) {
             let ptr = unsafe { self.scratchpad.as_ptr().add(offset as usize) } as *const u128;
-            return unsafe { ptr.read_unaligned() }
+            return unsafe { ptr.read_unaligned() };
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::ReadDoubleword,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::ReadDoubleword, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -252,19 +222,13 @@ impl Bus {
             return;
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::WriteByte,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::WriteByte, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -285,19 +249,13 @@ impl Bus {
             return;
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::WriteHalfword,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::WriteHalfword, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -318,19 +276,13 @@ impl Bus {
             return;
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::WriteWord,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::WriteWord, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
@@ -351,26 +303,20 @@ impl Bus {
             return;
         }
 
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::WriteDoubleword,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { self.ram.as_mut_ptr().add(offset as usize) as *mut u64 };
             unsafe { ptr.write_unaligned(val) }
         } else if let Some(offset) = map::SCRATCHPAD.contains(pa) {
-            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize)as *mut u64 };
+            let ptr = unsafe { self.scratchpad.as_mut_ptr().add(offset as usize) as *mut u64 };
             unsafe { ptr.write_unaligned(val) }
         } else if let Some(offset) = map::VU0.contains(pa) {
             let ptr = if pa < 0x1100_4000 {
@@ -397,19 +343,13 @@ impl Bus {
             unsafe { ptr.write_unaligned(val) }
             return;
         }
-        let cop0_asid = {
-            self.read_cop0_asid()
-        };
+        let cop0_asid = { self.read_cop0_asid() };
         let operating_mode = self.operating_mode;
 
         let pa = {
             let tlb = &mut self.tlb;
-            tlb.translate_address(
-                va,
-                AccessType::WriteDoubleword,
-                operating_mode,
-                cop0_asid,
-            ).unwrap_or_else(|_e| va)
+            tlb.translate_address(va, AccessType::WriteDoubleword, operating_mode, cop0_asid)
+                .unwrap_or_else(|_e| va)
         };
 
         if let Some(offset) = map::RAM.contains(pa) {

@@ -13,11 +13,11 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use portable_atomic::AtomicU128;
 use std::fs;
-use std::sync::atomic::Ordering;
+use std::mem;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use target_lexicon::Triple;
 use tracing::{debug, error};
-use std::mem;
 
 #[derive(Clone, Copy)]
 pub struct Block {

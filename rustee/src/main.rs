@@ -1,16 +1,16 @@
 use clap::{Command, arg};
+use librustee::sched::Scheduler;
 use librustee::{
     BIOS,
     bus::{Bus, BusMode},
     cpu::CPU,
     ee::EE,
 };
-use std::sync::{Arc, Mutex};
-use std::path::Path;
 use portable_atomic::AtomicU32;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tracing_subscriber::EnvFilter;
 use winit::event_loop::{ControlFlow, EventLoop};
-use librustee::sched::Scheduler;
 
 mod app;
 mod egui_tools;
@@ -108,10 +108,7 @@ fn main() {
             &mut **guard as *mut Bus
         };
 
-        let mut ee_obj = EE::new(
-            bus_ptr,
-            Arc::clone(&cop0_registers),
-        );
+        let mut ee_obj = EE::new(bus_ptr, Arc::clone(&cop0_registers));
 
         if let Some(breakpoints) = arguments.get_one::<Vec<u32>>("ee-breakpoint") {
             for &addr in breakpoints {
@@ -131,7 +128,6 @@ fn main() {
             .map(String::clone)
             .unwrap_or_else(|| "jit".to_string());
 
-
         #[cfg(not(target_arch = "wasm32"))]
         {
             pollster::block_on(run(ee.clone(), bus.clone(), scheduler.clone(), backend));
@@ -145,7 +141,7 @@ async fn run(
     ee: Arc<Mutex<EE>>,
     bus: Arc<Mutex<Box<Bus>>>,
     scheduler: Arc<Mutex<Scheduler>>,
-    backend: String
+    backend: String,
 ) {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);

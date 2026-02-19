@@ -1,10 +1,10 @@
-use std::error::Error;
 use egui::Context;
 use egui_wgpu::wgpu::{CommandEncoder, Device, Queue, StoreOp, TextureFormat, TextureView};
-use egui_wgpu::{wgpu, Renderer, ScreenDescriptor};
+use egui_wgpu::{Renderer, ScreenDescriptor, wgpu};
 use egui_winit::State;
-use winit::window::Icon;
+use std::error::Error;
 use winit::event::WindowEvent;
+use winit::window::Icon;
 use winit::window::Window;
 
 pub struct EguiRenderer {
@@ -14,9 +14,10 @@ pub struct EguiRenderer {
 }
 
 fn icon_from_embedded_bytes() -> Result<Icon, Box<dyn Error>> {
-    let bytes: &'static [u8] = include_bytes!(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../resources/banner.png")
-    );
+    let bytes: &'static [u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../resources/banner.png"
+    ));
 
     let img = image::load_from_memory(bytes)?;
     let rgba = img.to_rgba8();

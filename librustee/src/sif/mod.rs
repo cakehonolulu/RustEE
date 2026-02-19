@@ -92,6 +92,7 @@ impl SIF {
             0x40 => {
                 let mut new_value = value;
                 new_value |= 0xF000_0000; // Bits 28-31 always 0xF
+
                 /*
                     new_value &= !0x100; // Bit 8 always 0 for IOP
                 */

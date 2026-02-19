@@ -2,8 +2,8 @@ use capstone::Insn;
 use std::ffi::c_void;
 use std::sync::atomic::AtomicBool;
 
-use capstone::{arch::DetailsArchInsn, Capstone};
 use capstone::arch::BuildsCapstone;
+use capstone::{Capstone, arch::DetailsArchInsn};
 use tracing::{error, trace};
 
 use super::Bus;
@@ -59,81 +59,85 @@ pub trait ArchHandler {
     fn set_register_value(ctx: *mut Self::Context, reg_id: Self::Register, value: u64);
 }
 
+unsafe fn get_mov_instruction_length(ip: *const u8) -> usize {
+    unsafe {
+        let mut len: usize = 0;
 
-unsafe fn get_mov_instruction_length(ip: *const u8) -> usize { unsafe {
-    let mut len: usize = 0;
+        loop {
+            let b = *ip.add(len);
+            if (0x40..=0x4F).contains(&b) || b == 0x66 || b == 0x67 || b == 0xF2 || b == 0xF3 {
+                len += 1;
+                if len > 4 {
+                    return 0;
+                }
+            } else {
+                break;
+            }
+        }
 
-    loop {
-        let b = *ip.add(len);
-        if (0x40..=0x4F).contains(&b)
-            || b == 0x66
-            || b == 0x67
-            || b == 0xF2 || b == 0xF3
-        {
+        let opc = *ip.add(len);
+        len += 1;
+
+        let is_two_byte = opc == 0x0F;
+        let opc_effective = if is_two_byte {
+            let opc2 = *ip.add(len);
             len += 1;
-            if len > 4 { return 0; }
+            opc2
         } else {
-            break;
+            opc
+        };
+
+        if is_two_byte {
+            if ![0xB6, 0xB7, 0xBE, 0xBF].contains(&opc_effective) {
+                return 0;
+            }
+        } else {
+            if ![0x88, 0x89, 0x8A, 0x8B].contains(&opc_effective) {
+                return 0;
+            }
         }
-    }
 
-    let opc = *ip.add(len);
-    len += 1;
-
-    let is_two_byte = opc == 0x0F;
-    let opc_effective = if is_two_byte {
-        let opc2 = *ip.add(len);
+        let modrm = *ip.add(len);
         len += 1;
-        opc2
-    } else {
-        opc
-    };
+        let mod_bits = modrm >> 6;
+        let _reg = (modrm >> 3) & 0x7;
+        let rm = modrm & 0x7;
 
-    if is_two_byte {
-        if ![0xB6, 0xB7, 0xBE, 0xBF].contains(&opc_effective) {
+        if mod_bits == 0x3 {
             return 0;
         }
-    } else {
-        if ![0x88, 0x89, 0x8A, 0x8B].contains(&opc_effective) {
-            return 0;
+
+        let mut disp_size: usize = 0;
+        if rm == 0x4 {
+            let sib = *ip.add(len);
+            len += 1;
+            let _scale = sib >> 6;
+            let _index = (sib >> 3) & 0x7;
+            let base = sib & 0x7;
+
+            if mod_bits == 0x0 && base == 0x5 {
+                disp_size = 4;
+            }
         }
+
+        disp_size = match mod_bits {
+            0x0 => {
+                if rm == 0x5 {
+                    4
+                } else {
+                    disp_size
+                }
+            }
+            0x1 => 1,
+            0x2 => 4,
+            _ => return 0,
+        };
+        len += disp_size;
+
+        len
     }
+}
 
-    let modrm = *ip.add(len);
-    len += 1;
-    let mod_bits = modrm >> 6;
-    let _reg = (modrm >> 3) & 0x7;
-    let rm = modrm & 0x7;
-
-    if mod_bits == 0x3 {
-        return 0;
-    }
-
-    let mut disp_size: usize = 0;
-    if rm == 0x4 {
-        let sib = *ip.add(len);
-        len += 1;
-        let _scale = sib >> 6;
-        let _index = (sib >> 3) & 0x7;
-        let base = sib & 0x7;
-
-        if mod_bits == 0x0 && base == 0x5 {
-            disp_size = 4;
-        }
-    }
-
-    disp_size = match mod_bits {
-        0x0 => if rm == 0x5 { 4 } else { disp_size },
-        0x1 => 1,
-        0x2 => 4,
-        _ => return 0,
-    };
-    len += disp_size;
-
-    len
-}}
-
-    
 pub extern "C" fn io_write8_stub(bus: *mut Bus, addr: u32, value: u8) {
     unsafe {
         if bus.is_null() {
@@ -386,11 +390,7 @@ impl ArchHandler for CurrentArchHandler {
             panic!("Unrecognized instruction format at fault address");
         }
 
-        trace!(
-            "Advancing IP by {} bytes from 0x{:x}",
-            length,
-            fault_addr
-        );
+        trace!("Advancing IP by {} bytes from 0x{:x}", length, fault_addr);
         Self::set_instruction_pointer(ctx, fault_addr as u64 + length as u64);
         Ok(())
     }
@@ -412,33 +412,37 @@ impl ArchHandler for CurrentArchHandler {
     }
 
     fn get_register_value(ctx: *const Self::Context, reg_id: Self::Register) -> u64 {
-        unsafe { (*ctx).uc_mcontext.gregs[match reg_id {
-            x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
-            x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
-            x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
-            x86_64_impl::X86Register::Rsi => nix::libc::REG_RSI as usize,
-            x86_64_impl::X86Register::Rdi => nix::libc::REG_RDI as usize,
-            x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
-            x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
-            x86_64_impl::X86Register::R10 => nix::libc::REG_R10 as usize,
-            x86_64_impl::X86Register::R11 => nix::libc::REG_R11 as usize,
-            _ => panic!("Unsupported register for value access (Get): {:?}", reg_id),
-        }] as u64 }
+        unsafe {
+            (*ctx).uc_mcontext.gregs[match reg_id {
+                x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
+                x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
+                x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
+                x86_64_impl::X86Register::Rsi => nix::libc::REG_RSI as usize,
+                x86_64_impl::X86Register::Rdi => nix::libc::REG_RDI as usize,
+                x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
+                x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
+                x86_64_impl::X86Register::R10 => nix::libc::REG_R10 as usize,
+                x86_64_impl::X86Register::R11 => nix::libc::REG_R11 as usize,
+                _ => panic!("Unsupported register for value access (Get): {:?}", reg_id),
+            }] as u64
+        }
     }
 
     fn set_register_value(ctx: *mut Self::Context, reg_id: Self::Register, value: u64) {
-        unsafe { (*ctx).uc_mcontext.gregs[match reg_id {
-            x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
-            x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
-            x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
-            x86_64_impl::X86Register::Rsi => nix::libc::REG_RSI as usize,
-            x86_64_impl::X86Register::Rdi => nix::libc::REG_RDI as usize,
-            x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
-            x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
-            x86_64_impl::X86Register::R10 => nix::libc::REG_R10 as usize,
-            x86_64_impl::X86Register::R11 => nix::libc::REG_R11 as usize,
-            _ => panic!("Unsupported register for value access (Set): {:?}", reg_id),
-        }] = value as i64; }
+        unsafe {
+            (*ctx).uc_mcontext.gregs[match reg_id {
+                x86_64_impl::X86Register::Rax => nix::libc::REG_RAX as usize,
+                x86_64_impl::X86Register::Rcx => nix::libc::REG_RCX as usize,
+                x86_64_impl::X86Register::Rdx => nix::libc::REG_RDX as usize,
+                x86_64_impl::X86Register::Rsi => nix::libc::REG_RSI as usize,
+                x86_64_impl::X86Register::Rdi => nix::libc::REG_RDI as usize,
+                x86_64_impl::X86Register::R8 => nix::libc::REG_R8 as usize,
+                x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
+                x86_64_impl::X86Register::R10 => nix::libc::REG_R10 as usize,
+                x86_64_impl::X86Register::R11 => nix::libc::REG_R11 as usize,
+                _ => panic!("Unsupported register for value access (Set): {:?}", reg_id),
+            }] = value as i64;
+        }
     }
 }
 
@@ -478,11 +482,7 @@ impl ArchHandler for CurrentArchHandler {
             panic!("Unrecognized instruction format at fault address");
         }
 
-        trace!(
-            "Advancing IP by {} bytes from 0x{:x}",
-            length,
-            fault_addr
-        );
+        trace!("Advancing IP by {} bytes from 0x{:x}", length, fault_addr);
         Self::set_instruction_pointer(ctx, (fault_addr as u64 + length as u64));
         Ok(())
     }
@@ -532,21 +532,69 @@ impl ArchHandler for CurrentArchHandler {
 
 const N_WRITES: usize = 5;
 pub(crate) static mut REGISTER_MAP: [Option<x86_64_impl::X86Register>; N_WRITES] = [None; N_WRITES];
-pub(crate) static mut REGISTER_PAIR: Option<(x86_64_impl::X86Register, x86_64_impl::X86Register)> = None;
-
+pub(crate) static mut REGISTER_PAIR: Option<(x86_64_impl::X86Register, x86_64_impl::X86Register)> =
+    None;
 
 pub fn map_cs_reg(cs_reg: u16) -> Option<x86_64_impl::X86Register> {
     use capstone::arch::x86::X86Reg as X;
     match cs_reg {
         x if x == X::X86_REG_RAX as u16 => Some(x86_64_impl::X86Register::Rax),
-        x if x == X::X86_REG_RCX as u16 || x == X::X86_REG_ECX as u16 || x == X::X86_REG_CX as u16 || x == X::X86_REG_CL as u16 => Some(x86_64_impl::X86Register::Rcx),
-        x if x == X::X86_REG_RDX as u16 || x == X::X86_REG_EDX as u16 || x == X::X86_REG_DX as u16 || x == X::X86_REG_DL as u16 => Some(x86_64_impl::X86Register::Rdx),
-        x if x == X::X86_REG_RSI as u16 || x == X::X86_REG_ESI as u16 || x == X::X86_REG_SI as u16 || x == X::X86_REG_SIL as u16 => Some(x86_64_impl::X86Register::Rsi),
-        x if x == X::X86_REG_RDI as u16 || x == X::X86_REG_EDI as u16 || x == X::X86_REG_DI as u16 || x == X::X86_REG_DIL as u16 => Some(x86_64_impl::X86Register::Rdi),
-        x if x == X::X86_REG_R8  as u16 || x == X::X86_REG_R8D as u16 || x == X::X86_REG_R8W as u16 || x == X::X86_REG_R8B as u16 => Some(x86_64_impl::X86Register::R8),
-        x if x == X::X86_REG_R9  as u16 || x == X::X86_REG_R9D as u16 || x == X::X86_REG_R9W as u16 || x == X::X86_REG_R9B as u16 => Some(x86_64_impl::X86Register::R9),
-        x if x == X::X86_REG_R10 as u16 || x == X::X86_REG_R10D as u16 || x == X::X86_REG_R10W as u16 || x == X::X86_REG_R10B as u16 => Some(x86_64_impl::X86Register::R10),
-        x if x == X::X86_REG_R11 as u16 || x == X::X86_REG_R11D as u16 || x == X::X86_REG_R11W as u16 || x == X::X86_REG_R11B as u16 => Some(x86_64_impl::X86Register::R11),
+        x if x == X::X86_REG_RCX as u16
+            || x == X::X86_REG_ECX as u16
+            || x == X::X86_REG_CX as u16
+            || x == X::X86_REG_CL as u16 =>
+        {
+            Some(x86_64_impl::X86Register::Rcx)
+        }
+        x if x == X::X86_REG_RDX as u16
+            || x == X::X86_REG_EDX as u16
+            || x == X::X86_REG_DX as u16
+            || x == X::X86_REG_DL as u16 =>
+        {
+            Some(x86_64_impl::X86Register::Rdx)
+        }
+        x if x == X::X86_REG_RSI as u16
+            || x == X::X86_REG_ESI as u16
+            || x == X::X86_REG_SI as u16
+            || x == X::X86_REG_SIL as u16 =>
+        {
+            Some(x86_64_impl::X86Register::Rsi)
+        }
+        x if x == X::X86_REG_RDI as u16
+            || x == X::X86_REG_EDI as u16
+            || x == X::X86_REG_DI as u16
+            || x == X::X86_REG_DIL as u16 =>
+        {
+            Some(x86_64_impl::X86Register::Rdi)
+        }
+        x if x == X::X86_REG_R8 as u16
+            || x == X::X86_REG_R8D as u16
+            || x == X::X86_REG_R8W as u16
+            || x == X::X86_REG_R8B as u16 =>
+        {
+            Some(x86_64_impl::X86Register::R8)
+        }
+        x if x == X::X86_REG_R9 as u16
+            || x == X::X86_REG_R9D as u16
+            || x == X::X86_REG_R9W as u16
+            || x == X::X86_REG_R9B as u16 =>
+        {
+            Some(x86_64_impl::X86Register::R9)
+        }
+        x if x == X::X86_REG_R10 as u16
+            || x == X::X86_REG_R10D as u16
+            || x == X::X86_REG_R10W as u16
+            || x == X::X86_REG_R10B as u16 =>
+        {
+            Some(x86_64_impl::X86Register::R10)
+        }
+        x if x == X::X86_REG_R11 as u16
+            || x == X::X86_REG_R11D as u16
+            || x == X::X86_REG_R11W as u16
+            || x == X::X86_REG_R11B as u16 =>
+        {
+            Some(x86_64_impl::X86Register::R11)
+        }
         _ => None,
     }
 }
@@ -582,7 +630,11 @@ pub fn find_function_end(cs: &Capstone, func_ptr: *const c_void) -> *const c_voi
         }
     }
 
-    panic!("No `ret` found in function starting at {:p} (scanned {} bytes)", func_ptr, pc - (func_ptr as u64));
+    panic!(
+        "No `ret` found in function starting at {:p} (scanned {} bytes)",
+        func_ptr,
+        pc - (func_ptr as u64)
+    );
 }
 
 pub fn find_memory_access_register(
@@ -601,13 +653,17 @@ pub fn find_memory_access_register(
         let code = unsafe { std::slice::from_raw_parts(pc as *const u8, 64) };
         let insns = cs.disasm_all(code, pc).expect("Disassembly failed");
 
-        if insns.is_empty() { break; }
+        if insns.is_empty() {
+            break;
+        }
 
         for insn in insns.iter() {
             if is_ret(&insn) {
                 if is_128 {
                     if let (Some(l), Some(h)) = (low_reg, high_reg) {
-                        unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
+                        unsafe {
+                            super::backpatch::REGISTER_PAIR = Some((l, h));
+                        }
                         return Some(l);
                     }
                 }
@@ -626,12 +682,16 @@ pub fn find_memory_access_register(
                         let mut reg_op = None;
 
                         if is_write {
-                            if let (X86OperandType::Mem(m), X86OperandType::Reg(r)) = (&ops[0].op_type, &ops[1].op_type) {
+                            if let (X86OperandType::Mem(m), X86OperandType::Reg(r)) =
+                                (&ops[0].op_type, &ops[1].op_type)
+                            {
                                 mem_op = Some(m);
                                 reg_op = Some(r);
                             }
                         } else {
-                            if let (X86OperandType::Reg(r), X86OperandType::Mem(m)) = (&ops[0].op_type, &ops[1].op_type) {
+                            if let (X86OperandType::Reg(r), X86OperandType::Mem(m)) =
+                                (&ops[0].op_type, &ops[1].op_type)
+                            {
                                 mem_op = Some(m);
                                 reg_op = Some(r);
                             }
@@ -641,21 +701,34 @@ pub fn find_memory_access_register(
                             if mem.base().0 != 0 {
                                 let base_name = cs.reg_name(mem.base()).unwrap_or_default();
                                 if base_name == "rsp" || base_name == "rbp" {
-                                    trace!("Ignoring stack access at {:#x}: [{}]", insn.address(), base_name);
+                                    trace!(
+                                        "Ignoring stack access at {:#x}: [{}]",
+                                        insn.address(),
+                                        base_name
+                                    );
                                     continue;
                                 }
 
                                 if let Some(mapped) = map_cs_reg(reg.0) {
                                     if is_128 {
-                                        if mem.disp() == 0 { low_reg = Some(mapped); }
-                                        else if mem.disp() == 8 { high_reg = Some(mapped); }
+                                        if mem.disp() == 0 {
+                                            low_reg = Some(mapped);
+                                        } else if mem.disp() == 8 {
+                                            high_reg = Some(mapped);
+                                        }
 
                                         if let (Some(l), Some(h)) = (low_reg, high_reg) {
-                                            unsafe { super::backpatch::REGISTER_PAIR = Some((l, h)); }
+                                            unsafe {
+                                                super::backpatch::REGISTER_PAIR = Some((l, h));
+                                            }
                                             return Some(l);
                                         }
                                     } else {
-                                        trace!("Found valid memory access register: {:?} at {:#x}", mapped, insn.address());
+                                        trace!(
+                                            "Found valid memory access register: {:?} at {:#x}",
+                                            mapped,
+                                            insn.address()
+                                        );
                                         return Some(mapped);
                                     }
                                 }
@@ -670,67 +743,72 @@ pub fn find_memory_access_register(
         pc = last.address() + last.bytes().len() as u64;
     }
 
-    panic!("Failed to find memory access register for function at {:p}", func_ptr);
+    panic!(
+        "Failed to find memory access register for function at {:p}",
+        func_ptr
+    );
 }
 
 pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
     ctx: *mut H::Context,
     access: AccessInfo,
     fault_addr: u32,
-) { unsafe {
-    let bus_ptr = super::BUS_PTR as *mut Bus;
-    let addr = fault_addr;
+) {
+    unsafe {
+        let bus_ptr = super::BUS_PTR as *mut Bus;
+        let addr = fault_addr;
 
-    use AccessKind::*;
-    use AccessWidth::*;
+        use AccessKind::*;
+        use AccessWidth::*;
 
-    match (access.kind, access.width) {
-        (Write, B8) => {
-            let reg_id = REGISTER_MAP[0].expect("no register cached for write8");
-            let value = H::get_register_value(ctx, reg_id) as u8;
-            io_write8_stub(bus_ptr, addr, value);
-        }
-        (Write, B16) => {
-            let reg_id = REGISTER_MAP[1].expect("no register cached for write16");
-            let value = H::get_register_value(ctx, reg_id) as u16;
-            io_write16_stub(bus_ptr, addr, value);
-        }
-        (Write, B32) => {
-            let reg_id = REGISTER_MAP[2].expect("no register cached for write32");
-            let value = H::get_register_value(ctx, reg_id) as u32;
-            io_write32_stub(bus_ptr, addr, value);
-        }
-        (Write, B64) => {
-            let reg_id = REGISTER_MAP[3].expect("no register cached for write64");
-            let value = H::get_register_value(ctx, reg_id);
-            io_write64_stub(bus_ptr, addr, value);
-        }
-        (Write, B128) => {
-            let (low_reg, high_reg) = REGISTER_PAIR.expect("no register pair cached");
-            let low_u64 = H::get_register_value(ctx, low_reg);
-            let high_u64 = H::get_register_value(ctx, high_reg);
-            io_write128_stub(bus_ptr, addr, low_u64, high_u64);
-        }
-        (Read, B8) => {
-            let value = io_read8_stub(bus_ptr, addr);
-            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-        }
-        (Read, B16) => {
-            let value = io_read16_stub(bus_ptr, addr);
-            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-        }
-        (Read, B32) => {
-            let value = io_read32_stub(bus_ptr, addr);
-            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-        }
-        (Read, B64) => {
-            let value = io_read64_stub(bus_ptr, addr);
-            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value);
-        }
-        (Read, B128) => {
-            let value = io_read128_stub(bus_ptr, addr);
-            H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
-            H::set_register_value(ctx, x86_64_impl::X86Register::Rdx, (value >> 64) as u64);
+        match (access.kind, access.width) {
+            (Write, B8) => {
+                let reg_id = REGISTER_MAP[0].expect("no register cached for write8");
+                let value = H::get_register_value(ctx, reg_id) as u8;
+                io_write8_stub(bus_ptr, addr, value);
+            }
+            (Write, B16) => {
+                let reg_id = REGISTER_MAP[1].expect("no register cached for write16");
+                let value = H::get_register_value(ctx, reg_id) as u16;
+                io_write16_stub(bus_ptr, addr, value);
+            }
+            (Write, B32) => {
+                let reg_id = REGISTER_MAP[2].expect("no register cached for write32");
+                let value = H::get_register_value(ctx, reg_id) as u32;
+                io_write32_stub(bus_ptr, addr, value);
+            }
+            (Write, B64) => {
+                let reg_id = REGISTER_MAP[3].expect("no register cached for write64");
+                let value = H::get_register_value(ctx, reg_id);
+                io_write64_stub(bus_ptr, addr, value);
+            }
+            (Write, B128) => {
+                let (low_reg, high_reg) = REGISTER_PAIR.expect("no register pair cached");
+                let low_u64 = H::get_register_value(ctx, low_reg);
+                let high_u64 = H::get_register_value(ctx, high_reg);
+                io_write128_stub(bus_ptr, addr, low_u64, high_u64);
+            }
+            (Read, B8) => {
+                let value = io_read8_stub(bus_ptr, addr);
+                H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            }
+            (Read, B16) => {
+                let value = io_read16_stub(bus_ptr, addr);
+                H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            }
+            (Read, B32) => {
+                let value = io_read32_stub(bus_ptr, addr);
+                H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+            }
+            (Read, B64) => {
+                let value = io_read64_stub(bus_ptr, addr);
+                H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value);
+            }
+            (Read, B128) => {
+                let value = io_read128_stub(bus_ptr, addr);
+                H::set_register_value(ctx, x86_64_impl::X86Register::Rax, value as u64);
+                H::set_register_value(ctx, x86_64_impl::X86Register::Rdx, (value >> 64) as u64);
+            }
         }
     }
-}}
+}

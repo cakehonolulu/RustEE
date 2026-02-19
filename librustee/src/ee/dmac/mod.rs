@@ -198,13 +198,25 @@ impl EEDMAC {
         channels.insert(VIF0_BASE, DmaChannel::new(ChannelType::Vif0, true, false));
         channels.insert(VIF1_BASE, DmaChannel::new(ChannelType::Vif1, true, false));
         channels.insert(GIF_BASE, DmaChannel::new(ChannelType::Gif, true, false));
-        channels.insert(IPU_FROM_BASE, DmaChannel::new(ChannelType::IpuFrom, false, false));
-        channels.insert(IPU_TO_BASE, DmaChannel::new(ChannelType::IpuTo, false, false));
+        channels.insert(
+            IPU_FROM_BASE,
+            DmaChannel::new(ChannelType::IpuFrom, false, false),
+        );
+        channels.insert(
+            IPU_TO_BASE,
+            DmaChannel::new(ChannelType::IpuTo, false, false),
+        );
         channels.insert(SIF0_BASE, DmaChannel::new(ChannelType::Sif0, false, false));
         channels.insert(SIF1_BASE, DmaChannel::new(ChannelType::Sif1, false, false));
         channels.insert(SIF2_BASE, DmaChannel::new(ChannelType::Sif2, false, false));
-        channels.insert(SPR_FROM_BASE, DmaChannel::new(ChannelType::SprFrom, false, true));
-        channels.insert(SPR_TO_BASE, DmaChannel::new(ChannelType::SprTo, false, true));
+        channels.insert(
+            SPR_FROM_BASE,
+            DmaChannel::new(ChannelType::SprFrom, false, true),
+        );
+        channels.insert(
+            SPR_TO_BASE,
+            DmaChannel::new(ChannelType::SprTo, false, true),
+        );
 
         EEDMAC {
             channels,

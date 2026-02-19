@@ -2,8 +2,8 @@
     PS2 BIOS Structure
 */
 
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 // BIOS Size is 4MiB
 const BIOS_SIZE: u64 = (1024 * 1024) * 4;
@@ -11,7 +11,7 @@ const BIOS_SIZE: u64 = (1024 * 1024) * 4;
 #[derive(Clone)]
 pub struct BIOS {
     // BIOS bytes loaded off from a storage device
-    pub bytes: Vec<u8>
+    pub bytes: Vec<u8>,
 }
 
 impl BIOS {
@@ -19,7 +19,7 @@ impl BIOS {
         let data: Vec<u8> = fs::read(path)?;
 
         if data.len() == BIOS_SIZE as usize {
-            Ok(BIOS {bytes: data})
+            Ok(BIOS { bytes: data })
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -37,6 +37,8 @@ impl BIOS {
             padded_bytes.resize(BIOS_SIZE as usize, 0);
         }
 
-        BIOS { bytes: padded_bytes }
+        BIOS {
+            bytes: padded_bytes,
+        }
     }
 }

@@ -531,4 +531,3 @@ pub fn install_handler() -> io::Result<()> {
     info!("Signal handlers for SIGSEGV and SIGBUS installed successfully");
     Ok(())
 }
-
