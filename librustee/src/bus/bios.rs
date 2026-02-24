@@ -28,7 +28,6 @@ impl BIOS {
         }
     }
 
-    #[cfg(test)]
     pub fn test_only(bytes: Vec<u8>) -> BIOS {
         let mut padded_bytes = bytes;
 

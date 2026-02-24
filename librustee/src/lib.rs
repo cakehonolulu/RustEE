@@ -26,3 +26,5 @@ pub mod sched;
 
 pub use bus::Bus;
 pub use bus::bios::BIOS;
+
+pub mod testing;

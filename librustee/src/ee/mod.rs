@@ -366,6 +366,3 @@ impl CPU for EE {
 }
 
 unsafe impl Send for EE {}
-
-#[cfg(test)]
-mod test;

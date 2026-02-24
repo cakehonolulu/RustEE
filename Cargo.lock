@@ -1853,6 +1853,8 @@ dependencies = [
  "portable-atomic",
  "regex",
  "region",
+ "serde",
+ "serde_json",
  "target-lexicon",
  "tracing",
  "tracing-subscriber",
