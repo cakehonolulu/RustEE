@@ -137,7 +137,7 @@ pub struct ComputeRenderer {
 
 impl ComputeRenderer {
     pub fn new() -> Self {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -268,14 +268,14 @@ impl ComputeRenderer {
 
         let draw_pll = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("GS Draw PL"),
-            bind_group_layouts: &[&draw_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&draw_bgl)],
+            ..Default::default()
         });
 
         let blit_pll = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("GS Blit PL"),
-            bind_group_layouts: &[&blit_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&blit_bgl)],
+            ..Default::default()
         });
 
         let make_pipeline =

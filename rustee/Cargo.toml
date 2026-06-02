@@ -5,16 +5,16 @@ edition = "2024"
 
 [dependencies]
 capstone = "0.14.0"
-clap = "4.5.57"
-egui = "0.33.3"
-egui-wgpu = "0.33.3"
-egui-winit = "0.33.3"
-egui_extras = "0.33.3"
-image = "0.25.9"
+clap = "4.6.1"
+egui = "0.34.3"
+egui-wgpu = "0.34.3"
+egui-winit = "0.34.3"
+egui_extras = "0.34.3"
+image = "0.25.10"
 librustee = { path = "../librustee" }
 pollster = "0.4.0"
 portable-atomic = "1.13.1"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
-wgpu = "28.0.0"
-winit = "0.30.12"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+wgpu = "29.0.3"
+winit = "0.30.13"

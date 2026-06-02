@@ -5,7 +5,6 @@ use capstone::arch::mips::ArchMode::Mips64;
 use capstone::{Capstone, Endian};
 use egui::{Color32, FontId, Grid, RichText, ScrollArea, TextStyle};
 use egui_extras::{Column, TableBuilder};
-use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use librustee::Bus;
 use librustee::cpu::CPU;
@@ -226,7 +225,9 @@ impl App {
         };
 
         App {
-            instance: egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default()),
+            instance: egui_wgpu::wgpu::Instance::new(
+                wgpu::InstanceDescriptor::new_without_display_handle(),
+            ),
             state: None,
             window: None,
             ee,
@@ -312,24 +313,20 @@ impl App {
         };
 
         let surface_texture = match state.surface.get_current_texture() {
-            Ok(texture) => texture,
-            Err(SurfaceError::Outdated) => {
-                println!("wgpu surface outdated");
+            wgpu::CurrentSurfaceTexture::Success(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return;
             }
-            Err(SurfaceError::Timeout) => {
-                println!("wgpu surface timeout");
-                return;
-            }
-            Err(SurfaceError::Lost) => {
-                println!("wgpu surface lost, reconfiguring");
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 state
                     .surface
                     .configure(&state.device, &state.surface_config);
                 return;
             }
-            Err(e) => {
-                panic!("Failed to acquire next swap chain texture: {:?}", e);
+            wgpu::CurrentSurfaceTexture::Validation => {
+                eprintln!("wgpu Surface Validation Error");
+                return;
             }
         };
 
@@ -352,7 +349,7 @@ impl App {
             TARGET_HEIGHT
         };
 
-        let current_texture_size = state.gs_texture.size();
+        let current_texture_size: wgpu::Extent3d = state.gs_texture.size();
         if current_texture_size.width != tex_width || current_texture_size.height != tex_height {
             state
                 .egui_renderer
@@ -411,7 +408,112 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
-            egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
+            let screen_rect = state.egui_renderer.context().content_rect();
+            let mut root_ui = egui::Ui::new(
+                state.egui_renderer.context().clone(),
+                egui::Id::new("view"),
+                egui::UiBuilder::new().max_rect(screen_rect),
+            );
+
+            egui::Panel::top("Menubar").show_inside(&mut root_ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Toggle EE State View").clicked() {
+                        self.ee_ctl_display_open = !self.ee_ctl_display_open;
+                    }
+                    if ui.button("Toggle Disassembly").clicked() {
+                        self.disassembly_open = !self.disassembly_open;
+                    }
+                    if ui.button("Toggle RAM View").clicked() {
+                        self.ram_view_open = !self.ram_view_open;
+                    }
+                    if ui.button("Toggle TLB View").clicked() {
+                        self.tlb_view_open = !self.tlb_view_open;
+                    }
+                    if ui.button("View VRAM").clicked() {
+                        self.vram_view_open = !self.vram_view_open;
+                    }
+
+                    ui.separator();
+
+                    ui.label("Renderer:");
+                    let current_label = self.selected_renderer.display_name();
+                    egui::ComboBox::from_id_salt("renderer_selector")
+                        .selected_text(current_label)
+                        .show_ui(ui, |ui| {
+                            for kind in RendererKind::all() {
+                                let label = kind.display_name();
+                                let is_selected = *kind == self.selected_renderer;
+                                if ui.selectable_label(is_selected, label).clicked() && !is_selected
+                                {
+                                    if let Ok(mut bus) = self.bus.lock() {
+                                        bus.gs.swap_renderer(*kind);
+                                    }
+                                    self.selected_renderer = *kind;
+                                }
+                            }
+                        });
+                });
+            });
+
+            egui::Panel::bottom("EE Taskbar").show_inside(&mut root_ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(if self.is_paused.load(Ordering::SeqCst) {
+                            "Run"
+                        } else {
+                            "Pause"
+                        })
+                        .clicked()
+                    {
+                        if self.emulation_thread.is_none() {
+                            let mut backend = self.emu_backend.take().unwrap();
+                            let bus_arc = self.bus.clone();
+                            let scheduler_arc = self.scheduler.clone();
+                            let thread = std::thread::spawn(move || {
+                                Scheduler::run_main_loop(&mut *backend, scheduler_arc, bus_arc);
+                            });
+                            self.emulation_thread = Some(thread);
+                        }
+                        let paused = self.is_paused.load(Ordering::SeqCst);
+                        self.is_paused.store(!paused, Ordering::SeqCst);
+                        if paused {
+                            self.emulation_thread.as_ref().unwrap().thread().unpark();
+                        }
+                    }
+                    if ui.button("Reset").clicked() {
+                        // Reset logic
+                    }
+
+                    let mut sched = self.scheduler.lock().unwrap();
+
+                    let mut disable_throttle = sched.disable_throttle;
+
+                    if ui
+                        .checkbox(&mut disable_throttle, "Disable Frame Capping")
+                        .changed()
+                    {
+                        sched.disable_throttle = disable_throttle;
+
+                        if !disable_throttle {
+                            sched.reset_timeline();
+                        }
+                    }
+
+                    let current_fps = sched.internal_fps;
+                    drop(sched);
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("| VSYNC/s: : {:.1}", current_fps));
+                        ui.label(format!(
+                            "| GS Resolution: {}x{}",
+                            original_width, original_height
+                        ));
+                        ui.label(format!("Frontend Frame Time: {:.2} ms", delta * 1000.0));
+                    });
+                });
+            });
+
+            egui::CentralPanel::default().show_inside(&mut root_ui, |ui| {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
@@ -685,104 +787,6 @@ impl App {
                         }
                     });
             }
-
-            egui::TopBottomPanel::bottom("EE Taskbar").show(state.egui_renderer.context(), |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(if self.is_paused.load(Ordering::SeqCst) {
-                            "Run"
-                        } else {
-                            "Pause"
-                        })
-                        .clicked()
-                    {
-                        if self.emulation_thread.is_none() {
-                            let mut backend = self.emu_backend.take().unwrap();
-                            let bus_arc = self.bus.clone();
-                            let scheduler_arc = self.scheduler.clone();
-                            let thread = std::thread::spawn(move || {
-                                Scheduler::run_main_loop(&mut *backend, scheduler_arc, bus_arc);
-                            });
-                            self.emulation_thread = Some(thread);
-                        }
-                        let paused = self.is_paused.load(Ordering::SeqCst);
-                        self.is_paused.store(!paused, Ordering::SeqCst);
-                        if paused {
-                            self.emulation_thread.as_ref().unwrap().thread().unpark();
-                        }
-                    }
-                    if ui.button("Reset").clicked() {
-                        // Reset logic
-                    }
-
-                    let mut sched = self.scheduler.lock().unwrap();
-
-                    let mut disable_throttle = sched.disable_throttle;
-
-                    if ui
-                        .checkbox(&mut disable_throttle, "Disable Frame Capping")
-                        .changed()
-                    {
-                        sched.disable_throttle = disable_throttle;
-
-                        if !disable_throttle {
-                            sched.reset_timeline();
-                        }
-                    }
-
-                    let current_fps = sched.internal_fps;
-                    drop(sched);
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("| VSYNC/s: : {:.1}", current_fps));
-                        ui.label(format!(
-                            "| GS Resolution: {}x{}",
-                            original_width, original_height
-                        ));
-                        ui.label(format!("Frontend Frame Time: {:.2} ms", delta * 1000.0));
-                    });
-                });
-            });
-
-            egui::TopBottomPanel::top("Menubar").show(state.egui_renderer.context(), |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Toggle EE State View").clicked() {
-                        self.ee_ctl_display_open = !self.ee_ctl_display_open;
-                    }
-                    if ui.button("Toggle Disassembly").clicked() {
-                        self.disassembly_open = !self.disassembly_open;
-                    }
-                    if ui.button("Toggle RAM View").clicked() {
-                        self.ram_view_open = !self.ram_view_open;
-                    }
-                    if ui.button("Toggle TLB View").clicked() {
-                        self.tlb_view_open = !self.tlb_view_open;
-                    }
-                    if ui.button("View VRAM").clicked() {
-                        self.vram_view_open = !self.vram_view_open;
-                    }
-
-                    ui.separator();
-
-                    ui.label("Renderer:");
-                    let current_label = self.selected_renderer.display_name();
-                    egui::ComboBox::from_id_salt("renderer_selector")
-                        .selected_text(current_label)
-                        .show_ui(ui, |ui| {
-                            for kind in RendererKind::all() {
-                                let label = kind.display_name();
-                                let is_selected = *kind == self.selected_renderer;
-                                if ui.selectable_label(is_selected, label).clicked() && !is_selected
-                                {
-                                    if let Ok(mut bus) = self.bus.lock() {
-                                        bus.gs.swap_renderer(*kind);
-                                    }
-                                    self.selected_renderer = *kind;
-                                }
-                            }
-                        });
-                });
-            });
 
             if self.vram_view_open {
                 let mut bus = self.bus.lock().unwrap();
