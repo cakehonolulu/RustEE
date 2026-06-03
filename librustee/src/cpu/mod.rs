@@ -35,8 +35,8 @@ pub trait CPU {
     fn read128(&mut self, bus: &mut Bus, addr: u32) -> u128;
     fn read32_raw(&mut self, bus: &mut Bus, addr: u32) -> u32;
 
-    fn fetch(&mut self, bus: &mut Bus) -> u32;
-    fn fetch_at(&mut self, bus: &mut Bus, addr: u32) -> u32;
+    fn fetch(&self, bus: &mut Bus) -> u32;
+    fn fetch_at(&self, bus: &mut Bus, addr: u32) -> u32;
 
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);

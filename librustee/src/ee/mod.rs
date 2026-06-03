@@ -332,12 +332,12 @@ impl CPU for EE {
     }
 
     #[inline(always)]
-    fn fetch(&mut self, bus: &mut Bus) -> u32 {
+    fn fetch(&self, bus: &mut Bus) -> u32 {
         (bus.read32)(bus, self.pc.load(Ordering::SeqCst))
     }
 
     #[inline(always)]
-    fn fetch_at(&mut self, bus: &mut Bus, address: u32) -> u32 {
+    fn fetch_at(&self, bus: &mut Bus, address: u32) -> u32 {
         (bus.read32)(bus, address)
     }
 
