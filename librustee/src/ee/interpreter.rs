@@ -71,13 +71,20 @@ impl Interpreter {
         }
     }
 
-    fn do_branch(&mut self, branch_pc: u32, taken: bool, target: u32, is_likely: bool) {
+    fn do_branch(
+        &mut self,
+        bus: &mut Bus,
+        branch_pc: u32,
+        taken: bool,
+        target: u32,
+        is_likely: bool,
+    ) {
         let delay_pc = branch_pc.wrapping_add(4);
 
         if taken || !is_likely {
-            let slot_opcode = self.cpu.fetch_at(delay_pc);
+            let slot_opcode = self.cpu.fetch_at(bus, delay_pc);
             self.cpu.set_pc(delay_pc);
-            self.decode_execute(slot_opcode);
+            self.decode_execute(bus, slot_opcode);
         }
 
         let new_pc = if taken {
@@ -90,112 +97,112 @@ impl Interpreter {
         self.cpu.set_pc(new_pc);
     }
 
-    pub fn decode_execute(&mut self, opcode: u32) {
+    pub fn decode_execute(&mut self, bus: &mut Bus, opcode: u32) {
         let function = opcode >> 26;
         match function {
             0x00 => {
                 let subfunction = opcode & 0x3F;
                 match subfunction {
                     0x00 => {
-                        self.sll(opcode);
+                        self.sll(bus, opcode);
                     }
                     0x02 => {
-                        self.srl(opcode);
+                        self.srl(bus, opcode);
                     }
                     0x03 => {
-                        self.sra(opcode);
+                        self.sra(bus, opcode);
                     }
                     0x04 => {
-                        self.sllv(opcode);
+                        self.sllv(bus, opcode);
                     }
                     0x06 => {
-                        self.srlv(opcode);
+                        self.srlv(bus, opcode);
                     }
                     0x07 => {
-                        self.srav(opcode);
+                        self.srav(bus, opcode);
                     }
                     0x08 => {
-                        self.jr(opcode);
+                        self.jr(bus, opcode);
                     }
                     0x09 => {
-                        self.jalr(opcode);
+                        self.jalr(bus, opcode);
                     }
                     0x0A => {
-                        self.movz(opcode);
+                        self.movz(bus, opcode);
                     }
                     0x0B => {
-                        self.movn(opcode);
+                        self.movn(bus, opcode);
                     }
                     0x0C => {
-                        self.syscall(opcode);
+                        self.syscall(bus, opcode);
                     }
                     0x0D => {
-                        self.break_();
+                        self.break_(bus);
                     }
                     0x0F => {
-                        self.sync();
+                        self.sync(bus);
                     }
                     0x10 => {
-                        self.mfhi(opcode);
+                        self.mfhi(bus, opcode);
                     }
                     0x12 => {
-                        self.mflo(opcode);
+                        self.mflo(bus, opcode);
                     }
                     0x14 => {
-                        self.dsllv(opcode);
+                        self.dsllv(bus, opcode);
                     }
                     0x17 => {
-                        self.dsrav(opcode);
+                        self.dsrav(bus, opcode);
                     }
                     0x18 => {
-                        self.mult(opcode);
+                        self.mult(bus, opcode);
                     }
                     0x1A => {
-                        self.div(opcode);
+                        self.div(bus, opcode);
                     }
                     0x1B => {
-                        self.divu(opcode);
+                        self.divu(bus, opcode);
                     }
                     0x20 => {
-                        self.add(opcode);
+                        self.add(bus, opcode);
                     }
                     0x21 => {
-                        self.addu(opcode);
+                        self.addu(bus, opcode);
                     }
                     0x22 => {
-                        self.sub(opcode);
+                        self.sub(bus, opcode);
                     }
                     0x23 => {
-                        self.subu(opcode);
+                        self.subu(bus, opcode);
                     }
                     0x24 => {
-                        self.and(opcode);
+                        self.and(bus, opcode);
                     }
                     0x25 => {
-                        self.or(opcode);
+                        self.or(bus, opcode);
                     }
                     0x27 => {
-                        self.nor(opcode);
+                        self.nor(bus, opcode);
                     }
-                    0x2A => self.slt(opcode),
-                    0x2B => self.sltu(opcode),
+                    0x2A => self.slt(bus, opcode),
+                    0x2B => self.sltu(bus, opcode),
                     0x2D => {
-                        self.daddu(opcode);
+                        self.daddu(bus, opcode);
                     }
                     0x38 => {
-                        self.dsll(opcode);
+                        self.dsll(bus, opcode);
                     }
                     0x3A => {
-                        self.dsrl(opcode);
+                        self.dsrl(bus, opcode);
                     }
                     0x3C => {
-                        self.dsll32(opcode);
+                        self.dsll32(bus, opcode);
                     }
                     0x3E => {
-                        self.dsrl32(opcode);
+                        self.dsrl32(bus, opcode);
                     }
                     0x3F => {
-                        self.dsra32(opcode);
+                        self.dsra32(bus, opcode);
                     }
                     _ => {
                         error!(
@@ -211,10 +218,10 @@ impl Interpreter {
             0x01 => {
                 let rt = (opcode >> 16) & 0x1F;
                 match rt {
-                    0x00 => self.bltz(opcode),
-                    0x01 => self.bgez(opcode),
-                    0x02 => self.bltzl(opcode),
-                    0x03 => self.bgezl(opcode),
+                    0x00 => self.bltz(bus, opcode),
+                    0x01 => self.bgez(bus, opcode),
+                    0x02 => self.bltzl(bus, opcode),
+                    0x03 => self.bgezl(bus, opcode),
                     _ => {
                         error!(
                             "Unhandled REGIMM instruction with rt=0x{:02X} at PC=0x{:08X}",
@@ -226,64 +233,64 @@ impl Interpreter {
                 }
             }
             0x02 => {
-                self.j(opcode);
+                self.j(bus, opcode);
             }
             0x03 => {
-                self.jal(opcode);
+                self.jal(bus, opcode);
             }
             0x04 => {
-                self.beq(opcode);
+                self.beq(bus, opcode);
             }
             0x05 => {
-                self.bne(opcode);
+                self.bne(bus, opcode);
             }
             0x06 => {
-                self.blez(opcode);
+                self.blez(bus, opcode);
             }
             0x07 => {
-                self.bgtz(opcode);
+                self.bgtz(bus, opcode);
             }
             0x08 => {
-                self.addi(opcode);
+                self.addi(bus, opcode);
             }
             0x09 => {
-                self.addiu(opcode);
+                self.addiu(bus, opcode);
             }
             0x0A => {
-                self.slti(opcode);
+                self.slti(bus, opcode);
             }
             0x0B => {
-                self.sltiu(opcode);
+                self.sltiu(bus, opcode);
             }
             0x0C => {
-                self.andi(opcode);
+                self.andi(bus, opcode);
             }
             0x0D => {
-                self.ori(opcode);
+                self.ori(bus, opcode);
             }
             0x0E => {
-                self.xori(opcode);
+                self.xori(bus, opcode);
             }
             0x0F => {
-                self.lui(opcode);
+                self.lui(bus, opcode);
             }
             0x10 => {
                 let subfunction = (opcode >> 21) & 0x1F;
                 match subfunction {
                     0x00 => {
-                        self.mfc0(opcode);
+                        self.mfc0(bus, opcode);
                     }
                     0x04 => {
-                        self.mtc0(opcode);
+                        self.mtc0(bus, opcode);
                     }
                     0x10 => {
                         let funct = opcode & 0x3F;
 
                         match funct {
-                            0x2 => self.tlbwi(),
-                            0x18 => self.eret(),
-                            0x38 => self.ei(),
-                            0x39 => self.di(),
+                            0x2 => self.tlbwi(bus),
+                            0x18 => self.eret(bus),
+                            0x38 => self.ei(bus),
+                            0x39 => self.di(bus),
                             _ => panic!(
                                 "Unhandled EE Interpreter C0 opcode: 0x{:08X} (Subfunction 0x{:02X}), PC: 0x{:08X}",
                                 opcode,
@@ -310,10 +317,10 @@ impl Interpreter {
                 let subfunction = (opcode >> 21) & 0x1F;
                 match subfunction {
                     0x02 => {
-                        self.cfc2(opcode);
+                        self.cfc2(bus, opcode);
                     }
                     0x06 => {
-                        self.ctc2(opcode);
+                        self.ctc2(bus, opcode);
                     }
                     0x18 => {
                         // TODO: viswr.x
@@ -326,19 +333,19 @@ impl Interpreter {
                 }
             }
             0x14 => {
-                self.beql(opcode);
+                self.beql(bus, opcode);
             }
             0x15 => {
-                self.bnel(opcode);
+                self.bnel(bus, opcode);
             }
             0x19 => {
-                self.daddiu(opcode);
+                self.daddiu(bus, opcode);
             }
             0x1A => {
-                self.ldl(opcode);
+                self.ldl(bus, opcode);
             }
             0x1B => {
-                self.ldr(opcode);
+                self.ldr(bus, opcode);
             }
             0x1C => {
                 let subfunction = opcode & 0x3F;
@@ -348,7 +355,7 @@ impl Interpreter {
                         let mmi2_function = (opcode >> 6) & 0x1F;
 
                         match mmi2_function {
-                            0x0E => self.pcpyld(opcode),
+                            0x0E => self.pcpyld(bus, opcode),
                             _ => {
                                 panic!(
                                     "Unimplemented MMI2 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
@@ -359,19 +366,19 @@ impl Interpreter {
                         }
                     }
                     0x12 => {
-                        self.mflo1(opcode);
+                        self.mflo1(bus, opcode);
                     }
                     0x18 => {
-                        self.mult1(opcode);
+                        self.mult1(bus, opcode);
                     }
                     0x1B => {
-                        self.divu1(opcode);
+                        self.divu1(bus, opcode);
                     }
                     0x28 => {
                         let mmi1_function = (opcode >> 6) & 0x1F;
 
                         match mmi1_function {
-                            0x10 => self.padduw(opcode),
+                            0x10 => self.padduw(bus, opcode),
                             _ => {
                                 panic!(
                                     "Unimplemented MMI1 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
@@ -385,8 +392,8 @@ impl Interpreter {
                         let mmi3_function = (opcode >> 6) & 0x1F;
 
                         match mmi3_function {
-                            0x12 => self.or(opcode),
-                            0x1B => self.pcpyh(opcode),
+                            0x12 => self.or(bus, opcode),
+                            0x1B => self.pcpyh(bus, opcode),
                             _ => {
                                 panic!(
                                     "Unimplemented MMI3 instruction with funct: 0x{:02X}, PC: 0x{:08X}",
@@ -405,55 +412,55 @@ impl Interpreter {
                 }
             }
             0x1E => {
-                self.lq(opcode);
+                self.lq(bus, opcode);
             }
             0x1F => {
-                self.sq(opcode);
+                self.sq(bus, opcode);
             }
             0x20 => {
-                self.lb(opcode);
+                self.lb(bus, opcode);
             }
             0x21 => {
-                self.lh(opcode);
+                self.lh(bus, opcode);
             }
             0x23 => {
-                self.lw(opcode);
+                self.lw(bus, opcode);
             }
             0x24 => {
-                self.lbu(opcode);
+                self.lbu(bus, opcode);
             }
             0x25 => {
-                self.lhu(opcode);
+                self.lhu(bus, opcode);
             }
             0x27 => {
-                self.lwu(opcode);
+                self.lwu(bus, opcode);
             }
             0x28 => {
-                self.sb(opcode);
+                self.sb(bus, opcode);
             }
             0x29 => {
-                self.sh(opcode);
+                self.sh(bus, opcode);
             }
             0x2B => {
-                self.sw(opcode);
+                self.sw(bus, opcode);
             }
             0x2C => {
-                self.sdl(opcode);
+                self.sdl(bus, opcode);
             }
             0x2D => {
-                self.sdr(opcode);
+                self.sdr(bus, opcode);
             }
             0x2F => {
-                self.cache();
+                self.cache(bus);
             }
             0x39 => {
-                self.swc1(opcode);
+                self.swc1(bus, opcode);
             }
             0x37 => {
-                self.ld(opcode);
+                self.ld(bus, opcode);
             }
             0x3F => {
-                self.sd(opcode);
+                self.sd(bus, opcode);
             }
             _ => {
                 error!(
@@ -467,7 +474,7 @@ impl Interpreter {
         }
     }
 
-    fn mfc0(&mut self, opcode: u32) {
+    fn mfc0(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -481,7 +488,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sll(&mut self, opcode: u32) {
+    fn sll(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -495,7 +502,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn slti(&mut self, opcode: u32) {
+    fn slti(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -508,7 +515,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn bne(&mut self, opcode: u32) {
+    fn bne(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
@@ -520,10 +527,10 @@ impl Interpreter {
         let offset = (imm << 2).wrapping_add(4) as u32;
         let target = branch_pc.wrapping_add(offset);
 
-        self.do_branch(branch_pc, taken, target, false);
+        self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn lui(&mut self, opcode: u32) {
+    fn lui(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u32;
 
@@ -533,7 +540,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ori(&mut self, opcode: u32) {
+    fn ori(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u64;
@@ -546,20 +553,20 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn jr(&mut self, opcode: u32) {
+    fn jr(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rs_val = self.cpu.read_register32(rs);
         let target = rs_val & 0xFFFFFFFC;
 
         let delay_pc = self.cpu.pc().wrapping_add(4);
-        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        let slot_opcode = self.cpu.fetch_at(bus, delay_pc);
         self.cpu.set_pc(delay_pc);
-        self.decode_execute(slot_opcode);
+        self.decode_execute(bus, slot_opcode);
 
         self.cpu.set_pc(target);
     }
 
-    fn mtc0(&mut self, opcode: u32) {
+    fn mtc0(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -569,12 +576,12 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sync(&mut self) {
+    fn sync(&mut self, bus: &mut Bus) {
         // TODO: Implement SYNC instruction properly
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn addiu(&mut self, opcode: u32) {
+    fn addiu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -586,7 +593,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sw(&mut self, opcode: u32) {
+    fn sw(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -596,12 +603,12 @@ impl Interpreter {
 
         let address = rs_val.wrapping_add(imm as u32);
 
-        self.cpu.write32(address, rt_val);
+        self.cpu.write32(bus, address, rt_val);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn tlbwi(&mut self) {
+    fn tlbwi(&mut self, bus: &mut Bus) {
         let index = (self.cpu.read_cop0_register(0) & 0x3F) as usize;
 
         let entry_hi = self.cpu.read_cop0_register(10);
@@ -647,13 +654,11 @@ impl Interpreter {
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
 
-        let bus = self.cpu.bus_ptr.0;
-        let bus_ptr: *mut Bus = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let tlb = unsafe { &mut (*bus).tlb };
-        tlb.write_tlb_entry(bus_ptr, index, new_entry);
+        let bus_ptr = bus as *mut Bus;
+        bus.tlb.write_tlb_entry(bus_ptr, index, new_entry);
     }
 
-    fn lw(&mut self, opcode: u32) {
+    fn lw(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -663,14 +668,14 @@ impl Interpreter {
         let address = rs_val.wrapping_add(imm as u32);
 
         {
-            let loaded_word = self.cpu.read32(address);
+            let loaded_word = self.cpu.read32(bus, address);
 
             self.cpu.write_register32(rt, loaded_word);
         }
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn jalr(&mut self, opcode: u32) {
+    fn jalr(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -678,16 +683,16 @@ impl Interpreter {
         let return_addr = self.cpu.pc().wrapping_add(8);
 
         let delay_pc = self.cpu.pc().wrapping_add(4);
-        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        let slot_opcode = self.cpu.fetch_at(bus, delay_pc);
         self.cpu.set_pc(delay_pc);
-        self.decode_execute(slot_opcode);
+        self.decode_execute(bus, slot_opcode);
 
         self.cpu.write_register32(rd, return_addr);
 
         self.cpu.set_pc(target);
     }
 
-    fn sd(&mut self, opcode: u32) {
+    fn sd(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -697,12 +702,12 @@ impl Interpreter {
 
         let value = (self.cpu.read_register(rt) & 0xFFFF_FFFF_FFFF_FFFF) as u64;
 
-        self.cpu.write64(addr, value);
+        self.cpu.write64(bus, addr, value);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn daddu(&mut self, opcode: u32) {
+    fn daddu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -716,7 +721,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn jal(&mut self, opcode: u32) {
+    fn jal(&mut self, bus: &mut Bus, opcode: u32) {
         let pc = self.cpu.pc();
         let target = pc.wrapping_add(4) & 0xF000_0000;
         let jump_addr = target | ((opcode & 0x03FFFFFF) << 2);
@@ -725,14 +730,14 @@ impl Interpreter {
         self.cpu.write_register64(31, next_pc as u64);
 
         let delay_pc = self.cpu.pc().wrapping_add(4);
-        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        let slot_opcode = self.cpu.fetch_at(bus, delay_pc);
         self.cpu.set_pc(delay_pc);
-        self.decode_execute(slot_opcode);
+        self.decode_execute(bus, slot_opcode);
 
         self.cpu.set_pc(jump_addr);
     }
 
-    fn andi(&mut self, opcode: u32) {
+    fn andi(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u64;
@@ -744,7 +749,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn beq(&mut self, opcode: u32) {
+    fn beq(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
@@ -755,10 +760,10 @@ impl Interpreter {
         let taken = rs_val == rt_val;
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
 
-        self.do_branch(branch_pc, taken, target, false);
+        self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn or(&mut self, opcode: u32) {
+    fn or(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -771,7 +776,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mult(&mut self, opcode: u32) {
+    fn mult(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -796,7 +801,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn divu(&mut self, opcode: u32) {
+    fn divu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -814,7 +819,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn beql(&mut self, opcode: u32) {
+    fn beql(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
@@ -823,21 +828,21 @@ impl Interpreter {
         let rt_val = self.cpu.read_register32(rt) as i32;
         let taken = rs_val == rt_val;
         let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
-        self.do_branch(branch_pc, taken, target, true);
+        self.do_branch(bus, branch_pc, taken, target, true);
     }
 
-    fn break_(&mut self) {
+    fn break_(&mut self, bus: &mut Bus) {
         panic!("MIPS BREAK instruction executed at 0x{:08X}", self.cpu.pc());
     }
 
-    fn mflo(&mut self, opcode: u32) {
+    fn mflo(&mut self, bus: &mut Bus, opcode: u32) {
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let lo_val = self.cpu.read_lo();
         self.cpu.write_register64(rd, lo_val as u64);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sltiu(&mut self, opcode: u32) {
+    fn sltiu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i64;
@@ -850,7 +855,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn bnel(&mut self, opcode: u32) {
+    fn bnel(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
@@ -861,10 +866,10 @@ impl Interpreter {
         let taken = rs_val != rt_val;
         let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
 
-        self.do_branch(branch_pc, taken, target, true);
+        self.do_branch(bus, branch_pc, taken, target, true);
     }
 
-    fn lb(&mut self, opcode: u32) {
+    fn lb(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -872,7 +877,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_byte = self.cpu.read8(address);
+        let loaded_byte = self.cpu.read8(bus, address);
 
         let result = loaded_byte as i8 as i64 as u64;
         self.cpu.write_register64(rt, result);
@@ -880,7 +885,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn swc1(&mut self, opcode: u32) {
+    fn swc1(&mut self, bus: &mut Bus, opcode: u32) {
         let base = ((opcode >> 21) & 0x1F) as usize;
         let ft = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -890,12 +895,12 @@ impl Interpreter {
 
         let fpu_val = self.cpu.read_fpu_register_as_u32(ft);
 
-        self.cpu.write32(address, fpu_val);
+        self.cpu.write32(bus, address, fpu_val);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    pub fn lbu(&mut self, opcode: u32) {
+    pub fn lbu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -903,7 +908,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_byte = self.cpu.read8(address);
+        let loaded_byte = self.cpu.read8(bus, address);
 
         let result = loaded_byte as u64;
         self.cpu.write_register64(rt, result);
@@ -911,7 +916,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    pub fn sra(&mut self, opcode: u32) {
+    pub fn sra(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -923,7 +928,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ld(&mut self, opcode: u32) {
+    fn ld(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -931,26 +936,26 @@ impl Interpreter {
         let base = (self.cpu.read_register(rs) & 0xFFFF_FFFF) as u32;
         let addr = base.wrapping_add(imm as u32);
 
-        let loaded_value = self.cpu.read64(addr);
+        let loaded_value = self.cpu.read64(bus, addr);
 
         self.cpu.write_register64(rt, loaded_value);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn j(&mut self, opcode: u32) {
+    fn j(&mut self, bus: &mut Bus, opcode: u32) {
         let pc = self.cpu.pc();
         let target = pc.wrapping_add(4) & 0xF000_0000;
         let jump_addr = target | ((opcode & 0x03FFFFFF) << 2);
 
         let delay_pc = self.cpu.pc().wrapping_add(4);
-        let slot_opcode = self.cpu.fetch_at(delay_pc);
+        let slot_opcode = self.cpu.fetch_at(bus, delay_pc);
         self.cpu.set_pc(delay_pc);
-        self.decode_execute(slot_opcode);
+        self.decode_execute(bus, slot_opcode);
 
         self.cpu.set_pc(jump_addr);
     }
 
-    fn sb(&mut self, opcode: u32) {
+    fn sb(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -960,11 +965,11 @@ impl Interpreter {
 
         let address = rs_val.wrapping_add(imm as u32);
 
-        self.cpu.write8(address, rt_val as u8);
+        self.cpu.write8(bus, address, rt_val as u8);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn addu(&mut self, opcode: u32) {
+    fn addu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -977,7 +982,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn bgez(&mut self, opcode: u32) {
+    fn bgez(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -986,10 +991,10 @@ impl Interpreter {
         let taken = rs_val >= 0;
 
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
-        self.do_branch(branch_pc, taken, target, false);
+        self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn div(&mut self, opcode: u32) {
+    fn div(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -1016,7 +1021,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mfhi(&mut self, opcode: u32) {
+    fn mfhi(&mut self, bus: &mut Bus, opcode: u32) {
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
         let hi_val = self.cpu.read_hi();
@@ -1025,7 +1030,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sltu(&mut self, opcode: u32) {
+    fn sltu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1040,7 +1045,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn blez(&mut self, opcode: u32) {
+    fn blez(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let imm = (opcode as u16) as i16 as i32;
@@ -1050,10 +1055,10 @@ impl Interpreter {
 
         let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
 
-        self.do_branch(branch_pc, taken, target, false);
+        self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn subu(&mut self, opcode: u32) {
+    fn subu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1068,7 +1073,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn bgtz(&mut self, opcode: u32) {
+    fn bgtz(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let imm = (opcode as u16) as i16 as i32;
@@ -1078,10 +1083,10 @@ impl Interpreter {
 
         let target = branch_pc.wrapping_add(4).wrapping_add((imm << 2) as u32);
 
-        self.do_branch(branch_pc, taken, target, false);
+        self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn movn(&mut self, opcode: u32) {
+    fn movn(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1094,7 +1099,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn slt(&mut self, opcode: u32) {
+    fn slt(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1109,7 +1114,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn and(&mut self, opcode: u32) {
+    fn and(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1124,7 +1129,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn srl(&mut self, opcode: u32) {
+    fn srl(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = ((opcode >> 6) & 0x1F) as u32;
@@ -1137,7 +1142,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn lhu(&mut self, opcode: u32) {
+    fn lhu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1145,7 +1150,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_byte = self.cpu.read16(address);
+        let loaded_byte = self.cpu.read16(bus, address);
 
         let result = loaded_byte as u64;
         self.cpu.write_register64(rt, result);
@@ -1153,7 +1158,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn bltz(&mut self, opcode: u32) {
+    fn bltz(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1162,10 +1167,10 @@ impl Interpreter {
         let taken = rs_val < 0;
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
 
-        self.do_branch(branch_pc, taken, target, false);
+        self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn bltzl(&mut self, opcode: u32) {
+    fn bltzl(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1174,10 +1179,10 @@ impl Interpreter {
         let taken = rs_val < 0;
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
 
-        self.do_branch(branch_pc, taken, target, true);
+        self.do_branch(bus, branch_pc, taken, target, true);
     }
 
-    fn bgezl(&mut self, opcode: u32) {
+    fn bgezl(&mut self, bus: &mut Bus, opcode: u32) {
         let branch_pc = self.cpu.pc();
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1186,10 +1191,10 @@ impl Interpreter {
         let taken = rs_val >= 0;
         let target = branch_pc.wrapping_add(((imm << 2) + 4) as u32);
 
-        self.do_branch(branch_pc, taken, target, true);
+        self.do_branch(bus, branch_pc, taken, target, true);
     }
 
-    fn sh(&mut self, opcode: u32) {
+    fn sh(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1198,11 +1203,11 @@ impl Interpreter {
         let rt_val = self.cpu.read_register32(rt);
         let address = rs_val.wrapping_add(imm as u32);
 
-        self.cpu.write16(address, rt_val as u16);
+        self.cpu.write16(bus, address, rt_val as u16);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn divu1(&mut self, opcode: u32) {
+    fn divu1(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -1231,7 +1236,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mtlo1(&mut self, opcode: u32) {
+    fn mtlo1(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
 
         let rs_val = self.cpu.read_register32(rs) as i64 as u64;
@@ -1242,7 +1247,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mflo1(&mut self, opcode: u32) {
+    fn mflo1(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 11) & 0x1F) as usize;
 
         let lo_u64 = (self.cpu.read_lo() >> 64) as u64;
@@ -1252,7 +1257,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsrav(&mut self, opcode: u32) {
+    fn dsrav(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1265,7 +1270,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsll32(&mut self, opcode: u32) {
+    fn dsll32(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -1278,7 +1283,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsra32(&mut self, opcode: u32) {
+    fn dsra32(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -1291,7 +1296,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn xori(&mut self, opcode: u32) {
+    fn xori(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u64;
@@ -1303,7 +1308,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mult1(&mut self, opcode: u32) {
+    fn mult1(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1338,7 +1343,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn movz(&mut self, opcode: u32) {
+    fn movz(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1351,7 +1356,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsrl(&mut self, opcode: u32) {
+    fn dsrl(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = ((opcode >> 6) & 0x1F) as u32;
@@ -1362,7 +1367,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn daddiu(&mut self, opcode: u32) {
+    fn daddiu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i64;
@@ -1373,7 +1378,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsllv(&mut self, opcode: u32) {
+    fn dsllv(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1385,7 +1390,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn lq(&mut self, opcode: u32) {
+    fn lq(&mut self, bus: &mut Bus, opcode: u32) {
         let base = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let offset = (opcode as i16) as i32;
@@ -1394,13 +1399,13 @@ impl Interpreter {
         let vaddr = base_val.wrapping_add(offset as u32);
         let aligned_addr = vaddr & !0xF;
 
-        let value = self.cpu.read128(aligned_addr);
+        let value = self.cpu.read128(bus, aligned_addr);
 
         self.cpu.write_register(rt, value.into());
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sq(&mut self, opcode: u32) {
+    fn sq(&mut self, bus: &mut Bus, opcode: u32) {
         let base = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let offset = (opcode as i16) as i32;
@@ -1411,12 +1416,12 @@ impl Interpreter {
 
         let value = self.cpu.read_register(rt);
 
-        self.cpu.write128(aligned_addr, value);
+        self.cpu.write128(bus, aligned_addr, value);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn lh(&mut self, opcode: u32) {
+    fn lh(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1424,7 +1429,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_halfword = self.cpu.read16(address);
+        let loaded_halfword = self.cpu.read16(bus, address);
 
         let result = loaded_halfword as i16 as i64 as u64;
         self.cpu.write_register64(rt, result);
@@ -1432,12 +1437,12 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn cache(&mut self) {
+    fn cache(&mut self, bus: &mut Bus) {
         // TODO: Implement CACHE instruction properly
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sllv(&mut self, opcode: u32) {
+    fn sllv(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1449,7 +1454,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsll(&mut self, opcode: u32) {
+    fn dsll(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -1462,7 +1467,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn srav(&mut self, opcode: u32) {
+    fn srav(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1475,7 +1480,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn nor(&mut self, opcode: u32) {
+    fn nor(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1488,7 +1493,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn cfc2(&mut self, opcode: u32) {
+    fn cfc2(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let vi = ((opcode >> 11) & 0x1F) as usize;
 
@@ -1503,7 +1508,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ctc2(&mut self, opcode: u32) {
+    fn ctc2(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let vi = ((opcode >> 11) & 0x1F) as usize;
 
@@ -1516,7 +1521,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn lwu(&mut self, opcode: u32) {
+    fn lwu(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1524,7 +1529,7 @@ impl Interpreter {
         let rs_val = self.cpu.read_register32(rs);
         let address = rs_val.wrapping_add(imm as u32);
 
-        let loaded_word = self.cpu.read32(address);
+        let loaded_word = self.cpu.read32(bus, address);
 
         let result = loaded_word as u64;
         self.cpu.write_register64(rt, result);
@@ -1532,7 +1537,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ldl(&mut self, opcode: u32) {
+    fn ldl(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1542,7 +1547,7 @@ impl Interpreter {
         let byte = v_addr & 0x7; // 0..7
         let p_addr = v_addr & !0x7;
 
-        let mem_quad = self.cpu.read64(p_addr);
+        let mem_quad = self.cpu.read64(bus, p_addr);
 
         let rt_val = self.cpu.read_register64(rt);
         let shift = (7 - byte) * 8; // max (7-0)*8 = 56
@@ -1554,7 +1559,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ldr(&mut self, opcode: u32) {
+    fn ldr(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1564,7 +1569,7 @@ impl Interpreter {
         let byte = v_addr & 0x7; // 0..7
         let p_addr = v_addr & !0x7;
 
-        let mem_quad = self.cpu.read64(p_addr);
+        let mem_quad = self.cpu.read64(bus, p_addr);
 
         let rt_val = self.cpu.read_register64(rt);
         let shift = byte * 8; // max 56
@@ -1584,7 +1589,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sdl(&mut self, opcode: u32) {
+    fn sdl(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1598,11 +1603,11 @@ impl Interpreter {
         let shift = (7 - byte) * 8; // max 56
         let data_quad = rt_val >> shift;
 
-        self.cpu.write64(p_addr, data_quad);
+        self.cpu.write64(bus, p_addr, data_quad);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sdr(&mut self, opcode: u32) {
+    fn sdr(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1616,12 +1621,12 @@ impl Interpreter {
         let shift = byte * 8; // max 56
         let data_quad = rt_val << shift;
 
-        self.cpu.write64(p_addr, data_quad);
+        self.cpu.write64(bus, p_addr, data_quad);
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn srlv(&mut self, opcode: u32) {
+    fn srlv(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize; // shift‐amount register
         let rt = ((opcode >> 16) & 0x1F) as usize; // value register
         let rd = ((opcode >> 11) & 0x1F) as usize; // destination
@@ -1638,7 +1643,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsrl32(&mut self, opcode: u32) {
+    fn dsrl32(&mut self, bus: &mut Bus, opcode: u32) {
         // decode fields
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1656,7 +1661,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn padduw(&mut self, opcode: u32) {
+    fn padduw(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1692,7 +1697,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn di(&mut self) {
+    fn di(&mut self, bus: &mut Bus) {
         let status = self.cpu.read_cop0_register(12);
         let edi = (status >> 17) & 0x1;
         let exl = (status >> 1) & 0x1; // Bit 1: EXL
@@ -1707,7 +1712,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn eret(&mut self) {
+    fn eret(&mut self, bus: &mut Bus) {
         let status = self.cpu.read_cop0_register(12); // Status register
         let erl = (status >> 2) & 0x1; // Bit 2
         if erl == 1 {
@@ -1726,7 +1731,7 @@ impl Interpreter {
             let elf_bytes = fs::read(&self.cpu.elf_path)
                 .unwrap_or_else(|e| panic!("Failed to read ELF '{}': {}", self.cpu.elf_path, e));
 
-            self.cpu.load_elf(&elf_bytes);
+            self.cpu.load_elf(bus, &elf_bytes);
 
             self.cpu.sideload_elf = false;
             self.cpu
@@ -1735,7 +1740,7 @@ impl Interpreter {
         }
     }
 
-    fn syscall(&mut self, opcode: u32) {
+    fn syscall(&mut self, bus: &mut Bus, opcode: u32) {
         let code = (opcode >> 6) & 0xFFFFF;
 
         let status = self.cpu.read_cop0_register(12);
@@ -1753,7 +1758,7 @@ impl Interpreter {
         self.cpu.set_pc(exception_vector);
     }
 
-    fn sub(&mut self, opcode: u32) {
+    fn sub(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1785,7 +1790,7 @@ impl Interpreter {
         }
     }
 
-    fn add(&mut self, opcode: u32) {
+    fn add(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1817,7 +1822,7 @@ impl Interpreter {
         }
     }
 
-    fn addi(&mut self, opcode: u32) {
+    fn addi(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1848,7 +1853,7 @@ impl Interpreter {
         }
     }
 
-    fn ei(&mut self) {
+    fn ei(&mut self, bus: &mut Bus) {
         let status = self.cpu.read_cop0_register(12);
         let edi = (status >> 17) & 0x1;
         let exl = (status >> 1) & 0x1; // Bit 1: EXL
@@ -1863,7 +1868,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn pcpyh(&mut self, opcode: u32) {
+    fn pcpyh(&mut self, bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -1882,7 +1887,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn pcpyld(&mut self, opcode: u32) {
+    fn pcpyld(&mut self, bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1901,7 +1906,7 @@ impl Interpreter {
 }
 
 impl EmulationBackend<EE> for Interpreter {
-    fn step(&mut self) {
+    fn step(&mut self, bus: &mut Bus) {
         if self.cpu.has_breakpoint(self.cpu.pc.load(Ordering::Relaxed)) {
             debug!(
                 "Breakpoint hit at 0x{:08X}",
@@ -1912,20 +1917,20 @@ impl EmulationBackend<EE> for Interpreter {
             return;
         }
 
-        let opcode = self.cpu.fetch();
+        let opcode = self.cpu.fetch(bus);
 
-        self.decode_execute(opcode);
+        self.decode_execute(bus, opcode);
 
         self.cycles += self.get_instruction_cycles(opcode) as usize;
     }
 
-    fn run(&mut self) {
+    fn run(&mut self, bus: &mut Bus) {
         loop {
             if self.cpu.is_paused.load(Ordering::Relaxed) {
                 std::thread::park();
             }
 
-            self.step();
+            self.step(bus);
 
             if self.cpu.has_breakpoint(self.cpu.pc.load(Ordering::Relaxed)) {
                 debug!(
@@ -1939,13 +1944,13 @@ impl EmulationBackend<EE> for Interpreter {
         }
     }
 
-    fn run_for_cycles(&mut self, cycles: u64) -> u64 {
+    fn run_for_cycles(&mut self, bus: &mut Bus, cycles: u64) -> u64 {
         let mut executed_cycles = 0;
 
         while executed_cycles < cycles {
-            let opcode = self.cpu.fetch();
+            let opcode = self.cpu.fetch(bus);
 
-            self.decode_execute(opcode);
+            self.decode_execute(bus, opcode);
 
             let instruction_cycles = self.get_instruction_cycles(opcode);
             executed_cycles += instruction_cycles as u64;

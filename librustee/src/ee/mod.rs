@@ -28,10 +28,7 @@ use tracing::{error, info};
 
 const EE_RESET_VEC: u32 = 0xBFC00000;
 
-#[derive(Copy, Clone)]
-struct UnsafeSend<T>(T);
-unsafe impl<T> Send for UnsafeSend<T> {}
-
+#[derive(Clone)]
 pub struct EE {
     pub pc: Arc<AtomicU32>,
     pub registers: Arc<[AtomicU128; 32]>,
@@ -46,10 +43,9 @@ pub struct EE {
     elf_entry_point: u32,
     pub elf_path: String,
     pub is_paused: Arc<AtomicBool>,
-    bus_ptr: UnsafeSend<*mut Bus>,
 }
 
-impl Clone for EE {
+/*impl Clone for EE {
     fn clone(&self) -> EE {
         EE {
             pc: self.pc.clone(),
@@ -65,13 +61,12 @@ impl Clone for EE {
             elf_entry_point: self.elf_entry_point,
             elf_path: self.elf_path.clone(),
             is_paused: self.is_paused.clone(),
-            bus_ptr: self.bus_ptr,
         }
     }
-}
+}*/
 
 impl EE {
-    pub fn new(bus_ptr: *mut Bus, cop0_registers: Arc<[AtomicU32; 32]>) -> Self {
+    pub fn new(cop0_registers: Arc<[AtomicU32; 32]>) -> Self {
         cop0_registers[15].store(0x59, Ordering::Relaxed);
 
         let registers = Arc::new(std::array::from_fn(|_| AtomicU128::new(0u128)));
@@ -91,7 +86,6 @@ impl EE {
             elf_entry_point: 0,
             elf_path: "".to_string(),
             is_paused: Arc::new(AtomicBool::new(true)),
-            bus_ptr: UnsafeSend(bus_ptr),
         }
     }
 
@@ -111,7 +105,7 @@ impl EE {
         self.fpu_registers[index].store(value.to_bits(), Ordering::Relaxed)
     }
 
-    pub fn load_elf(&mut self, elf_data: &[u8]) {
+    pub fn load_elf(&mut self, bus: &mut Bus, elf_data: &[u8]) {
         // Parse ELF
         let elf = match Elf::parse(elf_data) {
             Ok(e) => e,
@@ -126,9 +120,6 @@ impl EE {
             elf.header.e_entry,
             elf.program_headers.len()
         );
-
-        // Grab a mutable reference to Bus unsafely
-        let bus = unsafe { &mut *self.bus_ptr.0 };
 
         // Iterate all PT_LOAD segments
         for (i, phdr) in elf.program_headers.iter().enumerate() {
@@ -275,59 +266,57 @@ impl CPU for EE {
         self.cop0_registers[index].store(value, Ordering::Relaxed);
     }
 
-    fn write8(&mut self, addr: u32, value: u8) {
-        unsafe { ((*self.bus_ptr.0).write8)(&mut *self.bus_ptr.0, addr, value) }
+    fn write8(&mut self, bus: &mut Bus, addr: u32, value: u8) {
+        (bus.write8)(bus, addr, value);
     }
 
-    fn write16(&mut self, addr: u32, value: u16) {
-        unsafe { ((*self.bus_ptr.0).write16)(&mut *self.bus_ptr.0, addr, value) }
+    fn write16(&mut self, bus: &mut Bus, addr: u32, value: u16) {
+        (bus.write16)(bus, addr, value);
     }
 
-    fn write32(&mut self, addr: u32, value: u32) {
-        unsafe { ((*self.bus_ptr.0).write32)(&mut *self.bus_ptr.0, addr, value) }
+    fn write32(&mut self, bus: &mut Bus, addr: u32, value: u32) {
+        (bus.write32)(bus, addr, value);
     }
 
-    fn write64(&mut self, addr: u32, value: u64) {
-        unsafe { ((*self.bus_ptr.0).write64)(&mut *self.bus_ptr.0, addr, value) }
+    fn write64(&mut self, bus: &mut Bus, addr: u32, value: u64) {
+        (bus.write64)(bus, addr, value);
     }
 
-    fn write128(&mut self, addr: u32, value: u128) {
-        unsafe { ((*self.bus_ptr.0).write128)(&mut *self.bus_ptr.0, addr, value) }
+    fn write128(&mut self, bus: &mut Bus, addr: u32, value: u128) {
+        (bus.write128)(bus, addr, value);
     }
 
-    fn read8(&mut self, addr: u32) -> u8 {
-        unsafe { ((*self.bus_ptr.0).read8)(&mut *self.bus_ptr.0, addr) }
+    fn read8(&mut self, bus: &mut Bus, addr: u32) -> u8 {
+        (bus.read8)(bus, addr)
     }
 
-    fn read16(&mut self, addr: u32) -> u16 {
-        unsafe { ((*self.bus_ptr.0).read16)(&mut *self.bus_ptr.0, addr) }
+    fn read16(&mut self, bus: &mut Bus, addr: u32) -> u16 {
+        (bus.read16)(bus, addr)
     }
 
-    fn read32(&mut self, addr: u32) -> u32 {
-        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, addr) }
+    fn read32(&mut self, bus: &mut Bus, addr: u32) -> u32 {
+        (bus.read32)(bus, addr)
     }
 
-    fn read64(&mut self, addr: u32) -> u64 {
-        unsafe { ((*self.bus_ptr.0).read64)(&mut *self.bus_ptr.0, addr) }
+    fn read64(&mut self, bus: &mut Bus, addr: u32) -> u64 {
+        (bus.read64)(bus, addr)
     }
 
-    fn read128(&mut self, addr: u32) -> u128 {
-        unsafe { ((*self.bus_ptr.0).read128)(&mut *self.bus_ptr.0, addr) }
+    fn read128(&mut self, bus: &mut Bus, addr: u32) -> u128 {
+        (bus.read128)(bus, addr)
     }
 
-    fn read32_raw(&mut self, addr: u32) -> u32 {
-        let cop0_asid = {
-            let bus = unsafe { &mut *self.bus_ptr.0 };
-            bus.read_cop0_asid()
-        };
-        let bus = unsafe { &mut *self.bus_ptr.0 };
-        let tlb = &mut (*bus).tlb;
+    fn read32_raw(&mut self, bus: &mut Bus, addr: u32) -> u32 {
+        let cop0_asid = bus.read_cop0_asid();
         let operating_mode = bus.operating_mode;
-        let pa = match tlb.translate_address(addr, AccessType::ReadWord, operating_mode, cop0_asid)
-        {
-            Ok(pa) => pa,
-            Err(_) => return 0,
-        };
+        let pa =
+            match bus
+                .tlb
+                .translate_address(addr, AccessType::ReadWord, operating_mode, cop0_asid)
+            {
+                Ok(pa) => pa,
+                Err(_) => return 0,
+            };
 
         if let Some(offset) = map::RAM.contains(pa) {
             let ptr = unsafe { bus.ram.as_ptr().add(offset as usize) } as *const u32;
@@ -343,13 +332,13 @@ impl CPU for EE {
     }
 
     #[inline(always)]
-    fn fetch(&mut self) -> u32 {
-        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, self.pc.load(Ordering::SeqCst)) }
+    fn fetch(&mut self, bus: &mut Bus) -> u32 {
+        (bus.read32)(bus, self.pc.load(Ordering::SeqCst))
     }
 
     #[inline(always)]
-    fn fetch_at(&mut self, address: u32) -> u32 {
-        unsafe { ((*self.bus_ptr.0).read32)(&mut *self.bus_ptr.0, address) }
+    fn fetch_at(&mut self, bus: &mut Bus, address: u32) -> u32 {
+        (bus.read32)(bus, address)
     }
 
     fn add_breakpoint(&mut self, addr: u32) {
@@ -364,5 +353,3 @@ impl CPU for EE {
         self.breakpoints.contains(&addr)
     }
 }
-
-unsafe impl Send for EE {}

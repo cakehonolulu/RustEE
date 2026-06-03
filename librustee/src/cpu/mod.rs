@@ -1,3 +1,5 @@
+use crate::Bus;
+
 pub trait CPU {
     type RegisterType;
 
@@ -21,20 +23,20 @@ pub trait CPU {
     fn read_cop0_register(&self, index: usize) -> u32;
     fn write_cop0_register(&mut self, index: usize, value: u32);
 
-    fn write8(&mut self, addr: u32, value: u8);
-    fn write16(&mut self, addr: u32, value: u16);
-    fn write32(&mut self, addr: u32, value: u32);
-    fn write64(&mut self, addr: u32, value: u64);
-    fn write128(&mut self, addr: u32, value: u128);
-    fn read8(&mut self, addr: u32) -> u8;
-    fn read16(&mut self, addr: u32) -> u16;
-    fn read32(&mut self, addr: u32) -> u32;
-    fn read64(&mut self, addr: u32) -> u64;
-    fn read128(&mut self, addr: u32) -> u128;
-    fn read32_raw(&mut self, addr: u32) -> u32;
+    fn write8(&mut self, bus: &mut Bus, addr: u32, value: u8);
+    fn write16(&mut self, bus: &mut Bus, addr: u32, value: u16);
+    fn write32(&mut self, bus: &mut Bus, addr: u32, value: u32);
+    fn write64(&mut self, bus: &mut Bus, addr: u32, value: u64);
+    fn write128(&mut self, bus: &mut Bus, addr: u32, value: u128);
+    fn read8(&mut self, bus: &mut Bus, addr: u32) -> u8;
+    fn read16(&mut self, bus: &mut Bus, addr: u32) -> u16;
+    fn read32(&mut self, bus: &mut Bus, addr: u32) -> u32;
+    fn read64(&mut self, bus: &mut Bus, addr: u32) -> u64;
+    fn read128(&mut self, bus: &mut Bus, addr: u32) -> u128;
+    fn read32_raw(&mut self, bus: &mut Bus, addr: u32) -> u32;
 
-    fn fetch(&mut self) -> u32;
-    fn fetch_at(&mut self, addr: u32) -> u32;
+    fn fetch(&mut self, bus: &mut Bus) -> u32;
+    fn fetch_at(&mut self, bus: &mut Bus, addr: u32) -> u32;
 
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);
@@ -42,9 +44,9 @@ pub trait CPU {
 }
 
 pub trait EmulationBackend<C> {
-    fn step(&mut self);
-    fn run(&mut self);
-    fn run_for_cycles(&mut self, cycles: u64) -> u64;
+    fn step(&mut self, bus: &mut Bus);
+    fn run(&mut self, bus: &mut Bus);
+    fn run_for_cycles(&mut self, bus: &mut Bus, cycles: u64) -> u64;
 
     fn get_cpu(&mut self) -> &mut C;
 }

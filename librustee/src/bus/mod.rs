@@ -8,7 +8,7 @@ use portable_atomic::AtomicU32;
 use std::os::fd::OwnedFd;
 #[cfg(windows)]
 use std::os::windows::raw::HANDLE;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub mod backpatch;
@@ -45,7 +45,7 @@ pub mod unix;
 #[cfg(windows)]
 mod windows;
 
-pub(crate) static mut BUS_PTR: *mut Bus = std::ptr::null_mut();
+pub(crate) static BUS_PTR: AtomicPtr<Bus> = AtomicPtr::new(std::ptr::null_mut());
 
 static HW_BASE: AtomicUsize = AtomicUsize::new(0);
 static HW_LENGTH: AtomicUsize = AtomicUsize::new(0);
@@ -256,9 +256,7 @@ impl Bus {
             }
         }
 
-        unsafe {
-            BUS_PTR = &mut *bus as *mut Bus;
-        }
+        BUS_PTR.store(&mut *bus as *mut Bus, Ordering::Release);
 
         info!("Bus initialized with mode: {:?}", mode);
         bus

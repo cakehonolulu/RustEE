@@ -103,12 +103,7 @@ fn main() {
         );
         let bus = Arc::new(Mutex::new(bus_box));
 
-        let bus_ptr = {
-            let mut guard = bus.lock().unwrap();
-            &mut **guard as *mut Bus
-        };
-
-        let mut ee_obj = EE::new(bus_ptr, Arc::clone(&cop0_registers));
+        let mut ee_obj = EE::new(Arc::clone(&cop0_registers));
 
         if let Some(breakpoints) = arguments.get_one::<Vec<u32>>("ee-breakpoint") {
             for &addr in breakpoints {

@@ -1,6 +1,6 @@
 use capstone::Insn;
 use std::ffi::c_void;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use capstone::arch::BuildsCapstone;
 use capstone::{Capstone, arch::DetailsArchInsn};
@@ -755,7 +755,7 @@ pub unsafe fn execute_stub<H: ArchHandler<Register = x86_64_impl::X86Register>>(
     fault_addr: u32,
 ) {
     unsafe {
-        let bus_ptr = super::BUS_PTR as *mut Bus;
+        let bus_ptr = super::BUS_PTR.load(Ordering::Acquire);
         let addr = fault_addr;
 
         use AccessKind::*;

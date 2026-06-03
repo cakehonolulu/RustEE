@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, ptr::NonNull};
 
 use crate::{
+    Bus,
     bus::BusMode,
     cpu::{CPU, EmulationBackend},
     ee::{EE, Interpreter, JIT},
@@ -93,20 +94,23 @@ impl TestRunner {
         for mode in &self.modes {
             let tag = format!("[{mode:?}]");
 
-            let (mut ee_i, _bus_i) = make_ee(make_bios(spec.asm), mode.clone());
+            let (mut ee_i, bus_i) = make_ee(make_bios(spec.asm), mode.clone());
             apply_init(&mut ee_i, spec);
             ee_i.set_pc(0xBFC00000);
             let mut interp = Interpreter::new(ee_i);
+            let mut bus_i_guard = bus_i.lock().unwrap();
             for _ in 0..n {
-                interp.step();
+                interp.step(&mut *bus_i_guard);
             }
 
-            let (mut ee_j, _bus_j) = make_ee(make_bios(spec.asm), mode.clone());
+            let (mut ee_j, mut bus_j) = make_ee(make_bios(spec.asm), mode.clone());
             apply_init(&mut ee_j, spec);
             ee_j.set_pc(0xBFC00000);
-            let mut jit = JIT::new(ee_j);
+            let mut bus_j_guard = bus_j.lock().unwrap();
+            let bus_j_ptr = NonNull::new(&mut *bus_j_guard as *mut Bus);
+            let mut jit = JIT::new(ee_j, bus_j_ptr.unwrap());
             for _ in 0..n {
-                jit.step();
+                jit.step(&mut *bus_j_guard);
             }
 
             diff_vs_golden(&tag, "interp", &interp.cpu, &golden, spec, &mut errors);

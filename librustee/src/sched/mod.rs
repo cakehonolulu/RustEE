@@ -104,7 +104,7 @@ impl Scheduler {
 
         let cycles_to_run = scheduler.cycles_for_next_timeslice();
         if cycles_to_run > 0 {
-            backend.run_for_cycles(cycles_to_run);
+            backend.run_for_cycles(bus, cycles_to_run);
         }
 
         scheduler.advance_cycles(cycles_to_run);
@@ -134,20 +134,26 @@ impl Scheduler {
         loop {
             let cycles_to_run = { scheduler_arc.lock().unwrap().cycles_for_next_timeslice() };
 
-            if cycles_to_run > 0 {
-                backend.run_for_cycles(cycles_to_run);
-            }
-
-            let callbacks = {
-                let mut scheduler = scheduler_arc.lock().unwrap();
-                scheduler.advance_cycles(cycles_to_run);
-                scheduler.drain_due_events()
+            let bus_ptr: *mut Bus = {
+                let mut guard = bus_arc.lock().unwrap();
+                &mut **guard as *mut Bus
             };
 
-            if !callbacks.is_empty() {
+            if cycles_to_run > 0 {
+                unsafe { backend.run_for_cycles(&mut *bus_ptr, cycles_to_run) };
+            }
+
+            {
+                let mut guard = bus_arc.lock().unwrap();
+                let bus: &mut Bus = &mut **guard;
+
+                let callbacks = {
+                    let mut scheduler = scheduler_arc.lock().unwrap();
+                    scheduler.advance_cycles(cycles_to_run);
+                    scheduler.drain_due_events()
+                };
+
                 for callback in callbacks {
-                    let mut guard = bus_arc.lock().unwrap();
-                    let bus: &mut Bus = &mut *guard;
                     callback(bus);
                 }
             }

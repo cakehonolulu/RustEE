@@ -106,10 +106,6 @@ pub fn make_ee(bios: BIOS, mode: BusMode) -> (EE, Arc<Mutex<Bus>>) {
     let sched = Arc::new(Mutex::new(Scheduler::new()));
     let bus_boxed = Bus::new(mode, bios, Arc::clone(&cop0), sched);
     let bus = Arc::new(Mutex::new(*bus_boxed));
-    let bus_ptr = {
-        let mut g = bus.lock().unwrap();
-        &mut *g as *mut Bus
-    };
-    let ee = EE::new(bus_ptr, Arc::clone(&cop0));
+    let ee = EE::new(Arc::clone(&cop0));
     (ee, bus)
 }

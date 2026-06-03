@@ -14,6 +14,7 @@ use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use portable_atomic::AtomicU128;
 use std::fs;
 use std::mem;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use target_lexicon::Triple;
@@ -163,6 +164,7 @@ unsafe impl<T> Send for UnsafeSend<T> {}
 pub struct JIT {
     pub cpu: EE,
     module: UnsafeSend<JITModule>,
+    bus: NonNull<Bus>,
     blocks: BlockCache,
     cycles: usize,
     break_func: FuncId,
@@ -333,9 +335,12 @@ pub extern "C" fn __bus_tlbwi(bus: *mut Bus) {
 pub extern "C" fn __load_elf(cpu_ptr: *mut EE) {
     unsafe {
         let cpu = &mut *cpu_ptr;
+        let bus_ptr = crate::bus::BUS_PTR.load(Ordering::Acquire);
+        assert!(!bus_ptr.is_null(), "__load_elf called before bus init");
+        let bus = &mut *bus_ptr;
         let elf_bytes = fs::read(&cpu.elf_path)
             .unwrap_or_else(|e| panic!("Failed to read ELF '{}': {}", cpu.elf_path, e));
-        cpu.load_elf(&elf_bytes);
+        cpu.load_elf(bus, &elf_bytes);
     }
 }
 
@@ -355,7 +360,7 @@ pub extern "C" fn __integer_overflow_exception(cpu_ptr: *mut EE) {
 }
 
 impl JIT {
-    pub fn new(cpu: EE) -> Self {
+    pub fn new(cpu: EE, bus_ptr: NonNull<Bus>) -> Self {
         let mut shared_builder = settings::builder();
         shared_builder
             .set("enable_llvm_abi_extensions", "true")
@@ -534,6 +539,7 @@ impl JIT {
         JIT {
             cpu,
             module: UnsafeSend(module),
+            bus: bus_ptr,
             blocks: BlockCache::new(),
             cycles: 0,
             break_func,
@@ -664,6 +670,8 @@ impl JIT {
             .ins()
             .iconst(types::I64, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
 
+        let bus = unsafe { self.bus.as_mut() };
+
         loop {
             if self.cpu.has_breakpoint(current_pc) {
                 debug!("Breakpoint hit at 0x{:08X}", current_pc);
@@ -672,7 +680,7 @@ impl JIT {
                 break;
             }
 
-            let opcode = self.cpu.fetch_at(current_pc);
+            let opcode = self.cpu.fetch_at(bus, current_pc);
             let instruction_cycles = self.get_instruction_cycles(opcode);
             total_cycles += instruction_cycles;
 
@@ -680,7 +688,7 @@ impl JIT {
             if let Some(info) = branch_info {
                 match info {
                     BranchInfo::Conditional { cond, target } => {
-                        let delay_opcode = self.cpu.fetch_at(current_pc);
+                        let delay_opcode = self.cpu.fetch_at(bus, current_pc);
                         self.decode(&mut builder, delay_opcode, &mut current_pc);
                         let branch_blk = builder.create_block();
                         let fallthrough_blk = builder.create_block();
@@ -696,7 +704,7 @@ impl JIT {
                         JIT::set_pc_to_const(&mut builder, current_pc, pc_addr);
                     }
                     BranchInfo::Unconditional { target } => {
-                        let delay_opcode = self.cpu.fetch_at(current_pc);
+                        let delay_opcode = self.cpu.fetch_at(bus, current_pc);
                         self.decode(&mut builder, delay_opcode, &mut current_pc);
                         JIT::set_pc_to_target(&mut builder, target, pc_addr);
                     }
@@ -708,7 +716,7 @@ impl JIT {
                         builder.ins().brif(cond, taken_blk, &[], not_taken_blk, &[]);
                         builder.seal_block(taken_blk);
                         builder.switch_to_block(taken_blk);
-                        let delay_opcode = self.cpu.fetch_at(delay_pc);
+                        let delay_opcode = self.cpu.fetch_at(bus, delay_pc);
                         self.decode(&mut builder, delay_opcode, &mut current_pc);
                         JIT::set_pc_to_target(&mut builder, target, pc_addr);
                         builder.ins().return_(&[]);
@@ -1357,7 +1365,7 @@ impl JIT {
         let store_val64 = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
         let store_val32 = builder.ins().ireduce(types::I32, store_val64);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
+        let bus_ptr = self.bus.as_ptr();
         let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1373,15 +1381,15 @@ impl JIT {
     }
 
     fn tlbwi(&mut self, builder: &mut FunctionBuilder, current_pc: &mut u32) -> Option<BranchInfo> {
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let local_callee = self
             .module
             .0
             .declare_func_in_func(self.tlbwi_func, builder.func);
 
-        builder.ins().call(local_callee, &[bus_value]);
+        builder.ins().call(local_callee, &[bus_arg]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -1412,7 +1420,7 @@ impl JIT {
 
         let addr32 = builder.ins().ireduce(types::I32, addr64);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
+        let bus_ptr = self.bus.as_ptr();
         let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
@@ -1557,14 +1565,14 @@ impl JIT {
         );
         let store_val = builder.ins().load(types::I64, MemFlags::new(), rt_addr, 0);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_write64_func, builder.func);
-        builder.ins().call(callee, &[bus_value, addr32, store_val]);
+        builder.ins().call(callee, &[bus_arg, addr32, store_val]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -2073,8 +2081,8 @@ impl JIT {
 
         let addr = builder.ins().iadd_imm(rs_sext, imm);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
@@ -2082,7 +2090,7 @@ impl JIT {
             .declare_func_in_func(self.bus_read8_func, builder.func);
 
         let addr_i32 = builder.ins().ireduce(types::I32, addr);
-        let call = builder.ins().call(callee, &[bus_value, addr_i32]);
+        let call = builder.ins().call(callee, &[bus_arg, addr_i32]);
         let byte_val = builder.inst_results(call)[0];
 
         let sext_val = builder.ins().sextend(types::I64, byte_val);
@@ -2129,14 +2137,14 @@ impl JIT {
         );
         let fpu_val = Self::load32(builder, ft_addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_value = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_write32_func, builder.func);
-        builder.ins().call(callee, &[bus_value, addr, fpu_val]);
+        builder.ins().call(callee, &[bus_arg, addr, fpu_val]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -2163,15 +2171,15 @@ impl JIT {
         let rs_val = Self::load32(builder, rs_addr);
         let addr = builder.ins().iadd_imm(rs_val, imm);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read8_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, addr]);
+        let call = builder.ins().call(callee, &[bus_arg, addr]);
         let loaded = builder.inst_results(call)[0];
 
         let zext = builder.ins().uextend(types::I64, loaded);
@@ -2250,14 +2258,14 @@ impl JIT {
 
         let addr = builder.ins().ireduce(types::I32, addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read64_func, builder.func);
-        let call = builder.ins().call(callee, &[bus_val, addr]);
+        let call = builder.ins().call(callee, &[bus_arg, addr]);
         let loaded = builder.inst_results(call)[0];
 
         let rt_addr = Self::ptr_add(
@@ -2324,15 +2332,15 @@ impl JIT {
 
         let byte_val = builder.ins().ireduce(types::I8, rt_val32);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_write8_func, builder.func);
 
-        builder.ins().call(callee, &[bus_val, addr, byte_val]);
+        builder.ins().call(callee, &[bus_arg, addr, byte_val]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -2854,15 +2862,15 @@ impl JIT {
         let rs_val = Self::load32(builder, rs_addr);
         let addr = builder.ins().iadd_imm(rs_val, imm);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read16_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, addr]);
+        let call = builder.ins().call(callee, &[bus_arg, addr]);
         let loaded = builder.inst_results(call)[0];
 
         let zext = builder.ins().uextend(types::I64, loaded);
@@ -2999,15 +3007,15 @@ impl JIT {
 
         let store_val = builder.ins().ireduce(types::I16, rt_val);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_write16_func, builder.func);
 
-        builder.ins().call(callee, &[bus_val, addr, store_val]);
+        builder.ins().call(callee, &[bus_arg, addr, store_val]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -3625,8 +3633,8 @@ impl JIT {
         let aligned_addr = builder.ins().band(vaddr, align_mask);
         let aligned_addr32 = builder.ins().ireduce(types::I32, aligned_addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
@@ -3643,7 +3651,7 @@ impl JIT {
 
         builder
             .ins()
-            .call(callee, &[bus_val, aligned_addr32, lo_addr, hi_addr]);
+            .call(callee, &[bus_arg, aligned_addr32, lo_addr, hi_addr]);
 
         let lo_loaded = builder.ins().load(types::I64, MemFlags::new(), lo_addr, 0);
         let hi_loaded = builder.ins().load(types::I64, MemFlags::new(), hi_addr, 0);
@@ -3706,8 +3714,8 @@ impl JIT {
         let upper_bits_shifted = builder.ins().ushr_imm(rt_val, 64);
         let high = builder.ins().ireduce(types::I64, upper_bits_shifted);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
@@ -3716,7 +3724,7 @@ impl JIT {
 
         builder
             .ins()
-            .call(callee, &[bus_val, aligned_addr32, low, high]);
+            .call(callee, &[bus_arg, aligned_addr32, low, high]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -3746,15 +3754,15 @@ impl JIT {
         let addr = builder.ins().iadd_imm(rs_val64, imm);
         let addr32 = builder.ins().ireduce(types::I32, addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read16_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, addr32]);
+        let call = builder.ins().call(callee, &[bus_arg, addr32]);
         let halfword_val = builder.inst_results(call)[0];
 
         let result = builder.ins().sextend(types::I64, halfword_val);
@@ -4060,15 +4068,15 @@ impl JIT {
         let addr = builder.ins().iadd_imm(rs_val64, imm);
         let addr32 = builder.ins().ireduce(types::I32, addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read32_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, addr32]);
+        let call = builder.ins().call(callee, &[bus_arg, addr32]);
         let word_val = builder.inst_results(call)[0];
 
         let result = builder.ins().uextend(types::I64, word_val);
@@ -4114,15 +4122,15 @@ impl JIT {
         let p_addr = builder.ins().band(v_addr, align_mask);
         let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read64_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, p_addr32]);
+        let call = builder.ins().call(callee, &[bus_arg, p_addr32]);
         let mem_quad = builder.inst_results(call)[0];
 
         let rt_addr = Self::ptr_add(
@@ -4181,15 +4189,15 @@ impl JIT {
         let p_addr = builder.ins().band(v_addr, align_mask);
         let p_addr32 = builder.ins().ireduce(types::I32, p_addr);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_read64_func, builder.func);
 
-        let call = builder.ins().call(callee, &[bus_val, p_addr32]);
+        let call = builder.ins().call(callee, &[bus_arg, p_addr32]);
         let mem_quad = builder.inst_results(call)[0];
 
         let rt_addr = Self::ptr_add(
@@ -4267,15 +4275,15 @@ impl JIT {
 
         let data_quad = builder.ins().ushr(rt_val, shift);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_write64_func, builder.func);
 
-        builder.ins().call(callee, &[bus_val, p_addr32, data_quad]);
+        builder.ins().call(callee, &[bus_arg, p_addr32, data_quad]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -4322,15 +4330,15 @@ impl JIT {
 
         let data_quad = builder.ins().ishl(rt_val, shift);
 
-        let bus_ptr = unsafe { &*self.cpu.bus_ptr.0 as *const Bus as *mut Bus };
-        let bus_val = builder.ins().iconst(types::I64, bus_ptr as i64);
+        let bus_ptr = self.bus.as_ptr();
+        let bus_arg = builder.ins().iconst(types::I64, bus_ptr as i64);
 
         let callee = self
             .module
             .0
             .declare_func_in_func(self.bus_write64_func, builder.func);
 
-        builder.ins().call(callee, &[bus_val, p_addr32, data_quad]);
+        builder.ins().call(callee, &[bus_arg, p_addr32, data_quad]);
 
         Self::increment_pc(builder, Arc::as_ptr(&self.cpu.pc) as *const u32 as i64);
         *current_pc = current_pc.wrapping_add(4);
@@ -5167,7 +5175,7 @@ impl JIT {
 }
 
 impl EmulationBackend<EE> for JIT {
-    fn step(&mut self) {
+    fn step(&mut self, bus: &mut Bus) {
         let (breakpoint_hit, _) = self.execute(true);
 
         if breakpoint_hit {
@@ -5175,7 +5183,7 @@ impl EmulationBackend<EE> for JIT {
         }
     }
 
-    fn run(&mut self) {
+    fn run(&mut self, bus: &mut Bus) {
         loop {
             if self.cpu.is_paused.load(Ordering::Relaxed) {
                 std::thread::park();
@@ -5188,7 +5196,7 @@ impl EmulationBackend<EE> for JIT {
         }
     }
 
-    fn run_for_cycles(&mut self, cycles: u64) -> u64 {
+    fn run_for_cycles(&mut self, bus: &mut Bus, cycles: u64) -> u64 {
         let mut executed_cycles = 0;
 
         while executed_cycles < cycles {
@@ -5208,3 +5216,5 @@ impl EmulationBackend<EE> for JIT {
         &mut self.cpu
     }
 }
+
+unsafe impl Send for JIT {}

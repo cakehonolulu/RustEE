@@ -13,6 +13,7 @@ use librustee::ee::{EE, Interpreter, JIT};
 use librustee::gs::renderer::RendererKind;
 use librustee::sched::Scheduler;
 use std::collections::HashMap;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -189,7 +190,8 @@ pub struct App {
     prev_cop0_registers: HashMap<usize, u32>,
     cop0_change_ee_timers: HashMap<usize, f32>,
     disassembly_open: bool,
-    disassembly_data: Vec<String>,
+    disassembly_bytes_cache: Vec<u8>,
+    disassembly_pc_cache: u32,
     disassembler: Disassembler,
     disassembly_start_addr: u32,
     address_input: String,
@@ -218,9 +220,14 @@ impl App {
     ) -> Self {
         let is_paused = ee.lock().unwrap().is_paused.clone();
         let cloned_ee = ee.lock().unwrap().clone();
+
+        let bus_nonnull = {
+            let mut guard = bus.lock().unwrap();
+            NonNull::new(&mut **guard as *mut Bus).expect("bus pointer is non-null")
+        };
         let emu_backend: Box<dyn EmulationBackend<EE> + Send> = match backend.as_str() {
             "interpreter" => Box::new(Interpreter::new(cloned_ee)),
-            "jit" => Box::new(JIT::new(cloned_ee)),
+            "jit" => Box::new(JIT::new(cloned_ee, bus_nonnull)),
             _ => panic!("Unsupported backend: {}", backend),
         };
 
@@ -240,8 +247,9 @@ impl App {
             cop0_change_ee_timers: HashMap::new(),
             disassembler: Disassembler::new().unwrap(),
             disassembly_open: false,
-            disassembly_data: Vec::new(),
             disassembly_start_addr: 0,
+            disassembly_bytes_cache: Vec::new(),
+            disassembly_pc_cache: 0,
             address_input: "0x0".to_string(),
             follow_pc: true,
             ram_view_open: false,
@@ -1092,21 +1100,25 @@ impl App {
                     }
 
                     let pc = ee.pc.load(Ordering::SeqCst);
-                    let num_instructions = 16;
-                    let mut bytes = Vec::new();
-                    for offset in 0..num_instructions {
-                        let addr = pc.wrapping_add(offset * 4);
-                        let word = ee.read32(addr);
-                        bytes.extend_from_slice(&word.to_le_bytes());
+                    let num_instructions = 16u32;
+                    if let Ok(mut bus_guard) = self.bus.try_lock() {
+                        self.disassembly_bytes_cache.clear();
+                        for offset in 0..num_instructions {
+                            let addr = pc.wrapping_add(offset * 4);
+                            let word = ee.read32(&mut **bus_guard, addr);
+                            self.disassembly_bytes_cache
+                                .extend_from_slice(&word.to_le_bytes());
+                        }
+                        self.disassembly_pc_cache = pc;
                     }
 
                     let disasm = self
                         .disassembler
-                        .disassemble(&bytes, pc as u64)
-                        .unwrap_or_else(|err| {
-                            eprintln!("Error during disassembly: {}", err);
-                            vec!["Disassembly error".to_string()]
-                        });
+                        .disassemble(
+                            &self.disassembly_bytes_cache,
+                            self.disassembly_pc_cache as u64,
+                        )
+                        .unwrap_or_else(|_| vec!["Disassembly error".to_string()]);
 
                     egui::Window::new("Disassembly")
                         .resizable(true)
