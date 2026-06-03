@@ -1,6 +1,5 @@
 use tracing::trace;
 
-use super::{Bus, BusMode};
 
 #[derive(Clone, Copy, Debug)]
 pub struct TlbEntry {

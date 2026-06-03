@@ -1,4 +1,4 @@
-use crate::{Bus, gs::GS};
+use crate::gs::GS;
 use tracing::{error, trace};
 
 /// Base address for GIF I/O registers

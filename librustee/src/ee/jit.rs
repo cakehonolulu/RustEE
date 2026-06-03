@@ -5175,7 +5175,7 @@ impl JIT {
 }
 
 impl EmulationBackend<EE> for JIT {
-    fn step(&mut self, bus: &mut Bus) {
+    fn step(&mut self, _bus: &mut Bus) {
         let (breakpoint_hit, _) = self.execute(true);
 
         if breakpoint_hit {
@@ -5183,7 +5183,7 @@ impl EmulationBackend<EE> for JIT {
         }
     }
 
-    fn run(&mut self, bus: &mut Bus) {
+    fn run(&mut self, _bus: &mut Bus) {
         loop {
             if self.cpu.is_paused.load(Ordering::Relaxed) {
                 std::thread::park();
@@ -5196,7 +5196,7 @@ impl EmulationBackend<EE> for JIT {
         }
     }
 
-    fn run_for_cycles(&mut self, bus: &mut Bus, cycles: u64) -> u64 {
+    fn run_for_cycles(&mut self, _bus: &mut Bus, cycles: u64) -> u64 {
         let mut executed_cycles = 0;
 
         while executed_cycles < cycles {

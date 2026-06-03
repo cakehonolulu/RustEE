@@ -474,7 +474,7 @@ impl Interpreter {
         }
     }
 
-    fn mfc0(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mfc0(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -488,7 +488,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sll(&mut self, bus: &mut Bus, opcode: u32) {
+    fn sll(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -502,7 +502,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn slti(&mut self, bus: &mut Bus, opcode: u32) {
+    fn slti(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -530,7 +530,7 @@ impl Interpreter {
         self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn lui(&mut self, bus: &mut Bus, opcode: u32) {
+    fn lui(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u32;
 
@@ -540,7 +540,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ori(&mut self, bus: &mut Bus, opcode: u32) {
+    fn ori(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u64;
@@ -566,7 +566,7 @@ impl Interpreter {
         self.cpu.set_pc(target);
     }
 
-    fn mtc0(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mtc0(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -576,12 +576,12 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sync(&mut self, bus: &mut Bus) {
+    fn sync(&mut self, _bus: &mut Bus) {
         // TODO: Implement SYNC instruction properly
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn addiu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn addiu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -654,7 +654,7 @@ impl Interpreter {
 
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
 
-        let bus_ptr = bus as *mut Bus;
+        let _bus_ptr = bus as *mut Bus;
         bus.write_tlb_entry(index, new_entry);
     }
 
@@ -707,7 +707,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn daddu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn daddu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -737,7 +737,7 @@ impl Interpreter {
         self.cpu.set_pc(jump_addr);
     }
 
-    fn andi(&mut self, bus: &mut Bus, opcode: u32) {
+    fn andi(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u64;
@@ -763,7 +763,7 @@ impl Interpreter {
         self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn or(&mut self, bus: &mut Bus, opcode: u32) {
+    fn or(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -776,7 +776,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mult(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mult(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -801,7 +801,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn divu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn divu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -831,18 +831,18 @@ impl Interpreter {
         self.do_branch(bus, branch_pc, taken, target, true);
     }
 
-    fn break_(&mut self, bus: &mut Bus) {
+    fn break_(&mut self, _bus: &mut Bus) {
         panic!("MIPS BREAK instruction executed at 0x{:08X}", self.cpu.pc());
     }
 
-    fn mflo(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mflo(&mut self, _bus: &mut Bus, opcode: u32) {
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let lo_val = self.cpu.read_lo();
         self.cpu.write_register64(rd, lo_val as u64);
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sltiu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn sltiu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i64;
@@ -916,7 +916,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    pub fn sra(&mut self, bus: &mut Bus, opcode: u32) {
+    pub fn sra(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -969,7 +969,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn addu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn addu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -994,7 +994,7 @@ impl Interpreter {
         self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn div(&mut self, bus: &mut Bus, opcode: u32) {
+    fn div(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -1021,7 +1021,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mfhi(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mfhi(&mut self, _bus: &mut Bus, opcode: u32) {
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
         let hi_val = self.cpu.read_hi();
@@ -1030,7 +1030,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sltu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn sltu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1058,7 +1058,7 @@ impl Interpreter {
         self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn subu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn subu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1086,7 +1086,7 @@ impl Interpreter {
         self.do_branch(bus, branch_pc, taken, target, false);
     }
 
-    fn movn(&mut self, bus: &mut Bus, opcode: u32) {
+    fn movn(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1099,7 +1099,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn slt(&mut self, bus: &mut Bus, opcode: u32) {
+    fn slt(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1114,7 +1114,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn and(&mut self, bus: &mut Bus, opcode: u32) {
+    fn and(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1129,7 +1129,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn srl(&mut self, bus: &mut Bus, opcode: u32) {
+    fn srl(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = ((opcode >> 6) & 0x1F) as u32;
@@ -1207,7 +1207,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn divu1(&mut self, bus: &mut Bus, opcode: u32) {
+    fn divu1(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
 
@@ -1236,7 +1236,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mtlo1(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mtlo1(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
 
         let rs_val = self.cpu.read_register32(rs) as i64 as u64;
@@ -1247,7 +1247,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mflo1(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mflo1(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 11) & 0x1F) as usize;
 
         let lo_u64 = (self.cpu.read_lo() >> 64) as u64;
@@ -1257,7 +1257,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsrav(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsrav(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1270,7 +1270,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsll32(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsll32(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -1283,7 +1283,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsra32(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsra32(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -1296,7 +1296,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn xori(&mut self, bus: &mut Bus, opcode: u32) {
+    fn xori(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode & 0xFFFF) as u64;
@@ -1308,7 +1308,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn mult1(&mut self, bus: &mut Bus, opcode: u32) {
+    fn mult1(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1343,7 +1343,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn movz(&mut self, bus: &mut Bus, opcode: u32) {
+    fn movz(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1356,7 +1356,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsrl(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsrl(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = ((opcode >> 6) & 0x1F) as u32;
@@ -1367,7 +1367,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn daddiu(&mut self, bus: &mut Bus, opcode: u32) {
+    fn daddiu(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i64;
@@ -1378,7 +1378,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsllv(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsllv(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1437,12 +1437,12 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn cache(&mut self, bus: &mut Bus) {
+    fn cache(&mut self, _bus: &mut Bus) {
         // TODO: Implement CACHE instruction properly
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn sllv(&mut self, bus: &mut Bus, opcode: u32) {
+    fn sllv(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1454,7 +1454,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsll(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsll(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
         let sa = (opcode >> 6) & 0x1F;
@@ -1467,7 +1467,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn srav(&mut self, bus: &mut Bus, opcode: u32) {
+    fn srav(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1480,7 +1480,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn nor(&mut self, bus: &mut Bus, opcode: u32) {
+    fn nor(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1493,7 +1493,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn cfc2(&mut self, bus: &mut Bus, opcode: u32) {
+    fn cfc2(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let vi = ((opcode >> 11) & 0x1F) as usize;
 
@@ -1508,7 +1508,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn ctc2(&mut self, bus: &mut Bus, opcode: u32) {
+    fn ctc2(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let vi = ((opcode >> 11) & 0x1F) as usize;
 
@@ -1626,7 +1626,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn srlv(&mut self, bus: &mut Bus, opcode: u32) {
+    fn srlv(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize; // shift‐amount register
         let rt = ((opcode >> 16) & 0x1F) as usize; // value register
         let rd = ((opcode >> 11) & 0x1F) as usize; // destination
@@ -1643,7 +1643,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn dsrl32(&mut self, bus: &mut Bus, opcode: u32) {
+    fn dsrl32(&mut self, _bus: &mut Bus, opcode: u32) {
         // decode fields
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1661,7 +1661,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn padduw(&mut self, bus: &mut Bus, opcode: u32) {
+    fn padduw(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1697,7 +1697,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn di(&mut self, bus: &mut Bus) {
+    fn di(&mut self, _bus: &mut Bus) {
         let status = self.cpu.read_cop0_register(12);
         let edi = (status >> 17) & 0x1;
         let exl = (status >> 1) & 0x1; // Bit 1: EXL
@@ -1740,7 +1740,7 @@ impl Interpreter {
         }
     }
 
-    fn syscall(&mut self, bus: &mut Bus, opcode: u32) {
+    fn syscall(&mut self, _bus: &mut Bus, opcode: u32) {
         let code = (opcode >> 6) & 0xFFFFF;
 
         let status = self.cpu.read_cop0_register(12);
@@ -1758,7 +1758,7 @@ impl Interpreter {
         self.cpu.set_pc(exception_vector);
     }
 
-    fn sub(&mut self, bus: &mut Bus, opcode: u32) {
+    fn sub(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1790,7 +1790,7 @@ impl Interpreter {
         }
     }
 
-    fn add(&mut self, bus: &mut Bus, opcode: u32) {
+    fn add(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
@@ -1822,7 +1822,7 @@ impl Interpreter {
         }
     }
 
-    fn addi(&mut self, bus: &mut Bus, opcode: u32) {
+    fn addi(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let imm = (opcode as i16) as i32;
@@ -1853,7 +1853,7 @@ impl Interpreter {
         }
     }
 
-    fn ei(&mut self, bus: &mut Bus) {
+    fn ei(&mut self, _bus: &mut Bus) {
         let status = self.cpu.read_cop0_register(12);
         let edi = (status >> 17) & 0x1;
         let exl = (status >> 1) & 0x1; // Bit 1: EXL
@@ -1868,7 +1868,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn pcpyh(&mut self, bus: &mut Bus, opcode: u32) {
+    fn pcpyh(&mut self, _bus: &mut Bus, opcode: u32) {
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;
 
@@ -1887,7 +1887,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
     }
 
-    fn pcpyld(&mut self, bus: &mut Bus, opcode: u32) {
+    fn pcpyld(&mut self, _bus: &mut Bus, opcode: u32) {
         let rs = ((opcode >> 21) & 0x1F) as usize;
         let rt = ((opcode >> 16) & 0x1F) as usize;
         let rd = ((opcode >> 11) & 0x1F) as usize;

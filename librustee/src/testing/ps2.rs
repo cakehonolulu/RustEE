@@ -32,7 +32,7 @@ pub fn compile_elf(mk_file: &Path, test_name: &str) -> Result<PathBuf, String> {
 
 pub fn run_on_hardware(
     elf: &Path,
-    test_name: &str,
+    _test_name: &str,
     ip: &str,
     result_path: &Path,
 ) -> Result<GoldenState, String> {

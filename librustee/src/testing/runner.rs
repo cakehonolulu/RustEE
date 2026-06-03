@@ -103,7 +103,7 @@ impl TestRunner {
                 interp.step(&mut *bus_i_guard);
             }
 
-            let (mut ee_j, mut bus_j) = make_ee(make_bios(spec.asm), mode.clone());
+            let (mut ee_j, bus_j) = make_ee(make_bios(spec.asm), mode.clone());
             apply_init(&mut ee_j, spec);
             ee_j.set_pc(0xBFC00000);
             let mut bus_j_guard = bus_j.lock().unwrap();

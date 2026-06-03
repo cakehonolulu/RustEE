@@ -1,4 +1,4 @@
-use super::tlb::{Tlb, TlbEntry, mask_to_page_size};
+use super::tlb::{TlbEntry, mask_to_page_size};
 use super::{Bus, HW_BASE};
 use crate::bus::HW_LENGTH;
 
