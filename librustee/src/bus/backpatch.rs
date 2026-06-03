@@ -423,7 +423,6 @@ impl ArchHandler for CurrentArchHandler {
                 x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
                 x86_64_impl::X86Register::R10 => nix::libc::REG_R10 as usize,
                 x86_64_impl::X86Register::R11 => nix::libc::REG_R11 as usize,
-                _ => panic!("Unsupported register for value access (Get): {:?}", reg_id),
             }] as u64
         }
     }
@@ -440,7 +439,6 @@ impl ArchHandler for CurrentArchHandler {
                 x86_64_impl::X86Register::R9 => nix::libc::REG_R9 as usize,
                 x86_64_impl::X86Register::R10 => nix::libc::REG_R10 as usize,
                 x86_64_impl::X86Register::R11 => nix::libc::REG_R11 as usize,
-                _ => panic!("Unsupported register for value access (Set): {:?}", reg_id),
             }] = value as i64;
         }
     }
@@ -509,9 +507,12 @@ impl ArchHandler for CurrentArchHandler {
                 x86_64_impl::X86Register::Rax => (*ctx).Rax,
                 x86_64_impl::X86Register::Rcx => (*ctx).Rcx,
                 x86_64_impl::X86Register::Rdx => (*ctx).Rdx,
+                x86_64_impl::X86Register::Rsi => (*ctx).Rsi,
+                x86_64_impl::X86Register::Rdi => (*ctx).Rdi,
                 x86_64_impl::X86Register::R8 => (*ctx).R8,
                 x86_64_impl::X86Register::R9 => (*ctx).R9,
-                _ => panic!("Unsupported register for value access: {:?}", reg_id),
+                x86_64_impl::X86Register::R10 => (*ctx).R10,
+                x86_64_impl::X86Register::R11 => (*ctx).R11,
             }
         }
     }
@@ -522,9 +523,12 @@ impl ArchHandler for CurrentArchHandler {
                 x86_64_impl::X86Register::Rax => (*ctx).Rax = value,
                 x86_64_impl::X86Register::Rcx => (*ctx).Rcx = value,
                 x86_64_impl::X86Register::Rdx => (*ctx).Rdx = value,
+                x86_64_impl::X86Register::Rsi => (*ctx).Rsi = value,
+                x86_64_impl::X86Register::Rdi => (*ctx).Rdi = value,
                 x86_64_impl::X86Register::R8 => (*ctx).R8 = value,
                 x86_64_impl::X86Register::R9 => (*ctx).R9 = value,
-                _ => panic!("Unsupported register for value access: {:?}", reg_id),
+                x86_64_impl::X86Register::R10 => (*ctx).R10 = value,
+                x86_64_impl::X86Register::R11 => (*ctx).R11 = value,
             }
         }
     }

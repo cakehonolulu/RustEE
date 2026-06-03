@@ -423,13 +423,6 @@ impl Bus {
     }
 }
 
-pub fn install_all_sw_fastmem_mappings(bus: &mut Bus) {
-    let entries: Vec<_> = bus.tlb.entries.iter().flatten().cloned().collect();
-    for entry in entries {
-        install_sw_fastmem_mapping(bus, &entry);
-    }
-}
-
 pub fn install_sw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
     let page_size = mask_to_page_size(entry.mask) as u64;
     let start_va = (entry.vpn2 as u64) << 13;
