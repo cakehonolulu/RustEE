@@ -56,12 +56,11 @@ pub fn init_ranged_tlb_mappings(bus: &mut Bus) {
         },
     ];
 
-    let bus_ptr = bus as *mut Bus;
-    let tlb = &mut (*bus).tlb;
+    let bus_ref = &mut *bus;
 
     for (index, entry) in default_mappings.iter().enumerate() {
         {
-            tlb.write_tlb_entry(bus_ptr, index, *entry);
+            bus_ref.write_tlb_entry(index, *entry);
         }
         tracing::debug!("Installed TLB mapping: {:?}", entry);
     }

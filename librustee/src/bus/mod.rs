@@ -32,6 +32,7 @@ use crate::vif::{VIF, VIF0_BASE, VIF1_BASE};
 use tlb::{OperatingMode, Tlb};
 
 use crate::bus::rdram::RDRAM;
+use crate::bus::tlb::TlbEntry;
 use crate::sched::Scheduler;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -260,6 +261,26 @@ impl Bus {
 
         info!("Bus initialized with mode: {:?}", mode);
         bus
+    }
+
+    pub fn write_tlb_entry(&mut self, index: usize, entry: TlbEntry) {
+        let old = self.tlb.tlb_reload(index, entry);
+
+        match self.mode {
+            BusMode::HardwareFastMem => {
+                if let Some(old_entry) = old {
+                    crate::bus::hw_fastmem::clear_hw_fastmem_mapping(self, &old_entry);
+                }
+                crate::bus::hw_fastmem::install_hw_fastmem_mapping(self, &entry);
+            }
+            BusMode::SoftwareFastMem => {
+                if let Some(old_entry) = old {
+                    crate::bus::sw_fastmem::clear_sw_fastmem_mapping(self, &old_entry);
+                }
+                crate::bus::sw_fastmem::install_sw_fastmem_mapping(self, &entry);
+            }
+            _ => {}
+        }
     }
 
     pub fn read_cop0_register(&self, index: usize) -> u32 {

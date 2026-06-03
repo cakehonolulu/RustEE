@@ -283,7 +283,7 @@ pub extern "C" fn __bus_read128(bus: *mut Bus, addr: u32, lo: *mut u64, hi: *mut
 
 pub extern "C" fn __bus_tlbwi(bus: *mut Bus) {
     unsafe {
-        let tlb = &mut (*bus).tlb;
+        let bus_ref = &mut *bus;
 
         let index = (((*bus).read_cop0_register(0)) & 0x3F) as usize;
 
@@ -328,7 +328,7 @@ pub extern "C" fn __bus_tlbwi(bus: *mut Bus) {
             mask: page_mask,
         };
 
-        tlb.write_tlb_entry(bus, index, new_entry);
+        bus_ref.write_tlb_entry(index, new_entry);
     }
 }
 

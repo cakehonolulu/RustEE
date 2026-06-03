@@ -745,195 +745,192 @@ unsafe fn map_vu_memory(base: *mut u8) -> io::Result<()> {
     }
 }
 
-impl Tlb {
-    #[cfg(unix)]
-    pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
-        let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 13) as usize;
+#[cfg(unix)]
+pub fn install_hw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
+    let page_size = mask_to_page_size(entry.mask) as usize;
+    let va_start = (entry.vpn2 << 13) as usize;
 
-        if Self::is_fixed_region(va_start, page_size) {
-            trace!(
-                "Skipping TLB mapping for fixed region: va_start=0x{:08X}",
-                va_start
-            );
-            return;
-        }
-
-        let ram_fd = bus.ram_fd.as_ref().expect("RAM file descriptor missing");
-
-        if entry.v0 {
-            let pa_start = (entry.pfn0 << 12) as usize;
-            if pa_start <= 0x01FFFFFF {
-                let prot = if entry.d0 {
-                    PROT_READ | PROT_WRITE
-                } else {
-                    PROT_READ
-                };
-
-                unsafe {
-                    let target = (bus.hw_base as *mut u8).add(va_start);
-                    let result = mmap(
-                        target as *mut c_void,
-                        page_size,
-                        prot,
-                        MAP_SHARED | MAP_FIXED,
-                        ram_fd.as_raw_fd(),
-                        pa_start as i64,
-                    );
-                    if result == libc::MAP_FAILED {
-                        error!("Failed to map TLB even page at 0x{:08X}", va_start);
-                    }
-                }
-            }
-        }
-
-        if entry.v1 {
-            let va_start_odd = va_start + page_size;
-            let pa_start_odd = (entry.pfn1 << 12) as usize;
-            if pa_start_odd <= 0x01FFFFFF {
-                let prot = if entry.d1 {
-                    PROT_READ | PROT_WRITE
-                } else {
-                    PROT_READ
-                };
-
-                unsafe {
-                    let target = (bus.hw_base as *mut u8).add(va_start_odd);
-                    let result = mmap(
-                        target as *mut c_void,
-                        page_size,
-                        prot,
-                        MAP_SHARED | MAP_FIXED,
-                        ram_fd.as_raw_fd(),
-                        pa_start_odd as i64,
-                    );
-                    if result == libc::MAP_FAILED {
-                        error!("Failed to map TLB odd page at 0x{:08X}", va_start_odd);
-                    }
-                }
-            }
-        }
+    if is_fixed_region(va_start, page_size) {
+        trace!(
+            "Skipping TLB mapping for fixed region: va_start=0x{:08X}",
+            va_start
+        );
+        return;
     }
 
-    #[cfg(windows)]
-    pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
-        let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 13) as usize;
+    let ram_fd = bus.ram_fd.as_ref().expect("RAM file descriptor missing");
 
-        // Skip fixed regions
-        if Self::is_fixed_region(va_start, page_size) {
-            return;
-        }
+    if entry.v0 {
+        let pa_start = (entry.pfn0 << 12) as usize;
+        if pa_start <= 0x01FFFFFF {
+            let prot = if entry.d0 {
+                PROT_READ | PROT_WRITE
+            } else {
+                PROT_READ
+            };
 
-        let ram_size = 0x2000000;
-        let ram_section = bus.ram_mapping.as_ref().expect("RAM section missing");
-
-        let proc = unsafe { GetCurrentProcess() };
-
-        unsafe {
-            for &(valid, pfn, d_bit, is_odd) in &[
-                (entry.v0, entry.pfn0, entry.d0, false),
-                (entry.v1, entry.pfn1, entry.d1, true),
-            ] {
-                if !valid {
-                    continue;
-                }
-                let pa = (pfn << 12) as usize;
-                if pa >= bus.hw_size || pa >= ram_size {
-                    continue;
-                }
-
-                let va = va_start + if is_odd { page_size } else { 0 };
-                let target = bus.hw_base.add(va);
-
-                let _ = VirtualFree(
+            unsafe {
+                let target = (bus.hw_base as *mut u8).add(va_start);
+                let result = mmap(
                     target as *mut c_void,
                     page_size,
-                    MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
+                    prot,
+                    MAP_SHARED | MAP_FIXED,
+                    ram_fd.as_raw_fd(),
+                    pa_start as i64,
                 );
-
-                let view: MEMORY_MAPPED_VIEW_ADDRESS = MapViewOfFile3(
-                    ram_section.as_raw_handle(),
-                    proc,
-                    target as *const c_void,
-                    pa as u64,
-                    page_size,
-                    MEM_REPLACE_PLACEHOLDER,
-                    if d_bit { PAGE_READWRITE } else { PAGE_READONLY },
-                    ptr::null_mut(),
-                    0,
-                );
-                if view.Value.is_null() {
-                    error!("Failed to map fastmem page at VA=0x{:X}", va);
-                    continue;
+                if result == libc::MAP_FAILED {
+                    error!("Failed to map TLB even page at 0x{:08X}", va_start);
                 }
             }
         }
     }
 
-    #[cfg(unix)]
-    pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
-        let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 13) as usize;
+    if entry.v1 {
+        let va_start_odd = va_start + page_size;
+        let pa_start_odd = (entry.pfn1 << 12) as usize;
+        if pa_start_odd <= 0x01FFFFFF {
+            let prot = if entry.d1 {
+                PROT_READ | PROT_WRITE
+            } else {
+                PROT_READ
+            };
 
-        if Self::is_fixed_region(va_start, page_size) {
-            trace!(
-                "Skipping TLB clear for fixed region: va_start=0x{:08X}",
-                va_start
+            unsafe {
+                let target = (bus.hw_base as *mut u8).add(va_start_odd);
+                let result = mmap(
+                    target as *mut c_void,
+                    page_size,
+                    prot,
+                    MAP_SHARED | MAP_FIXED,
+                    ram_fd.as_raw_fd(),
+                    pa_start_odd as i64,
+                );
+                if result == libc::MAP_FAILED {
+                    error!("Failed to map TLB odd page at 0x{:08X}", va_start_odd);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn install_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
+    let page_size = mask_to_page_size(entry.mask) as usize;
+    let va_start = (entry.vpn2 << 13) as usize;
+
+    // Skip fixed regions
+    if Self::is_fixed_region(va_start, page_size) {
+        return;
+    }
+
+    let ram_size = 0x2000000;
+    let ram_section = bus.ram_mapping.as_ref().expect("RAM section missing");
+
+    let proc = unsafe { GetCurrentProcess() };
+
+    unsafe {
+        for &(valid, pfn, d_bit, is_odd) in &[
+            (entry.v0, entry.pfn0, entry.d0, false),
+            (entry.v1, entry.pfn1, entry.d1, true),
+        ] {
+            if !valid {
+                continue;
+            }
+            let pa = (pfn << 12) as usize;
+            if pa >= bus.hw_size || pa >= ram_size {
+                continue;
+            }
+
+            let va = va_start + if is_odd { page_size } else { 0 };
+            let target = bus.hw_base.add(va);
+
+            let _ = VirtualFree(
+                target as *mut c_void,
+                page_size,
+                MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER,
             );
-            return;
-        }
 
-        trace!(
-            "Clearing TLB: va_start=0x{:08X}, page_size={}",
-            va_start, page_size
-        );
-
-        unsafe {
-            let target = (bus.hw_base as *mut u8).add(va_start);
-            let _ = munmap(target as *mut c_void, page_size);
-
-            let target_odd = (bus.hw_base as *mut u8).add(va_start + page_size);
-            let _ = munmap(target_odd as *mut c_void, page_size);
+            let view: MEMORY_MAPPED_VIEW_ADDRESS = MapViewOfFile3(
+                ram_section.as_raw_handle(),
+                proc,
+                target as *const c_void,
+                pa as u64,
+                page_size,
+                MEM_REPLACE_PLACEHOLDER,
+                if d_bit { PAGE_READWRITE } else { PAGE_READONLY },
+                ptr::null_mut(),
+                0,
+            );
+            if view.Value.is_null() {
+                error!("Failed to map fastmem page at VA=0x{:X}", va);
+                continue;
+            }
         }
     }
+}
 
-    #[cfg(windows)]
-    pub fn clear_hw_fastmem_mapping(&self, bus: &Bus, entry: &TlbEntry) {
-        let page_size = mask_to_page_size(entry.mask) as usize;
-        let va_start = (entry.vpn2 << 13) as usize;
+#[cfg(unix)]
+pub fn clear_hw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
+    let page_size = mask_to_page_size(entry.mask) as usize;
+    let va_start = (entry.vpn2 << 13) as usize;
 
-        if Self::is_fixed_region(va_start, page_size) {
-            return;
-        }
-
-        unsafe {
-            // Even page
-            let va_even = va_start;
-            let addr_even = bus.hw_base.add(va_even) as *mut c_void;
-            let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_even };
-            let _ = unsafe {
-                UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER)
-            };
-
-            // Odd page
-            let va_odd = va_start + page_size;
-            let addr_odd = bus.hw_base.add(va_odd) as *mut c_void;
-            let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_odd };
-            let _ = unsafe {
-                UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER)
-            };
-        }
+    if is_fixed_region(va_start, page_size) {
         trace!(
-            "Cleared fastmem TLB mapping at VA=0x{:08X} (size={})",
-            va_start, page_size
+            "Skipping TLB clear for fixed region: va_start=0x{:08X}",
+            va_start
         );
+        return;
     }
 
-    fn is_fixed_region(va_start: usize, page_size: usize) -> bool {
-        let va_end = va_start + page_size * 2;
-        // KSEG0/KSEG1 RAM mappings
-        (va_start < 0x82000000 && va_end > 0x80000000) ||
+    trace!(
+        "Clearing TLB: va_start=0x{:08X}, page_size={}",
+        va_start, page_size
+    );
+
+    unsafe {
+        let target = (bus.hw_base as *mut u8).add(va_start);
+        let _ = munmap(target as *mut c_void, page_size);
+
+        let target_odd = (bus.hw_base as *mut u8).add(va_start + page_size);
+        let _ = munmap(target_odd as *mut c_void, page_size);
+    }
+}
+
+#[cfg(windows)]
+pub fn clear_hw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
+    let page_size = mask_to_page_size(entry.mask) as usize;
+    let va_start = (entry.vpn2 << 13) as usize;
+
+    if is_fixed_region(va_start, page_size) {
+        return;
+    }
+
+    unsafe {
+        // Even page
+        let va_even = va_start;
+        let addr_even = bus.hw_base.add(va_even) as *mut c_void;
+        let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_even };
+        let _ =
+            unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
+
+        // Odd page
+        let va_odd = va_start + page_size;
+        let addr_odd = bus.hw_base.add(va_odd) as *mut c_void;
+        let view_addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: addr_odd };
+        let _ =
+            unsafe { UnmapViewOfFile2(GetCurrentProcess(), view_addr, MEM_PRESERVE_PLACEHOLDER) };
+    }
+    trace!(
+        "Cleared fastmem TLB mapping at VA=0x{:08X} (size={})",
+        va_start, page_size
+    );
+}
+
+fn is_fixed_region(va_start: usize, page_size: usize) -> bool {
+    let va_end = va_start + page_size * 2;
+    // KSEG0/KSEG1 RAM mappings
+    (va_start < 0x82000000 && va_end > 0x80000000) ||
         (va_start < 0xA2000000 && va_end > 0xA0000000) ||
         // BIOS mappings
         (va_start < 0xA0000000 && va_end > 0x9FC00000) ||
@@ -945,7 +942,6 @@ impl Tlb {
         // VU memory
         (va_start < 0x11010000 && va_end > 0x11000000) ||
         (va_start < 0x70004000 && va_end > 0x70000000)
-    }
 }
 
 impl Bus {

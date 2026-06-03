@@ -196,9 +196,7 @@ impl Tlb {
         }
     }
 
-    pub fn write_tlb_entry(&mut self, bus_ptr: *mut Bus, index: usize, entry: TlbEntry) {
-        let bus = unsafe { &mut *bus_ptr };
-
+    pub fn tlb_reload(&mut self, index: usize, entry: TlbEntry) -> Option<TlbEntry> {
         // Validate index
         if index >= self.entries.len() {
             panic!("TLB index out of bounds: {}", index);
@@ -207,23 +205,12 @@ impl Tlb {
         // TODO: Figure out if a CPU bug is making this happen
         if entry.vpn2 == 0 && (!entry.v0 || !entry.v1) {
             trace!("Skipping invalid TLB entry for 0x00000000: {:?}", entry);
-            return;
+            return None;
         }
 
-        if let Some(old_entry) = self.entries[index] {
-            if bus.mode == BusMode::HardwareFastMem {
-                self.clear_hw_fastmem_mapping(bus, &old_entry);
-            } else if bus.mode == BusMode::SoftwareFastMem {
-                self.clear_sw_fastmem_mapping(bus, &old_entry);
-            }
-        }
-
+        let old_entry = self.entries[index];
         self.entries[index] = Some(entry);
 
-        if bus.mode == BusMode::HardwareFastMem {
-            self.install_hw_fastmem_mapping(bus, &entry);
-        } else if bus.mode == BusMode::SoftwareFastMem {
-            self.install_sw_fastmem_mapping(bus, &entry);
-        }
+        old_entry
     }
 }

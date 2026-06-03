@@ -655,7 +655,7 @@ impl Interpreter {
         self.cpu.set_pc(self.cpu.pc().wrapping_add(4));
 
         let bus_ptr = bus as *mut Bus;
-        bus.tlb.write_tlb_entry(bus_ptr, index, new_entry);
+        bus.write_tlb_entry(index, new_entry);
     }
 
     fn lw(&mut self, bus: &mut Bus, opcode: u32) {
