@@ -215,7 +215,7 @@ impl Bus {
         });
 
         match mode {
-            BusMode::HardwareFastMem => unsafe {
+            BusMode::HardwareFastMem => {
                 bus.read8 = Bus::hw_read8;
                 bus.read16 = Bus::hw_read16;
                 bus.read32 = Bus::hw_read32;
@@ -227,7 +227,7 @@ impl Bus {
                 bus.write64 = Bus::hw_write64;
                 bus.write128 = Bus::hw_write128;
                 hw_fastmem::init_hardware_fastmem(&mut bus);
-            },
+            }
             BusMode::SoftwareFastMem => {
                 bus.read8 = Bus::sw_fmem_read8;
                 bus.read16 = Bus::sw_fmem_read16;
@@ -573,48 +573,34 @@ impl Bus {
 
     fn process_burst_mode(&mut self, base_addr: u32) {
         loop {
-            let (mut madr, mut qwc) = {
+            let (madr, qwc) = {
                 let ch = self
                     .ee_dmac
                     .channels
                     .get(&base_addr)
                     .expect("GIF channel missing");
-                (ch.madr, ch.qwc)
+                (ch.madr as u32, ch.qwc as u32)
             };
 
             if qwc == 0 {
                 break;
             }
 
-            let data: u128 = (self.read128)(self, madr as u32);
+            let data: u128 = (self.read128)(self, madr);
 
             if !self.gif.is_path3_masked() {
-                let gif_ptr: *mut GIF = &mut self.gif;
-                unsafe {
-                    (*gif_ptr).write_dmac_data(
-                        self,
-                        data,
-                        &mut (madr as u32),
-                        &mut (qwc as u32),
-                        false,
-                    );
-                }
+                self.gif.write_dmac_data(&mut self.gs, data);
             } else {
                 debug!("Burst mode PATH3 masked; ignoring GIF FIFO write");
             }
 
-            madr = madr.wrapping_add(16);
-            qwc = qwc.saturating_sub(1);
-
-            {
-                let ch_mut = self
-                    .ee_dmac
-                    .channels
-                    .get_mut(&base_addr)
-                    .expect("GIF channel missing (mut)");
-                ch_mut.madr = madr;
-                ch_mut.qwc = qwc;
-            }
+            let ch_mut = self
+                .ee_dmac
+                .channels
+                .get_mut(&base_addr)
+                .expect("GIF channel missing");
+            ch_mut.madr = madr.wrapping_add(16) as u64;
+            ch_mut.qwc = qwc.saturating_sub(1) as u64;
         }
     }
 
@@ -624,56 +610,33 @@ impl Bus {
         let mut tag_end = false;
         while !tag_end {
             loop {
-                let qwc = {
+                let (madr, qwc) = {
                     let ch = self
                         .ee_dmac
                         .channels
                         .get(&base_addr)
                         .expect("GIF channel missing for QWC read");
-                    ch.qwc
+                    (ch.madr as u32, ch.qwc as u32)
                 };
 
                 if qwc == 0 {
                     break;
                 }
 
-                let madr = {
-                    let ch = self
-                        .ee_dmac
-                        .channels
-                        .get(&base_addr)
-                        .expect("GIF channel missing for MADR read");
-                    ch.madr
-                };
-
-                let data: u128 = (self.read128)(self, madr as u32);
-
+                let data: u128 = (self.read128)(self, madr);
                 if !self.gif.is_path3_masked() {
-                    let gif_ptr: *mut GIF = &mut self.gif;
-                    let temp_madr = madr;
-                    let temp_qwc = qwc;
-                    unsafe {
-                        (*gif_ptr).write_dmac_data(
-                            self,
-                            data,
-                            &mut (temp_madr as u32),
-                            &mut (temp_qwc as u32),
-                            true,
-                        );
-                    }
+                    self.gif.write_dmac_data(&mut self.gs, data);
                 } else {
                     debug!("Chain mode PATH3 masked; ignoring GIF FIFO write");
                 }
 
-                {
-                    let ch_mut = self
-                        .ee_dmac
-                        .channels
-                        .get_mut(&base_addr)
-                        .expect("GIF channel missing for update");
-                    ch_mut.madr = ch_mut.madr.wrapping_add(16);
-                    ch_mut.qwc = ch_mut.qwc.saturating_sub(1);
-                }
+                let ch_mut = self
+                    .ee_dmac
+                    .channels
+                    .get_mut(&base_addr)
+                    .expect("GIF channel missing for update");
+                ch_mut.madr = madr.wrapping_add(16) as u64;
+                ch_mut.qwc = qwc.saturating_sub(1) as u64;
             }
 
             let tadr = {

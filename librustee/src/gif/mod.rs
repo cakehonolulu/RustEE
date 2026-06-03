@@ -1,4 +1,4 @@
-use crate::Bus;
+use crate::{Bus, gs::GS};
 use tracing::{error, trace};
 
 /// Base address for GIF I/O registers
@@ -37,7 +37,6 @@ pub struct GIF {
     /// GIF_P3TAG: PATH3 GIFtag when interrupted
     p3tag: u32,
     state: State,
-    current_gif_addr: u32,
     q_bits: u32,
     current_gif_tag: u128,
 
@@ -66,20 +65,9 @@ impl GIF {
         (self.mode & 0x1) != 0
     }
 
-    pub fn write_dmac_data(
-        &mut self,
-        bus: &mut Bus,
-        data: u128,
-        madr: &mut u32,
-        _qwc: &mut u32,
-        _chain: bool,
-    ) {
+    pub fn write_dmac_data(&mut self, gs: &mut GS, data: u128) {
         match self.state {
             State::Idle => {
-                self.current_gif_addr = *madr;
-
-                self.q_bits = 0x3f800000u32;
-
                 let low = data as u64;
 
                 self.nloop = (low & 0x7FFF) as u32; // bits 0-14
@@ -105,7 +93,7 @@ impl GIF {
                 }
 
                 if enable_prim {
-                    bus.gs.write_internal_reg(0, prim as u64);
+                    gs.write_internal_reg(0, prim as u64);
                 }
 
                 match format {
@@ -127,15 +115,10 @@ impl GIF {
             }
 
             State::ProcessingPacked => {
-                self.current_gif_addr += 16;
-
                 let reg_offset = (self.nregs - self.regs_left) << 2;
-
                 let reg = ((self.regs >> reg_offset) & 0xF) as u8;
 
-                let data = (bus.read128)(bus, self.current_gif_addr);
-
-                bus.gs.write_packed_gif_data(reg, data, self.q_bits);
+                gs.write_packed_gif_data(reg, data, self.q_bits);
 
                 self.regs_left -= 1;
 
@@ -145,29 +128,27 @@ impl GIF {
                 }
 
                 if self.current_nloop == 0 {
-                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0 {
-                    } else {
-                        self.ctrl |= 0x1;
-                    }
-
+                    self.update_eop_status();
                     self.state = State::Idle;
                 }
             }
 
             State::ProcessingImage => {
-                bus.gs.write_hwreg(data as u64);
-                bus.gs.write_hwreg((data >> 64) as u64);
+                gs.write_hwreg(data as u64);
+                gs.write_hwreg((data >> 64) as u64);
 
                 self.current_nloop -= 1;
-
                 if self.current_nloop == 0 {
-                    if ((self.current_gif_tag as u64 >> 15) & 0x1) == 0 {
-                    } else {
-                        self.ctrl |= 0x1;
-                    }
+                    self.update_eop_status();
                     self.state = State::Idle;
                 }
             }
+        }
+    }
+
+    fn update_eop_status(&mut self) {
+        if ((self.current_gif_tag as u64 >> 15) & 0x1) != 0 {
+            self.ctrl |= 0x1;
         }
     }
 

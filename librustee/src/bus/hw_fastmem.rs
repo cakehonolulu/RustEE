@@ -47,7 +47,7 @@ use windows_sys::Win32::System::Memory::{
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-pub unsafe fn init_hardware_fastmem(bus: &mut Bus) {
+pub fn init_hardware_fastmem(bus: &mut Bus) {
     debug!("Initializing Hardware Fast Memory...");
     debug!("Installing handler...");
     super::install_handler().expect("Failed to install handler");
