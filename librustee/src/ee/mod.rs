@@ -319,13 +319,13 @@ impl CPU for EE {
             };
 
         if let Some(offset) = map::RAM.contains(pa) {
-            let ptr = unsafe { bus.ram.as_ptr().add(offset as usize) } as *const u32;
-            unsafe { ptr.read_unaligned() }
+            let o = offset as usize;
+            u32::from_le_bytes(bus.ram[o..o + 4].try_into().unwrap())
         } else if map::IO.contains(pa).is_some() {
             0
         } else if let Some(offset) = map::BIOS.contains(pa) {
-            let ptr = unsafe { bus.bios.bytes.as_ptr().add(offset as usize) } as *const u32;
-            unsafe { ptr.read_unaligned() }
+            let o = offset as usize;
+            u32::from_le_bytes(bus.bios.bytes[o..o + 4].try_into().unwrap())
         } else {
             0
         }
