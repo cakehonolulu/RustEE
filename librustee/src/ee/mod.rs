@@ -45,26 +45,6 @@ pub struct EE {
     pub is_paused: Arc<AtomicBool>,
 }
 
-/*impl Clone for EE {
-    fn clone(&self) -> EE {
-        EE {
-            pc: self.pc.clone(),
-            registers: Arc::clone(&self.registers),
-            cop0_registers: Arc::clone(&self.cop0_registers),
-            lo: self.lo.clone(),
-            hi: self.hi.clone(),
-            breakpoints: self.breakpoints.clone(),
-            fpu_registers: self.fpu_registers.clone(),
-            vu0: self.vu0.clone(),
-            vu1: self.vu1.clone(),
-            sideload_elf: self.sideload_elf,
-            elf_entry_point: self.elf_entry_point,
-            elf_path: self.elf_path.clone(),
-            is_paused: self.is_paused.clone(),
-        }
-    }
-}*/
-
 impl EE {
     pub fn new(cop0_registers: Arc<[AtomicU32; 32]>) -> Self {
         cop0_registers[15].store(0x59, Ordering::Relaxed);
