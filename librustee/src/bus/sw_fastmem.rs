@@ -423,7 +423,7 @@ impl Bus {
     }
 }
 
-pub fn install_sw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
+pub fn install_sw_fastmem_mapping(bus: &mut Bus, entry: &TlbEntry) {
     let page_size = mask_to_page_size(entry.mask) as u64;
     let start_va = (entry.vpn2 as u64) << 13;
     let pfn0 = entry.pfn0 as u64;
@@ -436,52 +436,38 @@ pub fn install_sw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
         for vpn in start_vpn..end_vpn {
             let offset = ((vpn as u64 * 4096) - start_va) & (page_size - 1);
             let pa = (pfn0 << 12) + offset;
-            let pr = bus.page_read.as_ptr() as *mut usize;
-            let pw = bus.page_write.as_ptr() as *mut usize;
 
             if let Some(roff) = map::RAM.contains(pa as u32) {
                 let host = bus.ram.as_ptr() as usize + roff as usize;
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d0 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d0 { host } else { 0 };
             } else if let Some(boff) = map::BIOS.contains(pa as u32) {
                 let host = bus.bios.bytes.as_ptr() as usize + boff as usize;
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = 0;
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = 0;
             } else if let Some(soff) = map::SCRATCHPAD.contains(pa as u32) {
                 let host = bus.scratchpad.as_ptr() as usize + soff as usize;
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d0 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d0 { host } else { 0 };
             } else if let Some(voff) = map::VU0.contains(pa as u32) {
                 let host = if (pa as u32) < 0x1100_1000 {
                     bus.vu0_data.as_ptr() as usize + voff as usize
                 } else {
                     bus.vu0_code.as_ptr() as usize + (voff as usize - 0x1000)
                 };
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d0 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d0 { host } else { 0 };
             } else if let Some(voff) = map::VU1.contains(pa as u32) {
                 let host = if (pa as u32) < 0x1100_C000 {
                     bus.vu1_data.as_ptr() as usize + voff as usize
                 } else {
                     bus.vu1_code.as_ptr() as usize + (voff as usize - 0x4000)
                 };
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d0 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d0 { host } else { 0 };
             } else {
-                unsafe {
-                    *pr.add(vpn) = 0;
-                    *pw.add(vpn) = 0;
-                }
+                bus.page_read[vpn] = 0;
+                bus.page_write[vpn] = 0;
             }
         }
     }
@@ -494,52 +480,38 @@ pub fn install_sw_fastmem_mapping(bus: &Bus, entry: &TlbEntry) {
         for vpn in start_vpn..end_vpn {
             let offset = ((vpn as u64 * 4096) - start_va_odd) & (page_size - 1);
             let pa = (pfn1 << 12) + offset;
-            let pr = bus.page_read.as_ptr() as *mut usize;
-            let pw = bus.page_write.as_ptr() as *mut usize;
 
             if let Some(roff) = map::RAM.contains(pa as u32) {
                 let host = bus.ram.as_ptr() as usize + roff as usize;
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d1 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d1 { host } else { 0 };
             } else if let Some(boff) = map::BIOS.contains(pa as u32) {
                 let host = bus.bios.bytes.as_ptr() as usize + boff as usize;
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = 0;
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = 0;
             } else if let Some(soff) = map::SCRATCHPAD.contains(pa as u32) {
                 let host = bus.scratchpad.as_ptr() as usize + soff as usize;
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d1 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d1 { host } else { 0 };
             } else if let Some(voff) = map::VU0.contains(pa as u32) {
                 let host = if (pa as u32) < 0x1100_1000 {
                     bus.vu0_data.as_ptr() as usize + voff as usize
                 } else {
                     bus.vu0_code.as_ptr() as usize + (voff as usize - 0x1000)
                 };
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d1 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d1 { host } else { 0 };
             } else if let Some(voff) = map::VU1.contains(pa as u32) {
                 let host = if (pa as u32) < 0x1100_C000 {
                     bus.vu1_data.as_ptr() as usize + voff as usize
                 } else {
                     bus.vu1_code.as_ptr() as usize + (voff as usize - 0x4000)
                 };
-                unsafe {
-                    *pr.add(vpn) = host;
-                    *pw.add(vpn) = if entry.d1 { host } else { 0 };
-                }
+                bus.page_read[vpn] = host;
+                bus.page_write[vpn] = if entry.d1 { host } else { 0 };
             } else {
-                unsafe {
-                    *pr.add(vpn) = 0;
-                    *pw.add(vpn) = 0;
-                }
+                bus.page_read[vpn] = 0;
+                bus.page_write[vpn] = 0;
             }
         }
     }
