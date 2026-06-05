@@ -1,5 +1,5 @@
 use clap::{Command, arg};
-use librustee::sched::Scheduler;
+use librustee::sched::{FrameReceiver, Scheduler, create_frame_channel};
 use librustee::{
     BIOS,
     bus::{Bus, BusMode},
@@ -95,13 +95,18 @@ fn main() {
 
         scheduler.lock().unwrap().initialize_events();
 
-        let bus_box = Bus::new(
+        let (frame_tx, frame_rx) = create_frame_channel(1);
+
+        let mut bus_box = Bus::new(
             bus_mode,
             bios,
             Arc::clone(&cop0_registers),
             Arc::clone(&scheduler),
         );
-        let bus = Arc::new(Mutex::new(bus_box));
+
+        bus_box.frame_tx = Some(frame_tx);
+
+        let bus: Box<Bus> = bus_box;
 
         let mut ee_obj = EE::new(Arc::clone(&cop0_registers));
 
@@ -125,7 +130,7 @@ fn main() {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            pollster::block_on(run(ee.clone(), bus.clone(), scheduler.clone(), backend));
+            pollster::block_on(run(ee.clone(), bus, frame_rx, scheduler.clone(), backend));
         }
     } else {
         panic!("No BIOS path provided!");
@@ -134,14 +139,14 @@ fn main() {
 
 async fn run(
     ee: Arc<Mutex<EE>>,
-    bus: Arc<Mutex<Box<Bus>>>,
+    bus: Box<Bus>,
+    frame_rx: FrameReceiver,
     scheduler: Arc<Mutex<Scheduler>>,
     backend: String,
 ) {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = app::App::new(ee, bus, backend, scheduler);
-
+    let mut app = app::App::new(ee, bus, frame_rx, backend, scheduler);
     event_loop.run_app(&mut app).expect("Failed to run app");
 }

@@ -1,7 +1,10 @@
 use crate::bus::Bus;
+use crate::bus::tlb::TlbEntry;
 use crate::cpu::EmulationBackend;
 use crate::ee::EE;
+use crate::gs::renderer::RendererKind;
 use std::collections::BinaryHeap;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::trace;
@@ -12,6 +15,17 @@ pub struct Event {
     pub cycle: u64,
     callback: EventCallback,
 }
+
+pub struct FrameData {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub backend_frametime: f32,
+    pub dropped_frames: u32,
+}
+
+pub type FrameSender = mpsc::SyncSender<FrameData>;
+pub type FrameReceiver = mpsc::Receiver<FrameData>;
 
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -42,6 +56,10 @@ impl PartialEq for Event {
 
 impl Eq for Event {}
 
+pub fn create_frame_channel(back_pressure: usize) -> (FrameSender, FrameReceiver) {
+    mpsc::sync_channel(back_pressure)
+}
+
 #[derive(Debug)]
 pub struct Scheduler {
     events: BinaryHeap<Event>,
@@ -51,6 +69,31 @@ pub struct Scheduler {
     vsync_count: u32,
     last_vsync_time: Instant,
     pub internal_fps: f32,
+    pub last_frame_dispatch_time: Option<Instant>,
+    pub dropped_frames: u32,
+}
+
+pub enum DebugRequest {
+    ReadRam { addr: u32, len: usize },
+    ReadTlb,
+    ReadDisassembly { pc: u32, num_words: usize },
+    SwapRenderer(RendererKind),
+}
+
+pub enum DebugResponse {
+    Ram { addr: u32, data: Vec<u8> },
+    Tlb { entries: Vec<Option<TlbEntry>> },
+    Disassembly { pc: u32, bytes: Vec<u8> },
+}
+
+pub fn create_debug_channel() -> (
+    (mpsc::Sender<DebugRequest>, mpsc::Receiver<DebugResponse>),
+    (mpsc::Receiver<DebugRequest>, mpsc::Sender<DebugResponse>),
+) {
+    let (req_tx, req_rx) = mpsc::channel();
+    let (res_tx, res_rx) = mpsc::channel();
+
+    ((req_tx, res_rx), (req_rx, res_tx))
 }
 
 const EE_FREQUENCY: u64 = 294_912_000;
@@ -72,6 +115,8 @@ impl Default for Scheduler {
             vsync_count: 0,
             last_vsync_time: Instant::now(),
             internal_fps: 0.0,
+            last_frame_dispatch_time: None,
+            dropped_frames: 0,
         }
     }
 }
@@ -86,6 +131,8 @@ impl Scheduler {
             vsync_count: 0,
             last_vsync_time: Instant::now(),
             internal_fps: 0.0,
+            last_frame_dispatch_time: None,
+            dropped_frames: 0,
         }
     }
 
@@ -121,46 +168,80 @@ impl Scheduler {
 
     pub fn run_main_loop<B: EmulationBackend<EE> + ?Sized>(
         backend: &mut B,
-        scheduler_arc: Arc<Mutex<Scheduler>>,
-        bus_arc: Arc<Mutex<Box<Bus>>>,
+        bus: &mut Bus,
+        debug_rx: &mpsc::Receiver<DebugRequest>,
+        debug_tx: &mpsc::Sender<DebugResponse>,
     ) {
+        let scheduler_arc = bus.scheduler.clone();
+
         {
-            let mut scheduler = scheduler_arc.lock().unwrap();
-            if scheduler.real_time_start.is_none() {
-                scheduler.real_time_start = Some(Instant::now());
+            let mut sched = scheduler_arc.lock().unwrap();
+            if sched.real_time_start.is_none() {
+                sched.real_time_start = Some(Instant::now());
             }
         }
 
         loop {
             let cycles_to_run = { scheduler_arc.lock().unwrap().cycles_for_next_timeslice() };
 
-            let bus_ptr: *mut Bus = {
-                let mut guard = bus_arc.lock().unwrap();
-                &mut **guard as *mut Bus
-            };
-
             if cycles_to_run > 0 {
-                unsafe { backend.run_for_cycles(&mut *bus_ptr, cycles_to_run) };
+                backend.run_for_cycles(bus, cycles_to_run);
             }
 
-            {
-                let mut guard = bus_arc.lock().unwrap();
-                let bus: &mut Bus = &mut **guard;
+            let callbacks = {
+                let mut sched = scheduler_arc.lock().unwrap();
+                sched.advance_cycles(cycles_to_run);
+                sched.drain_due_events()
+            };
 
-                let callbacks = {
-                    let mut scheduler = scheduler_arc.lock().unwrap();
-                    scheduler.advance_cycles(cycles_to_run);
-                    scheduler.drain_due_events()
-                };
+            for callback in callbacks {
+                callback(bus);
+            }
 
-                for callback in callbacks {
-                    callback(bus);
+            scheduler_arc.lock().unwrap().sleep_if_ahead();
+
+            let mut req_ram = None;
+            let mut req_tlb = false;
+            let mut req_disasm = None;
+
+            while let Ok(req) = debug_rx.try_recv() {
+                match req {
+                    DebugRequest::ReadRam { addr, len } => req_ram = Some((addr, len)),
+                    DebugRequest::ReadTlb => req_tlb = true,
+                    DebugRequest::ReadDisassembly { pc, num_words } => {
+                        req_disasm = Some((pc, num_words))
+                    }
+                    DebugRequest::SwapRenderer(new_kind) => {
+                        bus.gs.swap_renderer(new_kind);
+                    }
                 }
             }
 
-            {
-                let scheduler = scheduler_arc.lock().unwrap();
-                scheduler.sleep_if_ahead();
+            if let Some((addr, len)) = req_ram {
+                let mut data = vec![0; len];
+                for i in 0..len {
+                    data[i] = bus.ram.get((addr as usize) + i).copied().unwrap_or(0);
+                }
+                let _ = debug_tx.send(DebugResponse::Ram { addr, data });
+            }
+
+            if req_tlb {
+                let _ = debug_tx.send(DebugResponse::Tlb {
+                    entries: bus.tlb.entries.to_vec(),
+                });
+            }
+
+            if let Some((pc, num_words)) = req_disasm {
+                let mut bytes = Vec::with_capacity(num_words * 4);
+
+                for i in 0..num_words {
+                    let vaddr = pc.wrapping_add((i * 4) as u32);
+                    let word = (bus.read32)(bus, vaddr);
+
+                    bytes.extend_from_slice(&word.to_be_bytes());
+                }
+
+                let _ = debug_tx.send(DebugResponse::Disassembly { pc, bytes });
             }
         }
     }
@@ -249,6 +330,19 @@ impl Scheduler {
 
     /* When vertical blanking period ends, flush all draws to active framebuffer */
     fn vblank_end_callback(bus: &mut Bus) {
+        let mut backend_frametime = 0.0;
+        let mut dropped = 0;
+
+        {
+            let mut sched = bus.scheduler.lock().unwrap();
+            let now = Instant::now();
+            if let Some(last) = sched.last_frame_dispatch_time {
+                backend_frametime = now.duration_since(last).as_secs_f32();
+            }
+            sched.last_frame_dispatch_time = Some(now);
+            dropped = sched.dropped_frames;
+        }
+
         bus.gs.draw_buffered();
         trace!(
             "Draw batch at cycle {}",
@@ -258,9 +352,32 @@ impl Scheduler {
         // XXX: Needed?
         // bus.gs.gs_csr &= !8;
 
+        if let Some(tx) = &bus.frame_tx {
+            let (pixels_opt, w, h) = bus.gs.get_framebuffer_data();
+            if let Some(pixels) = pixels_opt {
+                let frame = FrameData {
+                    pixels,
+                    width: w,
+                    height: h,
+                    backend_frametime,
+                    dropped_frames: dropped,
+                };
+
+                match tx.try_send(frame) {
+                    Ok(_) => {
+                        bus.scheduler.lock().unwrap().dropped_frames = 0;
+                    }
+                    Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                        bus.scheduler.lock().unwrap().dropped_frames += 1;
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
         let scheduler_clone = bus.scheduler.clone();
-        let mut scheduler = scheduler_clone.lock().unwrap();
-        scheduler.add_event(VBLANK_START_CYCLES, Self::vblank_start_callback);
+        let mut sched = scheduler_clone.lock().unwrap();
+        sched.add_event(VBLANK_START_CYCLES, Self::vblank_start_callback);
     }
 
     pub fn reset_timeline(&mut self) {

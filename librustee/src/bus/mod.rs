@@ -33,7 +33,7 @@ use tlb::{OperatingMode, Tlb};
 
 use crate::bus::rdram::RDRAM;
 use crate::bus::tlb::TlbEntry;
-use crate::sched::Scheduler;
+use crate::sched::{FrameSender, Scheduler};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 #[cfg(unix)]
@@ -142,6 +142,8 @@ pub struct Bus {
     pub write128: fn(&mut Self, u32, u128),
 
     pub scheduler: Arc<Mutex<Scheduler>>,
+
+    pub frame_tx: Option<FrameSender>,
 }
 
 #[derive(Debug)]
@@ -213,6 +215,7 @@ impl Bus {
             #[cfg(windows)]
             ram_mapping: None,
             scheduler: Arc::clone(&scheduler),
+            frame_tx: None,
         });
 
         match mode {
