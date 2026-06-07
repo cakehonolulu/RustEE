@@ -4,6 +4,9 @@ pub mod cpu;
 /* Main EE Module */
 pub mod ee;
 
+/* Main IOP Module */
+pub mod iop;
+
 /* Main Bus Module */
 pub mod bus;
 

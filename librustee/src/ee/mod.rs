@@ -3,7 +3,7 @@
 */
 
 use crate::Bus;
-use crate::cpu::CPU;
+use crate::cpu::{CPU, CPU64, CPU128};
 use crate::ee::vu::VU;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -67,6 +67,20 @@ impl EE {
             elf_path: "".to_string(),
             is_paused: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    fn write_hi0(&mut self, low: u64) {
+        let hi = self.hi.load(Ordering::SeqCst);
+        let high_mask = !((1u128 << 64) - 1);
+        self.hi
+            .store((hi & high_mask) | (low as u128), Ordering::Relaxed);
+    }
+
+    fn write_lo0(&mut self, low: u64) {
+        let lo = self.lo.load(Ordering::SeqCst);
+        let high_mask = !((1u128 << 64) - 1);
+        self.lo
+            .store((lo & high_mask) | (low as u128), Ordering::Relaxed);
     }
 
     pub fn read_fpu_register_as_u32(&self, index: usize) -> u32 {
@@ -197,26 +211,8 @@ impl CPU for EE {
         self.registers[index].load(Ordering::Relaxed) as u32
     }
 
-    fn read_register64(&self, index: usize) -> u64 {
-        self.registers[index].load(Ordering::Relaxed) as u64
-    }
-
-    fn write_hi0(&mut self, low: u64) {
-        let hi = self.hi.load(Ordering::SeqCst);
-        let high_mask = !((1u128 << 64) - 1);
-        self.hi
-            .store((hi & high_mask) | (low as u128), Ordering::Relaxed);
-    }
-
     fn write_hi(&mut self, value: Self::RegisterType) {
         self.hi.store(value, Ordering::Relaxed);
-    }
-
-    fn write_lo0(&mut self, low: u64) {
-        let lo = self.lo.load(Ordering::SeqCst);
-        let high_mask = !((1u128 << 64) - 1);
-        self.lo
-            .store((lo & high_mask) | (low as u128), Ordering::Relaxed);
     }
 
     fn write_lo(&mut self, value: Self::RegisterType) {
@@ -228,14 +224,8 @@ impl CPU for EE {
     }
 
     fn write_register32(&mut self, index: usize, value: u32) {
-        let upper_bits =
-            self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
-        self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
-    }
-
-    fn write_register64(&mut self, index: usize, value: u64) {
-        let upper_bits =
-            self.registers[index].load(Ordering::SeqCst) & 0xFFFFFFFF_FFFFFFFF_00000000_00000000;
+        let upper_bits = self.registers[index].load(Ordering::SeqCst)
+            & 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_00000000u128;
         self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
     }
 
@@ -258,14 +248,6 @@ impl CPU for EE {
         (bus.write32)(bus, addr, value);
     }
 
-    fn write64(&mut self, bus: &mut Bus, addr: u32, value: u64) {
-        (bus.write64)(bus, addr, value);
-    }
-
-    fn write128(&mut self, bus: &mut Bus, addr: u32, value: u128) {
-        (bus.write128)(bus, addr, value);
-    }
-
     fn read8(&mut self, bus: &mut Bus, addr: u32) -> u8 {
         (bus.read8)(bus, addr)
     }
@@ -276,14 +258,6 @@ impl CPU for EE {
 
     fn read32(&mut self, bus: &mut Bus, addr: u32) -> u32 {
         (bus.read32)(bus, addr)
-    }
-
-    fn read64(&mut self, bus: &mut Bus, addr: u32) -> u64 {
-        (bus.read64)(bus, addr)
-    }
-
-    fn read128(&mut self, bus: &mut Bus, addr: u32) -> u128 {
-        (bus.read128)(bus, addr)
     }
 
     fn read32_raw(&mut self, bus: &mut Bus, addr: u32) -> u32 {
@@ -331,5 +305,35 @@ impl CPU for EE {
 
     fn has_breakpoint(&self, addr: u32) -> bool {
         self.breakpoints.contains(&addr)
+    }
+}
+
+impl CPU64 for EE {
+    fn read_register64(&self, index: usize) -> u64 {
+        self.registers[index].load(Ordering::Relaxed) as u64
+    }
+
+    fn write_register64(&mut self, index: usize, value: u64) {
+        let upper_bits = self.registers[index].load(Ordering::SeqCst)
+            & 0xFFFFFFFF_FFFFFFFF_00000000_00000000u128;
+        self.registers[index].store(upper_bits | (value as u128), Ordering::Relaxed);
+    }
+
+    fn write64(&mut self, bus: &mut Bus, addr: u32, value: u64) {
+        (bus.write64)(bus, addr, value);
+    }
+
+    fn read64(&mut self, bus: &mut Bus, addr: u32) -> u64 {
+        (bus.read64)(bus, addr)
+    }
+}
+
+impl CPU128 for EE {
+    fn write128(&mut self, bus: &mut Bus, addr: u32, value: u128) {
+        (bus.write128)(bus, addr, value);
+    }
+
+    fn read128(&mut self, bus: &mut Bus, addr: u32) -> u128 {
+        (bus.read128)(bus, addr)
     }
 }

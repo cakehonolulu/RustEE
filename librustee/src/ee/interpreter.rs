@@ -1,7 +1,7 @@
 use crate::Bus;
 use crate::bus::tlb::TlbEntry;
-use crate::cpu::CPU;
 use crate::cpu::EmulationBackend;
+use crate::cpu::{CPU, CPU64, CPU128};
 use crate::ee::EE;
 use std::fs;
 use std::sync::atomic::Ordering;
